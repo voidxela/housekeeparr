@@ -58,9 +58,11 @@ itself in an unprivileged loopback-only network namespace (`unshare -rn`;
 UPnP/NAT-PMP enabled (now disabled explicitly, with peer-country lookup off,
 which crashed qBittorrent 4.6.7 without network), and Deluge's libtorrent
 session starts with libtorrent defaults before Deluge applies its own
-settings. No torrent was ever announced to a public network in either case
-(DHT/PeX/LSD were off before torrents were added and trackers point at a
-closed loopback port), but isolation now enforces it. Every run also asserts
+settings. Those earlier runs may therefore have reached the LAN gateway
+(UPnP/NAT-PMP) or DHT bootstrap nodes. That was not observed directly; the
+configuration only establishes that DHT/PeX/LSD were disabled before any
+synthetic torrent was added and that every tracker is a closed loopback port.
+Isolation now enforces that nothing leaves the host. Every run also asserts
 that real listings are complete and that queue row counts equal
 `totalRecords`.
 
