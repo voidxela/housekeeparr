@@ -29,6 +29,10 @@ while [ $# -gt 0 ]; do
 done
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
+if ! command -v go >/dev/null 2>&1; then
+	if [ -x "$HOME/.local/go/bin/go" ]; then export PATH="$HOME/.local/go/bin:$PATH"; else echo "go not found on PATH" >&2; exit 2; fi
+fi
+for tool in curl python3 sha256sum tar; do command -v "$tool" >/dev/null || { echo "$tool is required" >&2; exit 2; }; done
 HERE="$ROOT/scripts/it"
 CACHE=${HOUSEKEEPARR_IT_CACHE:-$HOME/.cache/housekeeparr-it}
 ARCH=$(uname -m)
