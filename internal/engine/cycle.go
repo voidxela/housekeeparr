@@ -290,12 +290,19 @@ func (e *Engine) evaluate(tx *store.Tx, results []*fetched, gone map[string][]st
 			fresh[f.id] = true
 		}
 	}
-	// 1. Correlate queue rows with transfers.
+	// 1. Correlate queue rows with transfers (one indexed read per cycle).
+	var index store.TransferIndex
 	for _, f := range results {
 		if f.queue == nil || f.err != nil {
 			continue
 		}
-		if err := e.correlate(tx, f.id, fresh, now); err != nil {
+		if index == nil {
+			var err error
+			if index, err = tx.PresentTransferIndex(); err != nil {
+				return total, err
+			}
+		}
+		if err := e.correlate(tx, f.id, index, fresh, now); err != nil {
 			return total, err
 		}
 	}
@@ -340,7 +347,7 @@ func (e *Engine) evaluate(tx *store.Tx, results []*fetched, gone map[string][]st
 	return total, nil
 }
 
-func (e *Engine) correlate(tx *store.Tx, managerID string, fresh map[string]bool, now time.Time) error {
+func (e *Engine) correlate(tx *store.Tx, managerID string, index store.TransferIndex, fresh map[string]bool, now time.Time) error {
 	meta := e.conns.Meta[managerID]
 	items, err := tx.QueueItems(store.QueueFilter{ManagerID: managerID, PresentOnly: true})
 	if err != nil {
@@ -355,16 +362,7 @@ func (e *Engine) correlate(tx *store.Tx, managerID string, fresh map[string]bool
 		case q.DownloadID == "":
 			status, note = store.MatchNoDownloadID, "no download yet (pending or delayed release)"
 		default:
-			refs, err := tx.TransfersByHash(q.DownloadID)
-			if err != nil {
-				return err
-			}
-			var present []store.TransferRef
-			for _, r := range refs {
-				if r.Present {
-					present = append(present, r)
-				}
-			}
+			present := index.Lookup(q.DownloadID)
 			mapped, hasMap := meta.DownloadClients[q.DownloadClient]
 			switch {
 			case hasMap:

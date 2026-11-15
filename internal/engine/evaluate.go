@@ -34,7 +34,8 @@ func (e *Engine) evaluateClient(tx *store.Tx, snap domain.TransferSnapshot, gone
 	}
 	s := eff.Settings
 	meta := e.conns.Meta[snap.ClientID]
-	recs, err := tx.Transfers(store.TransferFilter{ClientID: snap.ClientID, PresentOnly: true, IncludeDone: true})
+	// Only incomplete transfers are evaluated, so only they are loaded.
+	recs, err := tx.Transfers(store.TransferFilter{ClientID: snap.ClientID, PresentOnly: true})
 	if err != nil {
 		return findings.Result{}, err
 	}
@@ -48,6 +49,25 @@ func (e *Engine) evaluateClient(tx *store.Tx, snap domain.TransferSnapshot, gone
 	reasons := map[string]string{} // dedup key → verified resolution reason
 	listed := map[string]bool{}
 	next := now.Add(s.PollInterval)
+	// Load active findings and correlated queue rows once, not per transfer.
+	activeList, err := tx.ActiveFindingsWithPrefix(scope)
+	if err != nil {
+		return findings.Result{}, err
+	}
+	activeByKey := make(map[string]*domain.Finding, len(activeList))
+	for i := range activeList {
+		activeByKey[activeList[i].DedupKey] = &activeList[i]
+	}
+	allQueue, err := tx.QueueItems(store.QueueFilter{PresentOnly: true})
+	if err != nil {
+		return findings.Result{}, err
+	}
+	queueByTransfer := map[string][]store.QueueRecord{}
+	for _, q := range allQueue {
+		if q.MatchClientID == snap.ClientID && q.MatchNativeID != "" {
+			queueByTransfer[q.MatchNativeID] = append(queueByTransfer[q.MatchNativeID], q)
+		}
+	}
 
 	for _, t := range snap.Transfers {
 		listed[t.NativeID] = true
@@ -76,11 +96,8 @@ func (e *Engine) evaluateClient(tx *store.Tx, snap domain.TransferSnapshot, gone
 		if err := tx.SetAssessment(snap.ClientID, t.NativeID, a, now); err != nil {
 			return findings.Result{}, err
 		}
-		queue, err := tx.QueueItems(store.QueueFilter{ClientID: snap.ClientID, NativeID: t.NativeID})
-		if err != nil {
-			return findings.Result{}, err
-		}
-		active := func(kind string) (*domain.Finding, error) { return tx.ActiveFinding(base + kind) }
+		queue := queueByTransfer[t.NativeID]
+		active := func(kind string) (*domain.Finding, error) { return activeByKey[base+kind], nil }
 		carry := func(f *domain.Finding, o transferOutcome) {
 			d := carryDraft(*f, o, a.EvidenceAt, &next)
 			ev.Drafts = append(ev.Drafts, d)
@@ -144,10 +161,7 @@ func (e *Engine) evaluateClient(tx *store.Tx, snap domain.TransferSnapshot, gone
 		return findings.Result{}, err
 	}
 
-	actives, err := tx.ActiveFindingsWithPrefix(scope)
-	if err != nil {
-		return findings.Result{}, err
-	}
+	actives := activeList
 	goneSet := map[string]bool{}
 	for _, g := range gone {
 		goneSet[g.NativeID] = true

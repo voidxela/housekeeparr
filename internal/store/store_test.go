@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -227,5 +228,93 @@ func TestBackupOnMigrationPathAndRetention(t *testing.T) {
 	entries, _ := os.ReadDir(filepath.Join(dir, "backups"))
 	if len(entries) > 5 {
 		t.Fatalf("%d backups kept, want at most 5", len(entries))
+	}
+}
+
+func TestPresentTransferIndexAndUnchangedCompleteSkip(t *testing.T) {
+	s := openTest(t, t.TempDir())
+	now := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	v2 := strings.Repeat("c", 64)
+	hybrid := transfer("hy", domain.StateDownloading, 1)
+	hybrid.Hashes = domain.Hashes{V1: strings.Repeat("b", 40), V2: v2}
+	done := transfer("done", domain.StateComplete, 100)
+	done.ConnectedPeers = domain.KnownValue[int64](3)
+	save := func(at time.Time, ts ...domain.Transfer) {
+		if err := s.Write(ctx, func(tx *Tx) error {
+			_, err := tx.SaveTransferSnapshot(domain.TransferSnapshot{ClientID: "qbit", CollectedAt: at, Transfers: ts, Complete: true}, "r", 0, 100)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	save(now, hybrid, done)
+	var idx TransferIndex
+	_ = s.Write(ctx, func(tx *Tx) error { var err error; idx, err = tx.PresentTransferIndex(); return err })
+	for _, id := range []string{"hy", strings.Repeat("B", 40), v2, v2[:40]} {
+		if refs := idx.Lookup(id); len(refs) != 1 || refs[0].NativeID != "hy" {
+			t.Errorf("lookup %s: %+v", id, refs)
+		}
+	}
+	// Only volatile fields change: the complete row is not rewritten.
+	done.ConnectedPeers = domain.KnownValue[int64](7)
+	save(now.Add(time.Hour), hybrid, done)
+	rec, _ := s.Transfer(ctx, "qbit", "done")
+	if !rec.LastSeen.Equal(now) {
+		t.Fatalf("unchanged complete transfer was rewritten (last_seen %v)", rec.LastSeen)
+	}
+	if rec.Latest.ConnectedPeers.IsKnown() {
+		t.Fatal("volatile signals must not be stored for complete transfers")
+	}
+	inc, _ := s.Transfer(ctx, "qbit", "hy")
+	if !inc.LastSeen.Equal(now.Add(time.Hour)) {
+		t.Fatal("incomplete transfers must always refresh last_seen")
+	}
+}
+
+func TestFingerprintCacheNeverHidesChanges(t *testing.T) {
+	dir := t.TempDir()
+	s := openTest(t, dir)
+	now := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	done := transfer("done", domain.StateComplete, 100)
+	save := func(st *Store, at time.Time, tr domain.Transfer, fault error) error {
+		st.InjectWriteFault(fault)
+		defer st.InjectWriteFault(nil)
+		return st.Write(ctx, func(tx *Tx) error {
+			_, err := tx.SaveTransferSnapshot(domain.TransferSnapshot{ClientID: "qbit", CollectedAt: at, Transfers: []domain.Transfer{tr}, Complete: true}, "r", 0, 100)
+			return err
+		})
+	}
+	_ = save(s, now, done, nil)
+	_ = save(s, now.Add(time.Minute), done, nil) // confirmed in cache
+	renamed := done
+	renamed.Name = "renamed"
+	if err := save(s, now.Add(2*time.Minute), renamed, nil); err != nil {
+		t.Fatal(err)
+	}
+	if rec, _ := s.Transfer(ctx, "qbit", "done"); rec.Name != "renamed" {
+		t.Fatal("change to a confirmed complete transfer was not written")
+	}
+	// A failed write must not leave the cache claiming the new state.
+	private := renamed
+	private.Private = domain.KnownValue(true)
+	if err := save(s, now.Add(3*time.Minute), private, errors.New("disk full")); err == nil {
+		t.Fatal("expected injected failure")
+	}
+	if err := save(s, now.Add(4*time.Minute), private, nil); err != nil {
+		t.Fatal(err)
+	}
+	if rec, _ := s.Transfer(ctx, "qbit", "done"); !rec.Latest.Private.Value {
+		t.Fatal("change after a failed write was skipped")
+	}
+	// Removal clears the cache: re-adding writes the row again.
+	if err := s.Write(ctx, func(tx *Tx) error {
+		_, err := tx.SaveTransferSnapshot(domain.TransferSnapshot{ClientID: "qbit", CollectedAt: now.Add(5 * time.Minute), Complete: true}, "r", 0, 100)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = save(s, now.Add(6*time.Minute), private, nil)
+	if rec, _ := s.Transfer(ctx, "qbit", "done"); !rec.Present {
+		t.Fatal("re-added transfer not marked present")
 	}
 }

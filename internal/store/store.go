@@ -76,6 +76,12 @@ type Store struct {
 
 	faultMu sync.Mutex
 	fault   error
+
+	// confirmed caches a fingerprint of complete transfers whose stored row
+	// is known to match (writer process only). It lets unchanged seeding
+	// torrents skip serialization entirely; it is rebuilt after restart by a
+	// full comparison.
+	confirmed map[string]uint64
 }
 
 // InjectWriteFault makes every subsequent Write fail with err (nil clears
@@ -367,8 +373,10 @@ func (s *Store) checkMeta(ctx context.Context) error {
 
 // Tx is a write transaction.
 type Tx struct {
-	tx  *sql.Tx
-	ctx context.Context
+	tx        *sql.Tx
+	ctx       context.Context
+	confirmed map[string]uint64
+	pending   map[string]uint64
 }
 
 // Write runs fn in a single write transaction.
@@ -386,12 +394,26 @@ func (s *Store) Write(ctx context.Context, fn func(*Tx) error) error {
 	if err != nil {
 		return fmt.Errorf("state store: begin: %w", err)
 	}
-	if err := fn(&Tx{tx: tx, ctx: ctx}); err != nil {
+	if s.confirmed == nil {
+		s.confirmed = map[string]uint64{}
+	}
+	wtx := &Tx{tx: tx, ctx: ctx, confirmed: s.confirmed, pending: map[string]uint64{}}
+	if err := fn(wtx); err != nil {
 		tx.Rollback()
 		return err
 	}
 	if err := tx.Commit(); err != nil {
+		// A failed commit may have lost confirmed rows: forget the cache.
+		clear(s.confirmed)
 		return fmt.Errorf("state store: commit: %w", err)
+	}
+	// Only committed rows become confirmed; 0 marks a removal.
+	for k, v := range wtx.pending {
+		if v == 0 {
+			delete(s.confirmed, k)
+		} else {
+			s.confirmed[k] = v
+		}
 	}
 	return nil
 }

@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"hash/fnv"
+	"strconv"
 	"time"
 
 	"github.com/voidxela/housekeeparr/internal/domain"
@@ -75,16 +77,55 @@ type GoneTransfer struct {
 func (t *Tx) SaveTransferSnapshot(snap domain.TransferSnapshot, runID string, mono int64, maxPerTransfer int) ([]GoneTransfer, error) {
 	at := snap.CollectedAt
 	seen := make(map[string]bool, len(snap.Transfers))
+	type prevRow struct {
+		class, json string
+		present     bool
+	}
+	prev := make(map[string]prevRow, len(snap.Transfers))
+	rows0, err := t.query("SELECT native_id, state_class, latest_json, present FROM transfers WHERE client_id=?", snap.ClientID)
+	if err != nil {
+		return nil, err
+	}
+	for rows0.Next() {
+		var id string
+		var r prevRow
+		if err := rows0.Scan(&id, &r.class, &r.json, &r.present); err != nil {
+			rows0.Close()
+			return nil, err
+		}
+		prev[id] = r
+	}
+	rows0.Close()
+	if err := rows0.Err(); err != nil {
+		return nil, err
+	}
 	for _, tr := range snap.Transfers {
 		seen[tr.NativeID] = true
-		latest, err := json.Marshal(tr)
+		key := snap.ClientID + "|" + tr.NativeID
+		var fp uint64
+		if tr.StateClass == domain.StateComplete {
+			fp = fingerprint(tr)
+			if t.confirmed[key] == fp {
+				continue // stored row already matches; nothing to write or serialize
+			}
+		} else {
+			t.pending[key] = 0
+		}
+		latest, err := json.Marshal(storedForm(tr))
 		if err != nil {
 			return nil, err
 		}
-		var prevClass sql.NullString
-		err = t.queryRow("SELECT state_class FROM transfers WHERE client_id=? AND native_id=?", snap.ClientID, tr.NativeID).Scan(&prevClass)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return nil, err
+		p, existed := prev[tr.NativeID]
+		prevClass := sql.NullString{String: p.class, Valid: existed}
+		// Complete transfers that are unchanged and already present are not
+		// rewritten: large seeding libraries would otherwise rewrite every
+		// row each cycle. Their freshness is the connection's last success.
+		unchanged := existed && p.json == string(latest) && p.present
+		if tr.StateClass == domain.StateComplete {
+			t.pending[key] = fp
+			if unchanged {
+				continue
+			}
 		}
 		_, err = t.exec(`INSERT INTO transfers(client_id, native_id, hash_v1, hash_v2, name, state_class, first_seen, last_seen, present, latest_json)
 			VALUES(?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
@@ -106,8 +147,9 @@ func (t *Tx) SaveTransferSnapshot(snap domain.TransferSnapshot, runID string, mo
 			VALUES(?, ?, ?, ?, ?, ?, ?)`, snap.ClientID, tr.NativeID, ms(at), runID, mono, string(tr.StateClass), string(ob)); err != nil {
 			return nil, err
 		}
-		if _, err := t.exec(`DELETE FROM transfer_observations WHERE client_id=? AND native_id=? AND id <= (
-				SELECT id FROM transfer_observations WHERE client_id=? AND native_id=? ORDER BY id DESC LIMIT 1 OFFSET ?)`,
+		// Bound per-transfer history using the (client, transfer, at) index.
+		if _, err := t.exec(`DELETE FROM transfer_observations WHERE client_id=? AND native_id=? AND at <= (
+				SELECT at FROM transfer_observations WHERE client_id=? AND native_id=? ORDER BY at DESC LIMIT 1 OFFSET ?)`,
 			snap.ClientID, tr.NativeID, snap.ClientID, tr.NativeID, maxPerTransfer); err != nil {
 			return nil, err
 		}
@@ -139,6 +181,7 @@ func (t *Tx) SaveTransferSnapshot(snap domain.TransferSnapshot, runID string, mo
 		if _, err := t.exec("UPDATE transfers SET present=0, gone_at=? WHERE client_id=? AND native_id=?", ms(at), g.ClientID, g.NativeID); err != nil {
 			return nil, err
 		}
+		t.pending[g.ClientID+"|"+g.NativeID] = 0
 	}
 	return gone, nil
 }
@@ -319,4 +362,90 @@ func (t *Tx) TransfersByHash(id string) ([]TransferRef, error) {
 func (t *Tx) ClearCompleteAssessments(clientID string) error {
 	_, err := t.exec("UPDATE transfers SET assessment_json=NULL, assessed_at=NULL WHERE client_id=? AND state_class='complete' AND assessment_json IS NOT NULL", clientID)
 	return err
+}
+
+const notRetained = "not retained for complete transfers (bounds state writes)"
+
+// storedForm drops volatile peer and rate signals from complete transfers,
+// which no diagnosis uses, so unchanged seeding torrents are not rewritten.
+func storedForm(t domain.Transfer) domain.Transfer {
+	if t.StateClass != domain.StateComplete {
+		return t
+	}
+	t.DownloadRate = domain.UnknownValue[int64](notRetained)
+	t.ConnectedSeeds = domain.UnknownValue[int64](notRetained)
+	t.ConnectedPeers = domain.UnknownValue[int64](notRetained)
+	t.SwarmSeeds = domain.UnknownValue[int64](notRetained)
+	t.SwarmPeers = domain.UnknownValue[int64](notRetained)
+	t.Availability = domain.UnknownValue[float64](notRetained)
+	t.NetworkDownloadedBytes = domain.UnknownValue[int64](notRetained)
+	return t
+}
+
+// TransferIndex maps every identity variant of present transfers.
+type TransferIndex map[string][]TransferRef
+
+// PresentTransferIndex loads all present transfers once and indexes them by
+// native ID, v1 hash, full v2 hash, and truncated (40 hex) v2 hash, so
+// correlation needs no per-row queries.
+func (t *Tx) PresentTransferIndex() (TransferIndex, error) {
+	rows, err := t.query("SELECT client_id, native_id, name, hash_v1, hash_v2, last_seen FROM transfers WHERE present=1")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	idx := TransferIndex{}
+	for rows.Next() {
+		var r TransferRef
+		var v1, v2 sql.NullString
+		var ls int64
+		if err := rows.Scan(&r.ClientID, &r.NativeID, &r.Name, &v1, &v2, &ls); err != nil {
+			return nil, err
+		}
+		r.Hashes, r.Present, r.LastSeen = domain.Hashes{V1: v1.String, V2: v2.String}, true, fromMS(ls)
+		keys := map[string]bool{r.NativeID: true}
+		if r.Hashes.V1 != "" {
+			keys[r.Hashes.V1] = true
+		}
+		if r.Hashes.V2 != "" {
+			keys[r.Hashes.V2] = true
+			if len(r.Hashes.V2) == 64 {
+				keys[r.Hashes.V2[:40]] = true
+			}
+		}
+		for k := range keys {
+			idx[k] = append(idx[k], r)
+		}
+	}
+	return idx, rows.Err()
+}
+
+// Lookup returns present transfers matching a download ID.
+func (i TransferIndex) Lookup(id string) []TransferRef { return i[domain.NormalizeHash(id)] }
+
+// fingerprint hashes the stored (non-volatile) form of a complete transfer.
+func fingerprint(t domain.Transfer) uint64 {
+	h := fnv.New64a()
+	w := func(parts ...string) {
+		for _, p := range parts {
+			h.Write([]byte(p))
+			h.Write([]byte{0})
+		}
+	}
+	i := func(s domain.Signal[int64]) string {
+		return string(s.Status) + ":" + strconv.FormatInt(s.Value, 10) + ":" + s.Note
+	}
+	b := func(s domain.Signal[bool]) string {
+		return string(s.Status) + ":" + strconv.FormatBool(s.Value) + ":" + s.Note
+	}
+	str := func(s domain.Signal[string]) string { return string(s.Status) + ":" + s.Value + ":" + s.Note }
+	w(t.NativeID, t.Hashes.V1, t.Hashes.V2, t.Name, t.NativeState, string(t.StateClass), str(t.Category),
+		string(t.AddedAt.Status), strconv.FormatInt(t.AddedAt.Value.UnixNano(), 10), t.AddedAt.Note,
+		i(t.WantedBytes), i(t.VerifiedBytes), i(t.RemainingBytes), i(t.TotalBytes),
+		b(t.AllFilesWanted), b(t.Private), str(t.ClientMessage), strconv.FormatBool(t.AvailabilityWantedOnly))
+	v := h.Sum64()
+	if v == 0 {
+		v = 1 // 0 is reserved for "not confirmed"
+	}
+	return v
 }
