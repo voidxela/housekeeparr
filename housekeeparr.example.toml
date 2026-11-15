@@ -62,6 +62,14 @@ download_clients = { "qBittorrent" = "qbittorrent" }
 # queue_page_size = 200
 # max_queue_pages = 25
 
+# Radarr uses the same settings as Sonarr.
+# [[radarr]]
+# id = "radarr"
+# name = "Radarr"
+# url = "http://127.0.0.1:7878"
+# api_key = "env:HOUSEKEEPARR_RADARR_API_KEY"
+# download_clients = { "qBittorrent" = "qbittorrent" }
+
 [[qbittorrent]]
 id = "qbittorrent"
 name = "qBittorrent"

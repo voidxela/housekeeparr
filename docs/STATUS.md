@@ -23,6 +23,7 @@ implemented.
 | Adapter contract: capabilities, classified errors, bounded HTTP transport, redaction | done | No adapter exposes an operational write method. |
 | qBittorrent read adapter (WebUI API v2) | unverified | Contract-tested against fixtures derived from released source at `release-4.6.7` and `release-5.3.0`; never run against a live instance. |
 | Sonarr read adapter (API v3; queue, health, status) | unverified | Contract-tested against fixtures derived from released source at `v4.0.20.3014`; never run against a live instance. |
+| Radarr read adapter (API v3; queue, health, status) sharing the *arr v3 client with Sonarr | unverified | Contract-tested against fixtures derived from released source at `v6.4.4.10685`; never run against a live instance; the harness does not start Radarr yet. |
 | Pure no-progress / metadata diagnosis policy | done | Deterministic tests cover grace, windows, observation counts, gaps, clock anomalies, pauses, rechecks, file selection, near-complete windows, and piece availability. |
 | Persistent findings (dedup, recurrence, acknowledge, snooze, evidence-based resolution) | done | |
 | Observation engine (bounded polling, backoff, correlation, evaluation) | done | Engine tests use fake adapters and a deterministic clock; see `internal/engine/engine_test.go`. |
@@ -35,8 +36,8 @@ implemented.
 
 ## Remaining v1 scope (not started unless noted)
 
-- Radarr read adapter; Transmission, rTorrent, and Deluge read adapters
-  (all four clients remain in v1 scope).
+- Transmission, rTorrent, and Deluge read adapters (all four clients remain
+  in v1 scope); Radarr in the integration harness.
 - Exclusions, snooze/exclude from the interfaces, scoped rules and item
   overrides, effective-policy and action previews.
 - Durable action coordinator (intent journal, locks, budgets, reconciliation,
