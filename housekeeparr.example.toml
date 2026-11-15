@@ -82,3 +82,12 @@ password = "file:/run/secrets/qbittorrent_password"
 # Connection-scoped overrides take precedence over [policy].
 # [qbittorrent.policy]
 # no_progress_window = "3h"
+
+# Transmission (legacy RPC; HTTP basic auth is optional).
+# [[transmission]]
+# id = "transmission"
+# name = "Transmission"
+# url = "http://127.0.0.1:9091"
+# rpc_path = "/transmission/rpc"
+# username = "admin"
+# password = "file:/run/secrets/transmission_password"
