@@ -25,6 +25,7 @@ implemented.
 | Sonarr read adapter (API v3; queue, health, status) | unverified | Contract-tested against fixtures derived from released source at `v4.0.20.3014`; never run against a live instance. |
 | Radarr read adapter (API v3; queue, health, status) sharing the *arr v3 client with Sonarr | unverified | Contract-tested against fixtures derived from released source at `v6.4.4.10685`; never run against a live instance; the harness does not start Radarr yet. |
 | Transmission read adapter (legacy RPC with session handshake) | unverified | Contract-tested against fixtures derived from `docs/rpc-spec.md` and `transmission.h` at `4.0.6`; verified progress is `sizeWhenDone − leftUntilDone`; availability is wanted-only (`desiredAvailable`). Uses the legacy protocol that Transmission 4.1 documents as deprecated — JSON-RPC 2.0 support is *remaining*. Swarm counts are not collected (they are only available alongside tracker URLs). Never run against a live instance. |
+| Deluge read adapter (deluge-web JSON API; daemon protocol deliberately not supported) | unverified | Contract-tested against fixtures derived from `deluge/core/torrent.py` and `deluge/ui/web/json_api.py` at `deluge-2.1.1`. deluge-web must already be connected to a daemon. `distributed_copies` = 0 and `private` without metadata are treated as unknown because Deluge reports ambiguous values there. Never run against a live instance. |
 | Pure no-progress / metadata diagnosis policy | done | Deterministic tests cover grace, windows, observation counts, gaps, clock anomalies, pauses, rechecks, file selection, near-complete windows, and piece availability. |
 | Persistent findings (dedup, recurrence, acknowledge, snooze, evidence-based resolution) | done | |
 | Observation engine (bounded polling, backoff, correlation, evaluation) | done | Engine tests use fake adapters and a deterministic clock; see `internal/engine/engine_test.go`. |
@@ -37,8 +38,8 @@ implemented.
 
 ## Remaining v1 scope (not started unless noted)
 
-- rTorrent and Deluge read adapters (all four clients remain in v1 scope);
-  Radarr and Transmission in the integration harness; Transmission JSON-RPC 2.0.
+- rTorrent read adapter (all four clients remain in v1 scope); Radarr,
+  Transmission, and Deluge in the integration harness; Transmission JSON-RPC 2.0.
 - Exclusions, snooze/exclude from the interfaces, scoped rules and item
   overrides, effective-policy and action previews.
 - Durable action coordinator (intent journal, locks, budgets, reconciliation,

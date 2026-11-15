@@ -91,3 +91,10 @@ password = "file:/run/secrets/qbittorrent_password"
 # rpc_path = "/transmission/rpc"
 # username = "admin"
 # password = "file:/run/secrets/transmission_password"
+
+# Deluge through the deluge-web JSON API. deluge-web must already be
+# connected to the daemon; only the web password is used.
+# [[deluge]]
+# id = "deluge"
+# url = "http://127.0.0.1:8112"
+# password = "file:/run/secrets/deluge_web_password"
