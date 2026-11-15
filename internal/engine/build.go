@@ -7,6 +7,7 @@ import (
 	"github.com/voidxela/housekeeparr/internal/adapter/deluge"
 	"github.com/voidxela/housekeeparr/internal/adapter/qbittorrent"
 	"github.com/voidxela/housekeeparr/internal/adapter/radarr"
+	"github.com/voidxela/housekeeparr/internal/adapter/rtorrent"
 	"github.com/voidxela/housekeeparr/internal/adapter/sonarr"
 	"github.com/voidxela/housekeeparr/internal/adapter/transmission"
 	"github.com/voidxela/housekeeparr/internal/config"
@@ -78,6 +79,8 @@ func Build(cfg *config.Config, secrets map[string]string) (*Connections, error) 
 			kind = adapter.KindTransmission
 		case "deluge":
 			kind = adapter.KindDeluge
+		case "rtorrent":
+			kind = adapter.KindRTorrent
 		}
 		meta := ConnMeta{ID: q.ID, Name: q.DisplayName(), BaseURL: redact.URL(q.URL), Kind: kind,
 			Enabled: q.IsEnabled(), SecretRef: q.Password.Display()}
@@ -98,6 +101,8 @@ func Build(cfg *config.Config, secrets map[string]string) (*Connections, error) 
 			err error
 		)
 		switch kind {
+		case adapter.KindRTorrent:
+			c, err = rtorrent.New(rtorrent.Options{ID: q.ID, BaseURL: q.URL, RPCPath: q.RPCPath, Username: q.Username, Password: pw, Timeout: timeout, CAFile: q.CAFile})
 		case adapter.KindDeluge:
 			c, err = deluge.New(deluge.Options{ID: q.ID, BaseURL: q.URL, Password: pw, Timeout: timeout, CAFile: q.CAFile})
 		case adapter.KindTransmission:

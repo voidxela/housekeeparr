@@ -29,6 +29,9 @@ password = "env:T"
 id = "d"
 url = "http://127.0.0.1:8112"
 password = "env:D"
+[[rtorrent]]
+id = "rt"
+url = "http://127.0.0.1:8000"
 [[transmission]]
 id = "off"
 url = "http://127.0.0.1:9092"
@@ -48,7 +51,7 @@ enabled = false
 	for _, m := range conns.Managers {
 		kinds[m.ID()] = m.Kind()
 	}
-	want := map[string]adapter.Kind{"s": adapter.KindSonarr, "r": adapter.KindRadarr, "q": adapter.KindQBittorrent, "t": adapter.KindTransmission, "d": adapter.KindDeluge}
+	want := map[string]adapter.Kind{"s": adapter.KindSonarr, "r": adapter.KindRadarr, "q": adapter.KindQBittorrent, "t": adapter.KindTransmission, "d": adapter.KindDeluge, "rt": adapter.KindRTorrent}
 	if len(kinds) != len(want) {
 		t.Fatalf("built %v", kinds)
 	}

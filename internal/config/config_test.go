@@ -75,7 +75,7 @@ func TestRejectsLiteralSecrets(t *testing.T) {
 
 func TestRejectsUnknownKeysAndPlannedSections(t *testing.T) {
 	expectProblem(t, minimal+"\n[polling]\nintervall = \"5m\"\n", "polling.intervall", "unknown")
-	expectProblem(t, minimal+"\n[[rtorrent]]\nid = \"rt\"\n", "rtorrent", "not implemented")
+	expectProblem(t, minimal+"\n[[lidarr]]\nid = \"l\"\n", "lidarr", "unknown")
 }
 
 func TestRejectsAutomaticMode(t *testing.T) {
@@ -255,7 +255,7 @@ func TestTransmissionSection(t *testing.T) {
 		t.Fatal("transmission password secret not resolved")
 	}
 	expectProblem(t, strings.Replace(src, `id = "tr"`, "id = \"tr\"\nrpc_path = \"rpc\"", 1), "transmission.tr.rpc_path", "must start")
-	expectProblem(t, strings.Replace(minimal, `username = "admin"`, "username = \"admin\"\nrpc_path = \"/x\"", 1), "qbittorrent.qbit.rpc_path", "only applies")
+	expectProblem(t, strings.Replace(minimal, `username = "admin"`, "username = \"admin\"\nrpc_path = \"/x\"", 1), "qbittorrent.qbit.rpc_path", "only applies to Transmission and rTorrent")
 }
 
 func TestDelugeSection(t *testing.T) {
@@ -266,4 +266,11 @@ func TestDelugeSection(t *testing.T) {
 	}
 	expectProblem(t, strings.Replace(src, `id = "dl"`, "id = \"dl\"\nusername = \"x\"", 1), "deluge.dl.username", "password only")
 	expectProblem(t, strings.Replace(src, `password = "env:DL_PW"`, "", 1), "deluge.dl.password", "required")
+}
+
+func TestRTorrentSection(t *testing.T) {
+	cfg := mustParse(t, minimal+"\n[[rtorrent]]\nid = \"rt\"\nurl = \"https://seedbox.example.com/rutorrent\"\nrpc_path = \"/RPC2\"\nusername = \"u\"\npassword = \"env:RT\"\n")
+	if ce := cfg.Clients(); len(ce) != 2 || ce[1].Section != "rtorrent" || ce[1].Config.RPCPath != "/RPC2" {
+		t.Fatalf("%+v", ce)
+	}
 }

@@ -66,11 +66,7 @@ type Config struct {
 	QBittorrent  []ClientConfig  `toml:"qbittorrent"`
 	Transmission []ClientConfig  `toml:"transmission"`
 	Deluge       []ClientConfig  `toml:"deluge"`
-
-	// Planned integrations: recognised so that configuring them produces a
-	// clear "not yet implemented" error instead of an unknown-key error or
-	// silent ignorance.
-	RTorrent []toml.Primitive `toml:"rtorrent"`
+	RTorrent     []ClientConfig  `toml:"rtorrent"`
 
 	// Path is the file this configuration was loaded from.
 	Path string `toml:"-"`
@@ -170,7 +166,8 @@ type ClientConfig struct {
 	ConnectionCommon
 	Username string    `toml:"username"`
 	Password SecretRef `toml:"password"`
-	// RPCPath is the Transmission RPC endpoint path (default /transmission/rpc).
+	// RPCPath is the RPC endpoint path for Transmission (default
+	// /transmission/rpc) or rTorrent's XML-RPC gateway (default /RPC2).
 	RPCPath string `toml:"rpc_path"`
 	// Policy holds connection-scoped diagnosis overrides.
 	Policy PolicyOverrides `toml:"policy"`
@@ -253,20 +250,8 @@ func Parse(raw []byte, path string) (*Config, []Problem, error) {
 	add := func(sev, field, msg string, args ...any) {
 		probs = append(probs, Problem{Severity: sev, Field: field, Message: fmt.Sprintf(msg, args...)})
 	}
-	if undec := md.Undecoded(); len(undec) > 0 {
-		for _, k := range undec {
-			key := k.String()
-			// Planned sections are reported once below, not per key.
-			if top := strings.SplitN(key, ".", 2)[0]; top == "rtorrent" {
-				continue
-			}
-			add("error", key, "unknown configuration key")
-		}
-	}
-	for name, n := range map[string]int{"rtorrent": len(cfg.RTorrent)} {
-		if n > 0 {
-			add("error", name, "%s is planned for v1 but not implemented in this build; remove the [[%s]] section for now", name, name)
-		}
+	for _, k := range md.Undecoded() {
+		add("error", k.String(), "unknown configuration key")
 	}
 	probs = append(probs, validate(&cfg, md)...)
 	if cfg.State.Dir != "" && !filepath.IsAbs(cfg.State.Dir) && path != "" {
@@ -449,7 +434,7 @@ func validate(cfg *Config, md toml.MetaData) []Problem {
 				warnf(field, "no credentials configured; this only works if qBittorrent bypasses authentication for Housekeeparr's address")
 			}
 			if c.RPCPath != "" {
-				errf(field+".rpc_path", "only applies to Transmission")
+				errf(field+".rpc_path", "only applies to Transmission and rTorrent")
 			}
 		case "deluge":
 			if c.Username != "" {
@@ -459,9 +444,9 @@ func validate(cfg *Config, md toml.MetaData) []Problem {
 				errf(field+".password", "required (the deluge-web password)")
 			}
 			if c.RPCPath != "" {
-				errf(field+".rpc_path", "only applies to Transmission")
+				errf(field+".rpc_path", "only applies to Transmission and rTorrent")
 			}
-		case "transmission":
+		case "transmission", "rtorrent":
 			if c.RPCPath != "" && !strings.HasPrefix(c.RPCPath, "/") {
 				errf(field+".rpc_path", "must start with /")
 			}
@@ -615,7 +600,6 @@ func apply(s *policy.Settings, src map[string]string, o PolicyOverrides, from st
 func (c *Config) computeRevision() string {
 	cp := *c
 	cp.Path, cp.Revision = "", ""
-	cp.RTorrent = nil
 	b, _ := json.Marshal(cp)
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])[:12]
@@ -687,6 +671,9 @@ func (c *Config) Clients() []ClientEntry {
 	}
 	for i := range c.Deluge {
 		out = append(out, ClientEntry{"deluge", &c.Deluge[i]})
+	}
+	for i := range c.RTorrent {
+		out = append(out, ClientEntry{"rtorrent", &c.RTorrent[i]})
 	}
 	return out
 }

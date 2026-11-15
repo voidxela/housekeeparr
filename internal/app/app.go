@@ -124,7 +124,7 @@ type TransferCounts struct {
 // MilestoneLimitations are shown wherever operators look for actions.
 var MilestoneLimitations = []string{
 	"Observation only: Housekeeparr never changes media managers or download clients in this release.",
-	"rTorrent is planned for v1 but not implemented yet.",
+	"Recovery, partial-pack handling, and missing-content searches are planned for v1 but not implemented yet.",
 	"No adapter version has been validated against a real released instance yet.",
 }
 
