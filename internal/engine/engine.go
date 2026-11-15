@@ -248,12 +248,13 @@ func backoff(class adapter.ErrorClass, failures int, interval, retryAfter time.D
 	if failures <= 1 {
 		return interval
 	}
+	const ceiling = time.Hour
 	d := interval
-	for i := 1; i < failures && d < 2*time.Hour; i++ {
+	for i := 1; i < failures && d < ceiling; i++ {
 		d *= 2
 	}
-	if d > 2*time.Hour {
-		d = 2 * time.Hour
+	if d > ceiling {
+		d = maxDur(ceiling, interval)
 	}
 	return maxDur(d, retryAfter)
 }
@@ -278,4 +279,10 @@ type fetched struct {
 	op       string
 	started  time.Time
 	duration time.Duration
+}
+
+// LastCycleError reports the most recent state-store error, if any.
+func (e *Engine) LastCycleError() error {
+	_, err := e.LastCycle()
+	return err
 }

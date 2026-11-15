@@ -626,3 +626,19 @@ func TestNoProgressDiagnosisSurvivesManagerOutage(t *testing.T) {
 func findingsAcknowledge(tx *store.Tx, id int64, now time.Time) (*domain.Finding, error) {
 	return findings.Acknowledge(tx, id, "test", now)
 }
+
+func TestBackoffIsBounded(t *testing.T) {
+	iv := 10 * time.Minute
+	if d := backoff(adapter.ErrTransient, 1, iv, 0); d != iv {
+		t.Fatalf("first transient failure must keep cadence, got %s", d)
+	}
+	if d := backoff(adapter.ErrTransient, 50, iv, 0); d != time.Hour {
+		t.Fatalf("transient ceiling %s", d)
+	}
+	if d := backoff(adapter.ErrUnauthorized, 1, iv, 0); d < time.Hour {
+		t.Fatalf("auth failures must not retry rapidly: %s", d)
+	}
+	if d := backoff(adapter.ErrRateLimited, 1, iv, 3*time.Hour); d != 3*time.Hour {
+		t.Fatalf("retry-after not honoured: %s", d)
+	}
+}
