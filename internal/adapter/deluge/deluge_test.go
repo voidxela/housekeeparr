@@ -178,3 +178,17 @@ func TestLoginAndSessionExpiry(t *testing.T) {
 		t.Fatalf("write method must be refused locally: %v", err)
 	}
 }
+
+func TestNullListingIsMalformed(t *testing.T) {
+	for _, body := range []string{`{"result":null,"error":null,"id":3}`, `{"error":null,"id":3}`} {
+		f := &fakeWeb{password: "pw", connected: true, status: []byte(body)}
+		if snap, err := newClient(t, f, "pw").ListTransfers(context.Background()); err == nil {
+			t.Fatalf("%s accepted: complete=%v", body, snap.Complete)
+		}
+	}
+	f := &fakeWeb{password: "pw", connected: true, status: []byte(`{"result":{},"error":null,"id":3}`)}
+	snap, err := newClient(t, f, "pw").ListTransfers(context.Background())
+	if err != nil || !snap.Complete || len(snap.Transfers) != 0 {
+		t.Fatalf("explicit empty result: %v %+v", err, snap)
+	}
+}

@@ -267,11 +267,17 @@ func (c *Client) ListTransfers(ctx context.Context) (domain.TransferSnapshot, er
 		return domain.TransferSnapshot{}, err
 	}
 	collected := time.Now().UTC()
-	var raw []torrent
+	// Only an explicit JSON array (possibly empty) is a complete listing;
+	// null is malformed.
+	var list *[]torrent
 	dec := json.NewDecoder(bytes.NewReader(body))
-	if err := dec.Decode(&raw); err != nil {
+	if err := dec.Decode(&list); err != nil {
 		return domain.TransferSnapshot{}, httpx.Malformed("qbittorrent.torrents_info", err)
 	}
+	if list == nil {
+		return domain.TransferSnapshot{}, httpx.Malformed("qbittorrent.torrents_info", fmt.Errorf("torrent list is null"))
+	}
+	raw := *list
 	c.mu.Lock()
 	v := c.version
 	c.mu.Unlock()

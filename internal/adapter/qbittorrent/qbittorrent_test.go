@@ -365,3 +365,17 @@ func TestUnrunVersionsStayUntested(t *testing.T) {
 		}
 	}
 }
+
+func TestNullListingIsMalformed(t *testing.T) {
+	for _, body := range []string{`null`, ``} {
+		f := &fakeQBit{version: "v5.3.0", webapi: "2.11.2", torrents: []byte(body), user: "a", pass: "b"}
+		if snap, err := setup(t, f).ListTransfers(context.Background()); err == nil {
+			t.Fatalf("%q accepted: complete=%v", body, snap.Complete)
+		}
+	}
+	f := &fakeQBit{version: "v5.3.0", webapi: "2.11.2", torrents: []byte(`[]`), user: "a", pass: "b"}
+	snap, err := setup(t, f).ListTransfers(context.Background())
+	if err != nil || !snap.Complete || len(snap.Transfers) != 0 {
+		t.Fatalf("explicit empty array: %v %+v", err, snap)
+	}
+}

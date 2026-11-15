@@ -153,3 +153,27 @@ func TestVersionCompare(t *testing.T) {
 		}
 	}
 }
+
+// A numeric column of the wrong type must not silently become 0 (which
+// would read as "metadata present" or "public").
+func TestNonIntegerColumnIsMalformed(t *testing.T) {
+	b, err := os.ReadFile("testdata/v0.16.28-d.multicall2.xml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Replace the first <i8> value with a string.
+	s := string(b)
+	i := strings.Index(s, "<i8>")
+	j := strings.Index(s[i:], "</i8>") + i + len("</i8>")
+	bad := s[:i] + "<string>x</string>" + s[j:]
+	c := newClient(t, server(t, "", "", map[string]string{"d.multicall2": bad}), "", "")
+	if _, err := c.ListTransfers(context.Background()); err == nil {
+		t.Fatal("non-integer column accepted")
+	}
+	empty := `<?xml version="1.0"?><methodResponse><params><param><value><array><data></data></array></value></param></params></methodResponse>`
+	c = newClient(t, server(t, "", "", map[string]string{"d.multicall2": empty}), "", "")
+	snap, err := c.ListTransfers(context.Background())
+	if err != nil || !snap.Complete || len(snap.Transfers) != 0 {
+		t.Fatalf("explicit empty array: %v %+v", err, snap)
+	}
+}

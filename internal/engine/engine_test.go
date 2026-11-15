@@ -57,9 +57,18 @@ type harness struct {
 	mgr    *fake.Manager
 	st     *store.Store
 	eng    *Engine
+	// Optional real adapters replacing client "qbit" and manager "sonarr".
+	realClient adapter.DownloadClient
+	realMgr    adapter.MediaManager
 }
 
 func newHarness(t *testing.T, cfgSrc string) *harness {
+	t.Helper()
+	return newHarnessWith(t, cfgSrc, nil)
+}
+
+// newHarnessWith lets a test install real adapters before the engine starts.
+func newHarnessWith(t *testing.T, cfgSrc string, setup func(*harness)) *harness {
 	t.Helper()
 	cfg, _, err := config.Parse([]byte(cfgSrc), "/x/housekeeparr.toml")
 	if err != nil {
@@ -67,6 +76,9 @@ func newHarness(t *testing.T, cfgSrc string) *harness {
 	}
 	h := &harness{t: t, dir: t.TempDir(), cfg: cfg, clock: fake.NewClock(t0),
 		client: fake.NewClient("qbit"), other: fake.NewClient("qbit2"), mgr: fake.NewManager("sonarr")}
+	if setup != nil {
+		setup(h)
+	}
 	h.start()
 	return h
 }
@@ -78,7 +90,18 @@ func (h *harness) conns() *Connections {
 		"qbit":  {ID: "qbit", Name: "qBittorrent", BaseURL: "http://127.0.0.1:8080", Kind: adapter.KindQBittorrent, Enabled: true},
 		"qbit2": {ID: "qbit2", Name: "qBittorrent 2", BaseURL: "http://127.0.0.1:8081", Kind: adapter.KindQBittorrent, Enabled: true},
 	}
-	return &Connections{Clients: []adapter.DownloadClient{h.client, h.other}, Managers: []adapter.MediaManager{h.mgr}, Meta: meta}
+	var client adapter.DownloadClient = h.client
+	var mgr adapter.MediaManager = h.mgr
+	if h.realClient != nil {
+		client = h.realClient
+		m := meta["qbit"]
+		m.Kind = client.Kind()
+		meta["qbit"] = m
+	}
+	if h.realMgr != nil {
+		mgr = h.realMgr
+	}
+	return &Connections{Clients: []adapter.DownloadClient{client, h.other}, Managers: []adapter.MediaManager{mgr}, Meta: meta}
 }
 
 func (h *harness) start() {

@@ -174,6 +174,9 @@ var fields = []string{"d.hash=", "d.name=", "d.state=", "d.is_active=", "d.compl
 	"d.chunk_size=", "d.down.rate=", "d.down.total=", "d.peers_connected=", "d.peers_complete=", "d.is_private=",
 	"d.message=", "d.custom1=", "d.load_date="}
 
+// numericColumns are the indexes in `fields` that must decode as integers.
+var numericColumns = []int{2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 21}
+
 // ListTransfers returns every torrent in the main view.
 func (c *Client) ListTransfers(ctx context.Context) (domain.TransferSnapshot, error) {
 	v, err := c.call(ctx, "d.multicall2", append([]string{"", "main"}, fields...)...)
@@ -217,6 +220,14 @@ func normalize(clientID string, c []any) (domain.Transfer, error) {
 	hash := domain.NormalizeHash(str(0))
 	if len(hash) != 40 {
 		return domain.Transfer{}, fmt.Errorf("unexpected hash %q", redact.Truncate(hash, 64))
+	}
+	// Every numeric column is mandatory. A value of another type must not
+	// silently become 0, which would mean "metadata present", "public",
+	// "not hashing", or "no progress".
+	for _, i := range numericColumns {
+		if _, ok := num(i); !ok {
+			return domain.Transfer{}, fmt.Errorf("column %s is %T, not an integer", fields[i], c[i])
+		}
 	}
 	state, active, complete, hashing, meta := n(2), n(3), n(4), n(5), n(6)
 	t := domain.Transfer{ClientID: clientID, NativeID: hash, Hashes: domain.Hashes{V1: hash}, Name: str(1)}

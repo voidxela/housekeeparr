@@ -223,15 +223,21 @@ type torrent struct {
 
 // ListTransfers returns every torrent.
 func (c *Client) ListTransfers(ctx context.Context) (domain.TransferSnapshot, error) {
+	// torrents is mandatory: a success envelope without it (or with null)
+	// is malformed, not an empty client.
 	var args struct {
-		Torrents []torrent `json:"torrents"`
+		Torrents *[]torrent `json:"torrents"`
 	}
 	if err := c.call(ctx, "torrent-get", map[string]any{"fields": fields}, &args); err != nil {
 		return domain.TransferSnapshot{}, err
 	}
+	if args.Torrents == nil {
+		return domain.TransferSnapshot{}, httpx.Malformed("transmission.torrent-get", fmt.Errorf("response has no torrents list"))
+	}
+	list := *args.Torrents
 	snap := domain.TransferSnapshot{ClientID: c.id, CollectedAt: time.Now().UTC(), Complete: true}
-	for i := range args.Torrents {
-		t, err := normalize(c.id, &args.Torrents[i])
+	for i := range list {
+		t, err := normalize(c.id, &list[i])
 		if err != nil {
 			return domain.TransferSnapshot{}, httpx.Malformed("transmission.torrent-get", err)
 		}
@@ -254,7 +260,12 @@ func normalize(clientID string, r *torrent) (domain.Transfer, error) {
 	if id == "" || r.Status == nil {
 		return domain.Transfer{}, fmt.Errorf("torrent without hashString or status")
 	}
-	hasMeta := r.MetadataPercent == nil || *r.MetadataPercent >= 1
+	// metadataPercentComplete is requested and present since RPC 15. If it
+	// is absent, null, or out of range, metadata state is unknown: sizes,
+	// completion, privacy, and availability are then not trusted, because
+	// Transmission reports placeholder values for them before metadata.
+	metaKnown := r.MetadataPercent != nil && *r.MetadataPercent >= 0 && *r.MetadataPercent <= 1
+	hasMeta := metaKnown && *r.MetadataPercent >= 1
 	left := int64(-1)
 	if r.LeftUntilDone != nil {
 		left = *r.LeftUntilDone
@@ -274,9 +285,14 @@ func normalize(clientID string, r *torrent) (domain.Transfer, error) {
 	case 3:
 		t.StateClass = domain.StateQueued
 	case 4:
-		t.StateClass = domain.StateDownloading
-		if !hasMeta {
+		switch {
+		case !metaKnown:
+			// Active, but whether it is fetching metadata is unknown.
+			t.StateClass = domain.StateDownloading
+		case !hasMeta:
 			t.StateClass = domain.StateMetadata
+		default:
+			t.StateClass = domain.StateDownloading
 		}
 	case 5, 6:
 		t.StateClass = domain.StateComplete
@@ -297,8 +313,12 @@ func normalize(clientID string, r *torrent) (domain.Transfer, error) {
 	if r.AddedDate != nil && *r.AddedDate > 0 {
 		t.AddedAt = domain.KnownValue(time.Unix(*r.AddedDate, 0).UTC())
 	}
+	metaNote := "unavailable until metadata is acquired"
+	if !metaKnown {
+		metaNote = "not trusted: metadataPercentComplete was not reported"
+	}
 	noMeta := func(f string) domain.Signal[int64] {
-		return domain.UnknownValue[int64](f + " unavailable until metadata is acquired")
+		return domain.UnknownValue[int64](f + " " + metaNote)
 	}
 	if hasMeta && r.SizeWhenDone != nil && left >= 0 {
 		t.WantedBytes = domain.KnownValue(*r.SizeWhenDone)
@@ -312,7 +332,7 @@ func normalize(clientID string, r *torrent) (domain.Transfer, error) {
 		}
 	} else {
 		t.WantedBytes, t.VerifiedBytes, t.RemainingBytes, t.TotalBytes = noMeta("wanted size"), noMeta("verified progress"), noMeta("remaining size"), noMeta("total size")
-		t.AllFilesWanted = domain.UnknownValue[bool]("file list unavailable until metadata is acquired")
+		t.AllFilesWanted = domain.UnknownValue[bool]("file selection " + metaNote)
 	}
 	t.NetworkDownloadedBytes = known(r.DownloadedEver, "downloadedEver")
 	t.DownloadRate = known(r.RateDownload, "rateDownload")
@@ -324,6 +344,8 @@ func normalize(clientID string, r *torrent) (domain.Transfer, error) {
 	switch {
 	case r.DesiredAvailable == nil:
 		t.Availability = domain.UnsupportedValue[float64]("desiredAvailable not reported")
+	case !metaKnown:
+		t.Availability = domain.UnknownValue[float64]("not trusted: metadataPercentComplete was not reported")
 	case !hasMeta || left <= 0:
 		t.Availability = domain.UnknownValue[float64]("not meaningful without metadata or missing data")
 	case t.StateClass != domain.StateDownloading:
@@ -335,6 +357,8 @@ func normalize(clientID string, r *torrent) (domain.Transfer, error) {
 	switch {
 	case r.IsPrivate == nil:
 		t.Private = domain.UnsupportedValue[bool]("isPrivate not reported")
+	case !metaKnown:
+		t.Private = domain.UnknownValue[bool]("privacy unknown: metadataPercentComplete was not reported")
 	case !hasMeta:
 		t.Private = domain.UnknownValue[bool]("privacy unknown until metadata is acquired")
 	default:

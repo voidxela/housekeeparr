@@ -113,18 +113,45 @@ func Compatibility(app, version string, minMajor int, tested []string) (adapter.
 	return adapter.CompatUntested, "observation proceeds; this version has not been validated by the integration suite"
 }
 
+// page is one queue page. Both fields are mandatory: a missing or null
+// count or record list is a malformed response, never an empty queue.
 type page struct {
-	TotalRecords int               `json:"totalRecords"`
-	Records      []json.RawMessage `json:"records"`
+	TotalRecords *int               `json:"totalRecords"`
+	Records      *[]json.RawMessage `json:"records"`
 }
 
-// Queue reads the queue sorted by "added" (stable across pages). If the
-// page bound is reached, the total changes between pages, or a row repeats,
-// the snapshot is marked incomplete so absence cannot be inferred.
+func (pg *page) validate() error {
+	switch {
+	case pg.TotalRecords == nil:
+		return fmt.Errorf("queue page has no totalRecords")
+	case *pg.TotalRecords < 0:
+		return fmt.Errorf("queue page reports negative totalRecords %d", *pg.TotalRecords)
+	case pg.Records == nil:
+		return fmt.Errorf("queue page has no records list")
+	}
+	return nil
+}
+
+// Queue reads the queue sorted by "added" (stable across pages). Missing or
+// null envelope fields are malformed responses. If the page bound is
+// reached, the total changes between pages, a row repeats, or the rows read
+// do not account for the reported total, the snapshot is marked incomplete
+// so absence cannot be inferred.
 func (c *Client) Queue(ctx context.Context, managerID string, extra url.Values, normalize func(json.RawMessage) (domain.QueueItem, error)) (domain.QueueSnapshot, error) {
+	op := c.app + ".queue"
 	snap := domain.QueueSnapshot{ManagerID: managerID, Complete: true}
+	incomplete := func(why string) {
+		snap.Complete = false
+		for _, l := range snap.Limitations {
+			if l == why {
+				return
+			}
+		}
+		snap.Limitations = append(snap.Limitations, why)
+	}
 	seen := map[int64]bool{}
-	total := -1
+	total, rows := -1, 0
+	truncated := false
 	for p := 1; p <= c.MaxPages; p++ {
 		q := url.Values{"page": {strconv.Itoa(p)}, "pageSize": {strconv.Itoa(c.PageSize)}, "sortKey": {"added"}, "sortDirection": {"ascending"}}
 		for k, v := range extra {
@@ -134,33 +161,46 @@ func (c *Client) Queue(ctx context.Context, managerID string, extra url.Values, 
 		if err := c.Get(ctx, "queue", "/api/v3/queue", q, &pg); err != nil {
 			return domain.QueueSnapshot{}, err
 		}
+		if err := pg.validate(); err != nil {
+			return domain.QueueSnapshot{}, httpx.Malformed(op, err)
+		}
 		if p == 1 {
 			snap.CollectedAt = time.Now().UTC()
-			total = pg.TotalRecords
-		} else if pg.TotalRecords != total {
-			snap.Complete = false
-			snap.Limitations = append(snap.Limitations, "The queue changed while it was being read; absent rows are not treated as removed this cycle.")
+			total = *pg.TotalRecords
+		} else if *pg.TotalRecords != total {
+			incomplete("The queue changed while it was being read; absent rows are not treated as removed this cycle.")
 		}
-		for _, raw := range pg.Records {
+		records := *pg.Records
+		rows += len(records)
+		for _, raw := range records {
+			var id struct {
+				ID *int64 `json:"id"`
+			}
+			if err := json.Unmarshal(raw, &id); err != nil || id.ID == nil {
+				return domain.QueueSnapshot{}, httpx.Malformed(op, fmt.Errorf("queue record without an id"))
+			}
 			it, err := normalize(raw)
 			if err != nil {
-				return domain.QueueSnapshot{}, httpx.Malformed(c.app+".queue", err)
+				return domain.QueueSnapshot{}, httpx.Malformed(op, err)
 			}
 			it.ManagerID = managerID
 			if seen[it.QueueID] {
-				snap.Complete = false
+				incomplete("The queue returned a row more than once; absent rows are not treated as removed this cycle.")
 				continue
 			}
 			seen[it.QueueID] = true
 			snap.Items = append(snap.Items, it)
 		}
-		if len(pg.Records) < c.PageSize || len(snap.Items) >= total {
+		if len(records) < c.PageSize || rows >= total {
 			break
 		}
 		if p == c.MaxPages {
-			snap.Complete = false
-			snap.Limitations = append(snap.Limitations, fmt.Sprintf("Queue has %d rows; only the first %d were read (max_queue_pages × queue_page_size).", total, len(snap.Items)))
+			truncated = true
+			incomplete(fmt.Sprintf("Queue has %d rows; only the first %d were read (max_queue_pages × queue_page_size).", total, len(snap.Items)))
 		}
+	}
+	if !truncated && rows != total {
+		incomplete(fmt.Sprintf("The queue reported %d rows but returned %d; absent rows are not treated as removed this cycle.", total, rows))
 	}
 	snap.TotalRecords = total
 	return snap, nil
@@ -239,12 +279,17 @@ type healthRecord struct {
 
 // Health reads /api/v3/health.
 func (c *Client) Health(ctx context.Context, managerID string) (domain.HealthSnapshot, error) {
-	var recs []healthRecord
+	// A null body is malformed; only an explicit list (possibly empty)
+	// establishes the current set of health checks.
+	var recs *[]healthRecord
 	if err := c.Get(ctx, "health", "/api/v3/health", nil, &recs); err != nil {
 		return domain.HealthSnapshot{}, err
 	}
+	if recs == nil {
+		return domain.HealthSnapshot{}, httpx.Malformed(c.app+".health", fmt.Errorf("health response is null, not a list"))
+	}
 	snap := domain.HealthSnapshot{ManagerID: managerID, CollectedAt: time.Now().UTC()}
-	for _, r := range recs {
+	for _, r := range *recs {
 		item := domain.HealthItem{Source: r.Source, Type: strings.ToLower(r.Type), Message: redact.Truncate(redact.String(r.Message), 500)}
 		if u, err := url.Parse(r.WikiURL); err == nil && u.Scheme == "https" {
 			item.WikiURL = redact.URL(r.WikiURL)

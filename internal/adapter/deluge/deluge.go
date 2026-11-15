@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
 	"net/http"
 	"strconv"
@@ -242,9 +243,14 @@ func (c *Client) ListTransfers(ctx context.Context) (domain.TransferSnapshot, er
 	if err := c.ensureConnected(ctx); err != nil {
 		return domain.TransferSnapshot{}, err
 	}
+	// Only an explicit object (possibly empty) is a complete listing; a
+	// null or missing result is malformed.
 	var res map[string]status
 	if err := c.call(ctx, "core.get_torrents_status", []any{map[string]any{}, keys}, &res); err != nil {
 		return domain.TransferSnapshot{}, err
+	}
+	if res == nil {
+		return domain.TransferSnapshot{}, httpx.Malformed("deluge.core.get_torrents_status", fmt.Errorf("result is null or missing"))
 	}
 	snap := domain.TransferSnapshot{ClientID: c.id, CollectedAt: time.Now().UTC(), Complete: true}
 	for id, st := range res {
