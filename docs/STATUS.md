@@ -10,6 +10,16 @@ repository · **unverified** = implemented, but behaviour against real
 released applications has not been established · **remaining** = not
 implemented.
 
+## Independent review — 2026-11-15
+
+[Review findings and verification](reviews/2026-11-15.md) confirm the read-only
+foundation and both existing integration combinations, but identify four
+remaining evidence/lifecycle defects (R1–R4). These must be fixed before
+closing this milestone or enabling writes. The native race detector failure
+was reproduced and diagnosed as a 39-bit address-space limitation; a
+supported runner is still required. [Next-session prompt](CLAUDE_NEXT_SESSION.md)
+records the user-approved testing decisions and implementation sequence.
+
 ## Milestone 1 — read-only foundation (in progress)
 
 | Area | Status | Notes |
