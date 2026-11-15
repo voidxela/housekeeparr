@@ -153,6 +153,7 @@ cleanup() {
 trap cleanup EXIT
 
 TESTS=()
+PROBES=() # state-changing workflow probes, run after observation tests
 export HK_IT_MANIFEST="$WORK/torrents/manifest.json" HK_IT_WORK="$WORK"
 
 # --- synthetic torrents -----------------------------------------------------
@@ -220,7 +221,7 @@ for t in json.load(open(manifest)):
     if t.get("deselect"):
         idx = t["files"].index(t["deselect"])
         curl("--data", "hash=%s&id=%d&priority=0" % (t["hash"], idx), qbt + "/api/v2/torrents/filePrio")
-    if t["key"] in ("half", "complete"):
+    if t.get("data", "none") != "none":  # verify any torrent with local data
         curl("--data", "hashes=" + t["hash"], qbt + "/api/v2/torrents/recheck")
     if t["key"] == "stopped":
         for ep in ("stop", "pause"):  # 5.x renamed pause to stop
@@ -380,12 +381,14 @@ start_sonarr() {
 	start_arr sonarr "$SONARR_VERSION" SONARR SONARR_KEY
 	export HK_IT_SONARR_URL="$SONARR" HK_IT_SONARR_KEY="$SONARR_KEY" HK_IT_SONARR_VERSION="$SONARR_VERSION"
 	TESTS+=(TestSonarrReleasedBehaviour TestEngineCorrelatesRealInstances)
+	PROBES+=(TestSonarrQueueRemovalSemantics)
 }
 
 start_radarr() {
 	start_arr radarr "$RADARR_VERSION" RADARR RADARR_KEY
 	export HK_IT_RADARR_URL="$RADARR" HK_IT_RADARR_KEY="$RADARR_KEY" HK_IT_RADARR_VERSION="$RADARR_VERSION"
 	TESTS+=(TestRadarrReleasedBehaviour TestEngineCorrelatesRadarr)
+	PROBES+=(TestRadarrQueueRemovalSemantics)
 }
 
 for c in ${CLIENTS//,/ }; do
@@ -413,8 +416,13 @@ RUN=$(IFS='|'; echo "^(${TESTS[*]})\$")
 set +e
 go test -tags integration -count=1 -v -run "$RUN" ./internal/integration/ | tee "$WORK/go-test.log"
 STATUS=${PIPESTATUS[0]}
+if [ ${#PROBES[@]} -gt 0 ]; then
+	RUN=$(IFS='|'; echo "^(${PROBES[*]})\$")
+	go test -tags integration -count=1 -v -run "$RUN" ./internal/integration/ | tee -a "$WORK/go-test.log"
+	[ "${PIPESTATUS[0]}" -eq 0 ] || STATUS=1
+fi
 set -e
-for t in "${TESTS[@]}"; do
+for t in "${TESTS[@]}" "${PROBES[@]}"; do
 	if ! grep -q -- "^--- PASS: $t " "$WORK/go-test.log"; then
 		echo "required test $t did not pass (skipped, failed, or not run)" >&2
 		STATUS=1

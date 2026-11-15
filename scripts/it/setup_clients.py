@@ -66,7 +66,7 @@ def transmission(url, user, pw, manifest, tdir, save):
     for t in m:
         if t.get("deselect"):
             c.call("torrent-set", ids=[t["hash"]], **{"files-unwanted": [t["files"].index(t["deselect"])]})
-        if t["key"] in ("half", "complete"):
+        if t.get("data", "none") != "none":  # verify any torrent with local data
             c.call("torrent-verify", ids=[t["hash"]])
         if t["key"] == "stopped":
             c.call("torrent-stop", ids=[t["hash"]])
@@ -123,7 +123,7 @@ def deluge(url, pw, dport, duser, dpass, manifest, tdir, save):
         if t.get("deselect"):
             prio = [0 if f == t["deselect"] else 4 for f in t["files"]]
             c.call("core.set_torrent_options", [t["hash"]], {"file_priorities": prio})
-        if t["key"] in ("half", "complete"):
+        if t.get("data", "none") != "none":  # verify any torrent with local data
             c.call("core.force_recheck", [t["hash"]])
         if t["key"] == "stopped":
             c.call("core.pause_torrent", [t["hash"]])
@@ -165,7 +165,7 @@ def rtorrent(port, manifest, tdir, save):
             idx = t["files"].index(t["deselect"])
             scgi_call(port, "f.priority.set", "%s:f%d" % (h, idx), 0)
             scgi_call(port, "d.update_priorities", h)
-        if t["key"] in ("half", "complete"):
+        if t.get("data", "none") != "none":  # verify any torrent with local data
             scgi_call(port, "d.check_hash", h)
         if t["key"] == "stopped":
             scgi_call(port, "d.stop", h)

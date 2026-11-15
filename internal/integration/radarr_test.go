@@ -74,7 +74,7 @@ func TestRadarrReleasedBehaviour(t *testing.T) {
 			}
 		}
 		for k, e := range m {
-			if k != "movie" && it.DownloadID == e.Hash {
+			if e.Manager != "radarr" && it.DownloadID == e.Hash {
 				t.Errorf("Radarr lists %s from the Sonarr category", k)
 			}
 		}

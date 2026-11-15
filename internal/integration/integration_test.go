@@ -34,6 +34,8 @@ type entry struct {
 	Key, Name, Hash, Expect string
 	Private                 bool
 	Deselect                string
+	Manager                 string
+	Files                   []string
 }
 
 func env(t *testing.T, k string) string {

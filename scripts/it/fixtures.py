@@ -56,7 +56,7 @@ def main(out, save):
         elif data == "half":
             # Keep the first half of the pieces intact; zero the rest.
             write(save, name, payload, single, lambda p, d: d[: len(d) // 2] + b"\0" * (len(d) - len(d) // 2))
-        m.append(dict(key=key, name=name, hash=h, expect=expect, private=private, files=[p for p, _ in files], **extra))
+        m.append(dict(key=key, name=name, hash=h, expect=expect, private=private, data=data, files=[p for p, _ in files], **extra))
     MB = 1024 * 1024
     add("complete", "Example.Show.S01E01.1080p.WEB.h264-HKIT", [("Example.Show.S01E01.1080p.WEB.h264-HKIT", 4 * MB)], "complete", data="full")
     add("half", "Example.Show.S01E02.1080p.WEB.h264-HKIT", [("Example.Show.S01E02.1080p.WEB.h264-HKIT", 4 * MB)], "downloading", data="half")
@@ -65,7 +65,8 @@ def main(out, save):
     add("deselected", "Example.Show.S02.1080p.WEB.h264-HKIT", [("e01.mkv", 2 * MB), ("e02.mkv", 2 * MB), ("sample.mkv", 1 * MB)], "downloading", deselect="sample.mkv")
     add("stopped", "Example.Show.S01E05.1080p.WEB.h264-HKIT", [("Example.Show.S01E05.1080p.WEB.h264-HKIT", 2 * MB)], "paused")
     # A movie for Radarr (qBittorrent category movies-radarr); data never arrives.
-    add("movie", "Example.Movie.2024.1080p.WEB.h264-HKIT", [("Example.Movie.2024.1080p.WEB.h264-HKIT.mkv", 2 * MB)], "downloading", manager="radarr")
+    add("movie", "Example.Movie.2024.1080p.WEB.h264-HKIT", [("Example.Movie.2024.1080p.WEB.h264-HKIT.mkv", 2 * MB)], "downloading", manager="radarr", data="half")
+    add("movie2", "Another.Movie.2023.1080p.WEB.h264-HKIT", [("Another.Movie.2023.1080p.WEB.h264-HKIT.mkv", 2 * MB)], "downloading", manager="radarr", data="half")
     # A magnet for a random hash: metadata can never arrive.
     m.append(dict(key="magnet", name="Example.Show.S01E06.1080p.WEB.h264-HKIT", hash=hashlib.sha1(os.urandom(32)).hexdigest(), expect="metadata", private=False, files=[]))
     with open(os.path.join(out, "manifest.json"), "w") as f:
