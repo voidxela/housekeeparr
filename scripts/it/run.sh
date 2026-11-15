@@ -228,6 +228,19 @@ for t in json.load(open(manifest)):
             try: curl("--data", "hashes=" + t["hash"], qbt + "/api/v2/torrents/" + ep); break
             except subprocess.CalledProcessError: pass
 time.sleep(5)
+import os
+for t in json.load(open(manifest)):
+    if t["key"] != "errored":
+        continue
+    def act(*eps):
+        for ep in eps:  # 5.x renamed pause/resume to stop/start
+            try: curl("--data", "hashes=" + t["hash"], qbt + "/api/v2/torrents/" + ep); return
+            except subprocess.CalledProcessError: pass
+    act("stop", "pause")
+    time.sleep(1)
+    os.remove(os.path.join(save, t["name"]))
+    act("start", "resume")
+time.sleep(5)
 PY
 	export HK_IT_QBT_URL="$QBT" HK_IT_QBT_USER=admin HK_IT_QBT_PASS="$QBT_PASS" HK_IT_QBT_VERSION="$QBT_VERSION"
 	TESTS+=(TestQBittorrentReleasedBehaviour)

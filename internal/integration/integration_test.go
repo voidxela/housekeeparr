@@ -162,6 +162,13 @@ func TestQBittorrentReleasedBehaviour(t *testing.T) {
 			if tr.Availability.IsKnown() {
 				t.Errorf("stopped: availability must be unknown, got %v", tr.Availability)
 			}
+		case "errored":
+			// Payload deleted after verification. libtorrent does not notice
+			// until it reads the data, so qBittorrent and Deluge still report
+			// the torrent complete: "complete" is not evidence that data exists.
+			if tr.StateClass != domain.StateComplete {
+				t.Errorf("errored: %s (%s); released behaviour differs from the recorded semantics", tr.StateClass, tr.NativeState)
+			}
 		case "magnet":
 			if tr.StateClass != domain.StateMetadata || tr.WantedBytes.IsKnown() || tr.Availability.IsKnown() {
 				t.Errorf("magnet: %s wanted %v availability %v", tr.StateClass, tr.WantedBytes, tr.Availability)

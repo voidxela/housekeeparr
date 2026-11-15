@@ -54,9 +54,9 @@ func settledListing(t *testing.T, c adapter.DownloadClient, m map[string]entry) 
 					t.Errorf("%s: torrent %s not listed", key, e.Hash)
 					continue
 				}
-				t.Logf("%-10s native=%-14s class=%-11s verified=%v wanted=%v avail=%v(%s) private=%v allWanted=%v peers=%v swarm=%v",
+				t.Logf("%-10s native=%-14s class=%-11s verified=%v wanted=%v avail=%v(%s) private=%v allWanted=%v peers=%v swarm=%v msg=%q",
 					key, tr.NativeState, tr.StateClass, tr.VerifiedBytes, tr.WantedBytes, tr.Availability, tr.Availability.Status,
-					tr.Private, tr.AllFilesWanted, tr.ConnectedPeers, tr.SwarmSeeds)
+					tr.Private, tr.AllFilesWanted, tr.ConnectedPeers, tr.SwarmSeeds, tr.ClientMessage.Value)
 			}
 			return byHash
 		}
@@ -127,6 +127,12 @@ func TestTransmissionReleasedBehaviour(t *testing.T) {
 		case "stopped":
 			if tr.StateClass != domain.StatePaused || tr.Availability.IsKnown() {
 				t.Errorf("stopped: %s (%s) availability %v", tr.StateClass, tr.NativeState, tr.Availability)
+			}
+		case "errored":
+			// Payload deleted after verification, then started: Transmission
+			// reports a local error (error = 3) with an explanation.
+			if tr.StateClass != domain.StateError || tr.ClientMessage.Value == "" {
+				t.Errorf("errored: %s (%s) message %q, want a local error", tr.StateClass, tr.NativeState, tr.ClientMessage.Value)
 			}
 		case "magnet":
 			if tr.StateClass != domain.StateMetadata || tr.WantedBytes.IsKnown() || tr.Private.IsKnown() || tr.Availability.IsKnown() {

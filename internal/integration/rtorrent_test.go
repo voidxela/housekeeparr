@@ -74,6 +74,12 @@ func TestRTorrentReleasedBehaviour(t *testing.T) {
 			if tr.StateClass != domain.StatePaused {
 				t.Errorf("stopped: %s (%s)", tr.StateClass, tr.NativeState)
 			}
+		case "errored":
+			// Payload deleted after verification, then started: rTorrent
+			// stops the download itself and explains why in d.message.
+			if tr.StateClass != domain.StateError || tr.ClientMessage.Value == "" {
+				t.Errorf("errored: %s (%s) message %q, want a client error", tr.StateClass, tr.NativeState, tr.ClientMessage.Value)
+			}
 		case "magnet":
 			if tr.StateClass != domain.StateMetadata || tr.WantedBytes.IsKnown() || tr.Private.IsKnown() {
 				t.Errorf("magnet: %s (%s) wanted %v private %v", tr.StateClass, tr.NativeState, tr.WantedBytes, tr.Private)

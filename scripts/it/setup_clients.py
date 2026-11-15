@@ -11,7 +11,7 @@ Usage:
   setup_clients.py deluge URL PASSWORD DAEMON_PORT DAEMON_USER DAEMON_PASS MANIFEST TORRENT_DIR SAVE_DIR
   setup_clients.py rtorrent SCGI_PORT MANIFEST TORRENT_DIR SAVE_DIR
 """
-import base64, json, socket, sys, time, urllib.request, xmlrpc.client
+import base64, json, os, socket, sys, time, urllib.request, xmlrpc.client
 
 
 def load(manifest):
@@ -22,6 +22,14 @@ def load(manifest):
 def metainfo(tdir, t):
     with open("%s/%s.torrent" % (tdir, t["name"]), "rb") as f:
         return f.read()
+
+
+def errored(m):
+    return [t for t in m if t["key"] == "errored"]
+
+
+def delete_payload(save, t):
+    os.remove(os.path.join(save, t["name"]))
 
 
 def magnet(t):
@@ -70,6 +78,12 @@ def transmission(url, user, pw, manifest, tdir, save):
             c.call("torrent-verify", ids=[t["hash"]])
         if t["key"] == "stopped":
             c.call("torrent-stop", ids=[t["hash"]])
+    time.sleep(3)
+    for t in errored(m):
+        c.call("torrent-stop", ids=[t["hash"]])
+        time.sleep(1)
+        delete_payload(save, t)
+        c.call("torrent-start", ids=[t["hash"]])
     time.sleep(3)
 
 
@@ -128,6 +142,12 @@ def deluge(url, pw, dport, duser, dpass, manifest, tdir, save):
         if t["key"] == "stopped":
             c.call("core.pause_torrent", [t["hash"]])
     time.sleep(3)
+    for t in errored(m):
+        c.call("core.pause_torrent", [t["hash"]])
+        time.sleep(1)
+        delete_payload(save, t)
+        c.call("core.resume_torrent", [t["hash"]])
+    time.sleep(3)
 
 
 # --- rTorrent (direct SCGI; the adapter itself goes through the HTTP gateway) -
@@ -169,6 +189,14 @@ def rtorrent(port, manifest, tdir, save):
             scgi_call(port, "d.check_hash", h)
         if t["key"] == "stopped":
             scgi_call(port, "d.stop", h)
+    time.sleep(3)
+    for t in errored(m):
+        h = t["hash"].upper()
+        scgi_call(port, "d.stop", h)
+        scgi_call(port, "d.close", h)
+        time.sleep(1)
+        delete_payload(save, t)
+        scgi_call(port, "d.start", h)
     time.sleep(3)
 
 

@@ -64,6 +64,9 @@ def main(out, save):
     add("private", "Example.Show.S01E04.1080p.WEB.h264-HKIT", [("Example.Show.S01E04.1080p.WEB.h264-HKIT", 2 * MB)], "downloading", private=True)
     add("deselected", "Example.Show.S02.1080p.WEB.h264-HKIT", [("e01.mkv", 2 * MB), ("e02.mkv", 2 * MB), ("sample.mkv", 1 * MB)], "downloading", deselect="sample.mkv")
     add("stopped", "Example.Show.S01E05.1080p.WEB.h264-HKIT", [("Example.Show.S01E05.1080p.WEB.h264-HKIT", 2 * MB)], "paused")
+    # Verified, then stopped, payload deleted, and started again by the
+    # harness, so the client reports its native missing-data error.
+    add("errored", "Example.Show.S03E01.1080p.WEB.h264-HKIT", [("Example.Show.S03E01.1080p.WEB.h264-HKIT", 2 * MB)], "error", data="full")
     # A movie for Radarr (qBittorrent category movies-radarr); data never arrives.
     add("movie", "Example.Movie.2024.1080p.WEB.h264-HKIT", [("Example.Movie.2024.1080p.WEB.h264-HKIT.mkv", 2 * MB)], "downloading", manager="radarr", data="half")
     add("movie2", "Another.Movie.2023.1080p.WEB.h264-HKIT", [("Another.Movie.2023.1080p.WEB.h264-HKIT.mkv", 2 * MB)], "downloading", manager="radarr", data="half")

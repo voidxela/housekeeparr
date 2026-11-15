@@ -28,9 +28,9 @@ import (
 )
 
 type arrAPI struct {
-	t        *testing.T
-	base     string
-	key      string
+	t    *testing.T
+	base string
+	key  string
 }
 
 func (a arrAPI) do(method, path string, q url.Values, body any) (int, []byte) {
