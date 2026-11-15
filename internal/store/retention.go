@@ -1,0 +1,65 @@
+package store
+
+import "time"
+
+// Retention bounds detailed history. Unresolved findings, their events,
+// and transfers referenced by unresolved findings are never pruned.
+type Retention struct {
+	Observations     time.Duration
+	ConnectionChecks time.Duration
+	ResolvedFindings time.Duration
+	AuditEvents      time.Duration
+}
+
+// PruneResult counts removed rows.
+type PruneResult struct {
+	Observations, Checks, Findings, Transfers, QueueItems, Audit, Runs int64
+}
+
+// Prune removes expired history.
+func (t *Tx) Prune(now time.Time, r Retention) (PruneResult, error) {
+	var out PruneResult
+	run := func(dst *int64, q string, args ...any) error {
+		res, err := t.exec(q, args...)
+		if err != nil {
+			return err
+		}
+		n, _ := res.RowsAffected()
+		*dst += n
+		return nil
+	}
+	obsCut := ms(now.Add(-r.Observations))
+	steps := []func() error{
+		func() error {
+			return run(&out.Observations, "DELETE FROM transfer_observations WHERE at < ?", obsCut)
+		},
+		func() error {
+			return run(&out.Checks, "DELETE FROM connection_checks WHERE at < ?", ms(now.Add(-r.ConnectionChecks)))
+		},
+		func() error {
+			return run(&out.Findings, "DELETE FROM findings WHERE state='resolved' AND resolved_at < ?", ms(now.Add(-r.ResolvedFindings)))
+		},
+		func() error {
+			// Gone transfers are kept while any unresolved finding refers to them.
+			return run(&out.Transfers, `DELETE FROM transfers WHERE present=0 AND gone_at < ? AND NOT EXISTS (
+				SELECT 1 FROM findings f WHERE f.state != 'resolved'
+				AND json_extract(f.subject_json, '$.client_id') = transfers.client_id
+				AND json_extract(f.subject_json, '$.native_id') = transfers.native_id)`, obsCut)
+		},
+		func() error {
+			return run(&out.QueueItems, "DELETE FROM queue_items WHERE present=0 AND gone_at < ?", obsCut)
+		},
+		func() error {
+			return run(&out.Audit, "DELETE FROM audit_events WHERE at < ?", ms(now.Add(-r.AuditEvents)))
+		},
+		func() error {
+			return run(&out.Runs, "DELETE FROM runs WHERE stopped_at IS NOT NULL AND stopped_at < ?", ms(now.Add(-r.AuditEvents)))
+		},
+	}
+	for _, s := range steps {
+		if err := s(); err != nil {
+			return out, err
+		}
+	}
+	return out, nil
+}
