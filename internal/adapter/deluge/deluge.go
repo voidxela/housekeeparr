@@ -60,7 +60,7 @@ func (c *Client) Kind() adapter.Kind { return adapter.KindDeluge }
 
 // allowed lists the only JSON API methods this adapter may call. auth.login
 // creates a web session; it changes nothing in the daemon.
-var allowed = map[string]bool{"auth.login": true, "web.connected": true, "daemon.info": true, "core.get_torrents_status": true}
+var allowed = map[string]bool{"auth.login": true, "web.connected": true, "daemon.get_version": true, "core.get_torrents_status": true}
 
 type rpcError struct {
 	Message string `json:"message"`
@@ -81,6 +81,11 @@ func (c *Client) rawCall(ctx context.Context, method string, params []any, out a
 		return nil, &adapter.Error{Class: adapter.ErrUnsupported, Op: op, Message: "method not permitted in this milestone"}
 	}
 	c.seq++
+	// deluge-web unpacks params with *params, so an empty call must send
+	// [] rather than null (observed on Deluge 2.2.0).
+	if params == nil {
+		params = []any{}
+	}
 	body, _ := json.Marshal(map[string]any{"method": method, "params": params, "id": c.seq})
 	resp, err := c.http.Do(ctx, httpx.Request{Op: op, Method: http.MethodPost, Path: "/json",
 		Header: http.Header{"Content-Type": {"application/json"}}, Body: bytes.NewReader(body)})
@@ -158,7 +163,10 @@ func (c *Client) ensureConnected(ctx context.Context) error {
 
 // TestedVersions lists released versions whose read path passed the
 // disposable-instance integration suite. Only add after a real run.
-var TestedVersions = []string{}
+//
+// 2.2.0 (Debian trixie build, deluged + deluge-web, libtorrent 2.0.11)
+// passed on 2026-11-15; see docs/compatibility.md.
+var TestedVersions = []string{"2.2.0"}
 
 // Probe detects the daemon version and capabilities.
 func (c *Client) Probe(ctx context.Context) (adapter.Probe, error) {
@@ -166,7 +174,7 @@ func (c *Client) Probe(ctx context.Context) (adapter.Probe, error) {
 		return adapter.Probe{}, err
 	}
 	var version string
-	if err := c.call(ctx, "daemon.info", nil, &version); err != nil {
+	if err := c.call(ctx, "daemon.get_version", nil, &version); err != nil {
 		return adapter.Probe{}, err
 	}
 	p := adapter.Probe{App: "Deluge", Version: version, Transport: "deluge-web JSON API over HTTP(S)", Auth: "web password accepted"}

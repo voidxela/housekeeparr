@@ -3,6 +3,7 @@ package deluge
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -34,7 +35,16 @@ func (f *fakeWeb) handler(t *testing.T) http.Handler {
 			Params []any  `json:"params"`
 			ID     int    `json:"id"`
 		}
-		_ = json.NewDecoder(r.Body).Decode(&req)
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &req)
+		var shape map[string]json.RawMessage
+		_ = json.Unmarshal(body, &shape)
+		if p := strings.TrimSpace(string(shape["params"])); !strings.HasPrefix(p, "[") {
+			// Real deluge-web fails with a TypeError on non-list params.
+			_ = json.NewEncoder(w).Encode(map[string]any{"result": nil, "id": req.ID,
+				"error": map[string]any{"message": "TypeError: argument after * must be an iterable, not NoneType", "code": 4}})
+			return
+		}
 		reply := func(result any, code int) {
 			out := map[string]any{"result": result, "error": nil, "id": req.ID}
 			if code != 0 {
@@ -59,7 +69,7 @@ func (f *fakeWeb) handler(t *testing.T) http.Handler {
 		switch req.Method {
 		case "web.connected":
 			reply(f.connected, 0)
-		case "daemon.info":
+		case "daemon.get_version": // exported by deluge/core/daemon.py in 2.0.0, 2.1.1, and 2.2.0
 			reply("2.1.1", 0)
 		case "core.get_torrents_status":
 			keys, _ := json.Marshal(req.Params[1])

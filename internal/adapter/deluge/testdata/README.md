@@ -6,5 +6,11 @@
 
 `tracker_status` and `save_path` appear although the adapter never requests
 them, so contract tests prove they are not retained. Released-version
-compatibility has not been established, and the integration harness does not
-start Deluge yet.
+observation is validated against Deluge 2.2.0 (see `docs/compatibility.md`).
+
+The first real run (2026-11-15, Deluge 2.2.0) corrected two errors that these
+source-derived fixtures had hidden: the version is read with
+`daemon.get_version` (exported in 2.0.0, 2.1.1, and 2.2.0; `daemon.info` does
+not exist in 2.x), and a call without arguments must send `"params": []`
+because deluge-web unpacks params with `*params`. The fake server now rejects
+non-list params.
