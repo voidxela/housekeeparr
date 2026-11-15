@@ -1,0 +1,7 @@
+.git
+bin
+dist
+state
+*.db
+housekeeparr.toml
+.it

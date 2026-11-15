@@ -1,0 +1,26 @@
+# User-level systemd unit (no root required).
+#   install -Dm755 bin/housekeeparr ~/.local/bin/housekeeparr
+#   install -Dm644 packaging/systemd/housekeeparr.service ~/.config/systemd/user/housekeeparr.service
+#   systemctl --user daemon-reload && systemctl --user enable --now housekeeparr
+#   loginctl enable-linger "$USER"   # keep running after logout
+[Unit]
+Description=Housekeeparr (download queue observation)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/housekeeparr run --config %h/.config/housekeeparr/housekeeparr.toml
+Restart=on-failure
+RestartSec=30
+# Stop cleanly: the worker records its shutdown; abrupt kills are reconciled at startup.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=%h/.config/housekeeparr
+UMask=0077
+
+[Install]
+WantedBy=default.target

@@ -35,7 +35,7 @@ implemented.
 | Web interface: overview, needs attention, finding detail with ack/snooze/reopen, downloads, download detail, activity, connections & policy, JSON API, `/healthz` | done | Loopback only; Host allowlist, strict CSP, same-origin + CSRF checks on mutations. Exercised in tests and manually via `curl`; not yet reviewed in a real browser. |
 | Demo mode (`housekeeparr demo`) | done | Real engine over scripted fakes and a simulated clock; state marked `demo`, refused as live state; persistent banner in UI and CLI. |
 | Integration harness against disposable released instances (`scripts/it/run.sh`) | unverified | Written: pinned, checksum-verified qBittorrent 5.3.0 / 4.6.7 and Sonarr 4.0.20 releases on loopback with locally generated torrents (closed-port tracker, DHT/PeX/LSD off); Go assertions in `internal/integration` (build tag `integration`). **Never executed**: running downloaded release binaries was not permitted in the development environment. |
-| Packaging (container image, user-level systemd unit) | remaining | |
+| Packaging: `Dockerfile` (distroless, non-root, headless by default), user-level systemd unit | unverified | Written but never built or run here (no container runtime or user systemd session). The web interface cannot be exposed from a container until authentication exists. See `packaging/README.md`. |
 
 ## Remaining v1 scope (not started unless noted)
 

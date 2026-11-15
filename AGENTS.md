@@ -48,7 +48,7 @@ bin/housekeeparr demo --listen 127.0.0.1:8485   # synthetic data only
 bin/housekeeparr config validate --config housekeeparr.example.toml  # exits 2: example secret refs do not resolve
 ```
 
-Integration suite (downloads pinned releases, runs disposable loopback instances, never uses public torrents): `scripts/it/run.sh [--qbt 5.3.0|4.6.7] [--capture]`. It has not been executed yet; record each real run's versions and results in `docs/STATUS.md` before adding anything to an adapter's `TestedVersions`. There is no container build yet. Do not invent commands or claim checks passed without running them. Adapter `TestedVersions` lists stay empty until a real disposable-instance run passes; fixtures in `testdata/` are synthetic and must say so.
+Integration suite (downloads pinned releases, runs disposable loopback instances, never uses public torrents): `scripts/it/run.sh [--qbt 5.3.0|4.6.7] [--capture]`. It has not been executed yet; record each real run's versions and results in `docs/STATUS.md` before adding anything to an adapter's `TestedVersions`. `Dockerfile` and `packaging/systemd/` exist but have never been built or run; say so until they are. Do not invent commands or claim checks passed without running them. Adapter `TestedVersions` lists stay empty until a real disposable-instance run passes; fixtures in `testdata/` are synthetic and must say so.
 
 ## Migrations
 
