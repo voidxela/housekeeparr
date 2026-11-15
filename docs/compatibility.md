@@ -21,6 +21,10 @@ exists yet.
 | 2026-11-15 (independent review rerun) | Linux aarch64, Go 1.27.4 | qBittorrent 4.6.7 + Sonarr 4.0.20.3014 | all observation and correlation assertions passed |
 | 2026-11-15 (after R1–R4 fixes, with new `Complete`/`totalRecords` assertions) | Linux aarch64, Go 1.27.4 | qBittorrent 5.3.0 + Sonarr 4.0.20.3014 | all assertions passed; real listings complete and queue row count equals `totalRecords` |
 | 2026-11-15 (after R1–R4 fixes, with new `Complete`/`totalRecords` assertions) | Linux aarch64, Go 1.27.4 | qBittorrent 4.6.7 + Sonarr 4.0.20.3014 | all assertions passed; same |
+| 2026-11-15 | Linux aarch64, Go 1.27.4 | qBittorrent 5.3.0 + Sonarr 4.0.20.3014 + Radarr 6.4.4.10685 (linux-core-arm64, host ICU) | all assertions passed, including Radarr status/health/queue (unknown-movie row, download id = infohash) and engine correlation |
+| 2026-11-15 | Linux aarch64, Go 1.27.4 | Transmission 4.0.6 (daemon built from the release tarball; sha256 cross-checked against Arch's PKGBUILD) | all assertions passed; every requested `torrent-get` field present |
+| 2026-11-15 | Linux aarch64, Go 1.27.4 | Transmission 4.1.4 (daemon built from the release tarball; GitHub-published digest) | all assertions passed with the legacy protocol; every requested field present |
+| 2026-11-15 | Linux aarch64, Go 1.27.4 | rTorrent 0.9.8 / libtorrent 0.13.8 (Debian trixie build, extracted, not installed) via lighttpd 1.4.79 `mod_scgi` with HTTP basic auth | all assertions passed, including wrong-password rejection at the gateway |
 
 What the suite exercised (`scripts/it/run.sh`, `internal/integration`):
 session login; version probe; listing of complete, half-complete (after
@@ -31,7 +35,21 @@ selection; availability (a half-complete torrent with no peers reports 0.5,
 confirming that libtorrent counts this client's own pieces); absence of
 tracker data in normalized snapshots; Sonarr status, health, and queue for
 torrents of unknown series (download ID = infohash); end-to-end correlation
-through the engine.
+through the engine. With `--managers sonarr,radarr`, the same for Radarr
+6.4.4.10685 with a torrent in its own category (unknown movie), including
+that Sonarr's rows never appear in Radarr's queue. With `--clients transmission` (`--tr 4.0.6|4.1.4`) and `--clients rtorrent`,
+the same torrent set is observed in those clients: authentication
+(including rejection of a wrong password), version probe, complete,
+verified-half, empty, private, deselected, stopped, and magnet torrents,
+privacy, file selection, and availability semantics (Transmission reports
+known 0 with no connected peers; rTorrent availability is unsupported). For
+Transmission the test also sends the adapter's exact `torrent-get` request and
+checks every field is present, which is what establishes that the legacy
+protocol remains sufficient on 4.1.4. rTorrent 0.9.8 does not list a magnet
+without a tracker when DHT is off, so the harness adds the closed loopback
+tracker to it. Every run also asserts
+that real listings are complete and that queue row counts equal
+`totalRecords`.
 
 Observed corrections applied: qBittorrent reports availability 0 (not −1) for
 stopped torrents and torrents without metadata, so the adapter now treats
@@ -47,11 +65,11 @@ exist in the library, import completion, and every other application.
 | Application | Floor | Source evidence | Transport | Observation | No-progress recovery | Metadata recovery | Preserved-data failure handling | Partial-pack handling |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | Sonarr | 4.0 | `v4.0.20.3014` | HTTP API v3, API key header | **tested: 4.0.20.3014**; others contract-tested | not implemented | not implemented | not implemented | not implemented |
-| Radarr | 5.0 | `v6.4.4.10685` | HTTP API v3, API key header | contract-tested | not implemented | not implemented | not implemented | n/a (Sonarr-specific in v1) |
+| Radarr | 5.0 | `v6.4.4.10685` | HTTP API v3, API key header | **tested: 6.4.4.10685** (unknown-movie queue items only); others contract-tested | not implemented | not implemented | not implemented | n/a (Sonarr-specific in v1) |
 | qBittorrent | 4.1 (WebUI API v2) | `release-4.6.7`, `release-5.3.0` | WebUI API v2, session cookie | **tested: 5.3.0, 4.6.7**; others contract-tested | not implemented | not implemented | not implemented | — |
-| Transmission | 2.80 (RPC 15) | `4.0.6`, `4.1.4` | legacy RPC (deprecated in 4.1), session-id handshake, optional basic auth | contract-tested | not implemented | not implemented | not implemented | — |
+| Transmission | 2.80 (RPC 15) | `4.0.6`, `4.1.4` | legacy RPC (deprecated in 4.1, still supported throughout 4.x), session-id handshake, optional basic auth | **tested: 4.0.6, 4.1.4**; others contract-tested | not implemented | not implemented | not implemented | — |
 | Deluge | 2.0 | `deluge-2.1.1` | deluge-web JSON API (`/json`); daemon protocol unsupported | contract-tested | not implemented | not implemented | not implemented | — |
-| rTorrent | 0.9.8 | `v0.9.8`, `v0.16.28` | XML-RPC over an HTTP(S) SCGI gateway; raw SCGI unsupported | contract-tested | not implemented | not implemented | not implemented | — |
+| rTorrent | 0.9.8 | `v0.9.8`, `v0.16.28` | XML-RPC over an HTTP(S) SCGI gateway (tested: lighttpd `mod_scgi`); raw SCGI unsupported | **tested: 0.9.8**; others contract-tested | not implemented | not implemented | not implemented | — |
 
 ## Observation signals by client
 
