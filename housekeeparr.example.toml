@@ -98,3 +98,12 @@ password = "file:/run/secrets/qbittorrent_password"
 # id = "deluge"
 # url = "http://127.0.0.1:8112"
 # password = "file:/run/secrets/deluge_web_password"
+
+# rTorrent through an XML-RPC-over-HTTP gateway (nginx scgi_pass, or
+# ruTorrent's /RPC2). Raw SCGI sockets are not supported.
+# [[rtorrent]]
+# id = "rtorrent"
+# url = "https://seedbox.example.com/rutorrent"
+# rpc_path = "/RPC2"
+# username = "user"
+# password = "file:/run/secrets/rtorrent_password"
