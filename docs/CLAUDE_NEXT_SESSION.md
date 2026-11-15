@@ -19,7 +19,7 @@ Continue implementing Housekeeparr through the complete approved v1 scope in `do
 ## Next: finish compatibility closure (step 1), then step 2
 
 1. ~~Queue-removal probe on unknown rows~~ done (compatibility.md "Workflow-semantics probes"): accepted, row returns after refresh, nothing blocklisted, client and payload preserved. Repeat on managed rows with grab history (item 3).
-2. Real client error state: verify a torrent, delete its payload, recheck/resume, and assert `StateError` on all four clients (R3 and preserved-data handling depend on it).
+2. ~~Real client error state~~ done for payload deletion without restart (compatibility.md "Missing-data semantics"): Transmission and rTorrent report errors (rTorrent mapping fixed); qBittorrent and Deluge still report complete. Still to exercise: missing files after a client restart and after a forced recheck, for all four.
 3. Managed content with grab history (the long pole): a loopback fake indexer serving the synthetic `.torrent`. The namespace blocks the managers' metadata lookups; first establish from the pinned release how series/movie metadata is fetched and whether a loopback stand-in can serve it. Otherwise run only that leg with `--no-netns`, labelled non-isolated. Do not seed manager databases by hand. Prove with qBittorrent, then the other three clients (this also closes manager correlation for them).
 4. If item 3 does not converge in bounded effort, record findings and start step 2 below (it does not depend on it). Adapters gain no write method until the probes above are recorded.
 

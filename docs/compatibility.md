@@ -28,6 +28,7 @@ exists yet.
 | 2026-11-15 | Linux aarch64, Go 1.27.4 | Deluge 2.2.0 (Debian trixie deluged + deluge-web, libtorrent 2.0.11; extracted, not installed) | all assertions passed after two adapter fixes found by this run (`daemon.get_version`; `[]` params) |
 | 2026-11-15 (isolated: loopback-only network namespace, the new default) | Linux aarch64, Go 1.27.4 | qBittorrent 5.3.0 + Sonarr 4.0.20.3014 + Radarr 6.4.4.10685; qBittorrent 4.6.7 + Sonarr; Transmission 4.0.6; Transmission 4.1.4; rTorrent 0.9.8; Deluge 2.2.0 | all assertions passed in every combination |
 | 2026-11-15 (isolated, with the removal probes and a second partially downloaded movie fixture) | Linux aarch64, Go 1.27.4 | qBittorrent 5.3.0 + Sonarr + Radarr; qBittorrent 4.6.7 + Sonarr; Transmission 4.0.6 and 4.1.4; rTorrent 0.9.8; Deluge 2.2.0 | all observation assertions and both probes passed |
+| 2026-11-15 (isolated, with the `errored` fixture: verified, stopped, payload deleted, started) | Linux aarch64, Go 1.27.4 | full matrix as above | all assertions passed; error-state semantics below |
 
 What the suite exercised (`scripts/it/run.sh`, `internal/integration`):
 session login; version probe; listing of complete, half-complete (after
@@ -75,6 +76,24 @@ Not exercised: client error states (`error`, `missingFiles`), queueing,
 checking, real peers or swarm counts, v2/hybrid torrents, authentication
 bypass, reverse-proxy base paths, TLS, large libraries, Sonarr series that
 exist in the library, import completion, and every other application.
+
+## Missing-data (client error) semantics
+
+Observed 2026-11-15 for a torrent that was verified, stopped, had its payload
+deleted, and was started again (no peers; no restart of the client):
+
+| Client | Reported | Housekeeparr class |
+| --- | --- | --- |
+| Transmission 4.0.6, 4.1.4 | `error = 3`, "No data found! Ensure your drives are connected…" | client error |
+| rTorrent 0.9.8 | stopped by rTorrent, `d.message` "Download registered as completed, but hash check returned unfinished chunks.", completed bytes reset to 0 | client error (since this run; previously misread as a user pause) |
+| qBittorrent 5.3.0, 4.6.7 | still `stalledUP` (complete) | complete |
+| Deluge 2.2.0 | still `Seeding` | complete |
+
+libtorrent-based clients do not notice missing payload until they read it,
+so a "complete" state is not evidence that the data still exists. Missing
+files after a client restart or a forced recheck have not been exercised yet.
+Preserved-data failure handling must not rely on client state alone for
+qBittorrent and Deluge.
 
 ## Workflow-semantics probes
 
