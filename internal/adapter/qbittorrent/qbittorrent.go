@@ -20,11 +20,12 @@ import (
 	"github.com/voidxela/housekeeparr/internal/domain"
 )
 
-// AvailabilityMeaning qualifies qBittorrent's availability figure. Verified
-// against qBittorrent 5.3.0 / libtorrent 2.0.11 source: the value is
-// libtorrent's distributed_copies, which counts this client's own pieces and
-// connected peers across all pieces of the torrent, and is -1 when not
-// computed.
+// AvailabilityMeaning qualifies qBittorrent's availability figure: libtorrent's
+// distributed_copies over all pieces, counting this client's own pieces and
+// connected peers (libtorrent 2.0.11 source; confirmed on qBittorrent 5.3.0 by
+// the integration suite, where a half-complete torrent with no peers reported
+// 0.5). Seeding torrents report -1; stopped torrents and torrents without
+// metadata report 0 (observed on 5.3.0), so the adapter treats those as unknown.
 const AvailabilityMeaning = "qBittorrent availability is libtorrent's distributed-copies figure: it covers this client and currently connected peers only, not the whole swarm."
 
 // Options configure the adapter.
@@ -227,7 +228,11 @@ func compatibility(v version) (adapter.Compatibility, string) {
 // TestedVersions lists released versions whose read path passed the
 // disposable-instance integration suite (scripts/it/run.sh).
 // Only add versions after a real, passing run.
-var TestedVersions = []string{}
+//
+// 5.3.0 and 4.6.7 (static qbittorrent-nox builds, aarch64) passed on
+// 2026-11-15; see docs/compatibility.md for what the suite does and does not
+// exercise.
+var TestedVersions = []string{"5.3.0", "4.6.7"}
 
 // torrent mirrors the fields Housekeeparr reads. Sensitive fields
 // (tracker, magnet_uri, save_path, content_path, comment) are deliberately
@@ -380,6 +385,10 @@ func normalize(clientID string, r *torrent, v version) (domain.Transfer, error) 
 		t.Availability = domain.UnsupportedValue[float64]("availability not reported")
 	case *r.Availability < 0:
 		t.Availability = domain.UnknownValue[float64]("not computed by the client in this state")
+	case !hasMeta:
+		t.Availability = domain.UnknownValue[float64]("no pieces are known until metadata is acquired")
+	case class != domain.StateDownloading:
+		t.Availability = domain.UnknownValue[float64]("only meaningful while the torrent is active")
 	default:
 		t.Availability = domain.Signal[float64]{Status: domain.Known, Value: *r.Availability, Note: AvailabilityMeaning}
 	}

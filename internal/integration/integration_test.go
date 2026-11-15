@@ -154,9 +154,12 @@ func TestQBittorrentReleasedBehaviour(t *testing.T) {
 			if tr.StateClass != domain.StatePaused {
 				t.Errorf("stopped: %s (%s)", tr.StateClass, tr.NativeState)
 			}
+			if tr.Availability.IsKnown() {
+				t.Errorf("stopped: availability must be unknown, got %v", tr.Availability)
+			}
 		case "magnet":
-			if tr.StateClass != domain.StateMetadata || tr.WantedBytes.IsKnown() {
-				t.Errorf("magnet: %s wanted %v", tr.StateClass, tr.WantedBytes)
+			if tr.StateClass != domain.StateMetadata || tr.WantedBytes.IsKnown() || tr.Availability.IsKnown() {
+				t.Errorf("magnet: %s wanted %v availability %v", tr.StateClass, tr.WantedBytes, tr.Availability)
 			}
 		}
 	}

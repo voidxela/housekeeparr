@@ -95,7 +95,7 @@ func TestProbe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.App != "Sonarr" || p.Version != "4.0.20.3014" || p.Compatibility != adapter.CompatUntested {
+	if p.App != "Sonarr" || p.Version != "4.0.20.3014" || p.Compatibility != adapter.CompatTested {
 		t.Fatalf("probe %+v", p)
 	}
 	for k, v := range p.Write {
@@ -226,5 +226,14 @@ func TestOldSonarrUnsupported(t *testing.T) {
 	f.status = []byte(`{"appName":"Radarr","version":"5.0.0"}`)
 	if _, err := c.Probe(context.Background()); adapter.ClassOf(err) != adapter.ErrUnsupported {
 		t.Fatalf("non-Sonarr app must be rejected: %v", err)
+	}
+}
+
+func TestUnrunSonarrVersionUntested(t *testing.T) {
+	f := newFake(t)
+	f.status = []byte(`{"appName":"Sonarr","version":"4.0.19.2979"}`)
+	p, err := client(t, f, apiKey, 3, 10).Probe(context.Background())
+	if err != nil || p.Compatibility != adapter.CompatUntested {
+		t.Fatalf("%s %v", p.Compatibility, err)
 	}
 }

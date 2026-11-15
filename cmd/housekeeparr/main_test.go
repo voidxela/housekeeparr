@@ -134,7 +134,7 @@ func TestEndToEndOneShotReadOnlySlice(t *testing.T) {
 		t.Fatalf("config validate: %d\n%s%s", code, out, errOut)
 	}
 	code, out, errOut := runCLI(t, "check", "--config", cfg)
-	if code != exitOK || !strings.Contains(out, "untested") || !strings.Contains(out, "7 transfers listed") {
+	if code != exitOK || !strings.Contains(out, "compatibility: tested") || !strings.Contains(out, "7 transfers listed") {
 		t.Fatalf("check: %d\n%s%s", code, out, errOut)
 	}
 	code, out, errOut = runCLI(t, "run", "--once", "--config", cfg)

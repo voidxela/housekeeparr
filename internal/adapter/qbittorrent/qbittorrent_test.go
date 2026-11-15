@@ -109,8 +109,8 @@ func TestV5ContractNormalization(t *testing.T) {
 	if p.App != "qBittorrent" || p.Version != "v5.3.0" || p.APIVersion != "2.11.4" {
 		t.Fatalf("probe: %+v", p)
 	}
-	if p.Compatibility != adapter.CompatUntested {
-		t.Fatalf("no version is tested until the integration suite runs; got %s", p.Compatibility)
+	if p.Compatibility != adapter.CompatTested {
+		t.Fatalf("5.3.0 passed the integration suite; got %s", p.Compatibility)
 	}
 	if p.Read[adapter.CapPrivacy].Support != adapter.Supported {
 		t.Fatal("privacy should be supported on 5.x")
@@ -305,5 +305,63 @@ func TestStateMappingCoversKnownStates(t *testing.T) {
 	}
 	if stateClass("somethingNew") != domain.StateUnknown {
 		t.Error("unrecognised states must stay unknown")
+	}
+}
+
+// Captured responses from real released instances (scripts/it/run.sh
+// --capture, sanitized). These pin the adapter to observed behaviour.
+func TestCapturedReleasedResponses(t *testing.T) {
+	for _, tc := range []struct {
+		version, webapi, file string
+		privacy               domain.SignalStatus
+		stopped               string
+	}{
+		{"v5.3.0", "2.16.2", "captured-v5.3.0-torrents_info.json", domain.Known, "stoppedDL"},
+		{"v4.6.7", "2.9.3", "captured-v4.6.7-torrents_info.json", domain.Unsupported, "pausedDL"},
+	} {
+		t.Run(tc.version, func(t *testing.T) {
+			f := &fakeQBit{version: tc.version, webapi: tc.webapi, torrents: fixture(t, tc.file), user: "admin", pass: "pw"}
+			c := setup(t, f)
+			p, err := c.Probe(context.Background())
+			if err != nil || p.Compatibility != adapter.CompatTested {
+				t.Fatalf("%s must be recorded as tested: %v %v", tc.version, p.Compatibility, err)
+			}
+			snap, err := c.ListTransfers(context.Background())
+			if err != nil || len(snap.Transfers) != 7 {
+				t.Fatalf("%d %v", len(snap.Transfers), err)
+			}
+			states := map[domain.StateClass]int{}
+			for _, tr := range snap.Transfers {
+				states[tr.StateClass]++
+				if tr.Private.Status != tc.privacy && tr.StateClass != domain.StateMetadata {
+					t.Errorf("%s privacy %v", tr.Name, tr.Private)
+				}
+				if tr.StateClass == domain.StatePaused && tr.NativeState != tc.stopped {
+					t.Errorf("stopped state name %q", tr.NativeState)
+				}
+				if tr.StateClass != domain.StateDownloading && tr.Availability.IsKnown() {
+					t.Errorf("%s (%s): availability must be unknown outside active downloading, got %v", tr.Name, tr.NativeState, tr.Availability)
+				}
+				if v, ok := tr.Availability.Get(); ok && tr.VerifiedBytes.Value > 0 && v != 0.5 {
+					t.Errorf("half-complete torrent with no peers: availability %v, observed 0.5 on the real instance", v)
+				}
+			}
+			want := map[domain.StateClass]int{domain.StateDownloading: 4, domain.StatePaused: 1, domain.StateMetadata: 1, domain.StateComplete: 1}
+			for k, n := range want {
+				if states[k] != n {
+					t.Errorf("%s: %d, want %d (%v)", k, states[k], n, states)
+				}
+			}
+		})
+	}
+}
+
+func TestUnrunVersionsStayUntested(t *testing.T) {
+	for _, v := range []string{"v5.2.4", "v5.3.1", "v4.6.6"} {
+		f := &fakeQBit{version: v, torrents: []byte("[]"), user: "a", pass: "b"}
+		p, err := setup(t, f).Probe(context.Background())
+		if err != nil || p.Compatibility != adapter.CompatUntested {
+			t.Errorf("%s: %s %v", v, p.Compatibility, err)
+		}
 	}
 }

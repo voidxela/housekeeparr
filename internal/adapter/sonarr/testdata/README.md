@@ -8,6 +8,6 @@
 
 `outputPath` values and an `apikey=` query string are included deliberately so
 contract tests prove they are not retained. These fixtures are not captures
-from a running instance; released-version compatibility has not been
-established. `scripts/it/run.sh` exists but has not yet been executed (see
-`docs/STATUS.md`).
+from a running instance. Observation compatibility with Sonarr 4.0.20.3014 was
+established by `scripts/it/run.sh` on 2026-11-15 (see `docs/compatibility.md`);
+Sonarr responses are not yet captured as fixtures.
