@@ -65,6 +65,30 @@ No application version is currently claimed as tested. The first harness run is 
 `internal/adapter/*/testdata` are synthetic; their READMEs record the released
 source they were derived from.
 
+## Performance measurements
+
+`HK_WORKLOAD=1 go test ./internal/engine -run ReferenceWorkload -v` simulates
+one day (144 ten-minute cycles) of a larger multi-instance install: two
+clients × 2,000 transfers (100 incomplete each, 60 of them stalled), Sonarr and
+Radarr with 150 queue rows each. Fake adapters, so network time is excluded.
+Measured on the development host (aarch64, 8 cores, shared VM):
+
+| Version | Mean cycle | Worst cycle | State after 1 day | Heap in use |
+| --- | --- | --- | --- | --- |
+| before optimization | 5.03 s | 5.89 s | 33.3 MiB | 2.5 MiB |
+| current | 1.36 s | 1.73 s | 37.1 MiB | 2.9 MiB |
+
+Optimizations: in-memory correlation index (was a full table scan per queue
+row), bulk previous-state read, no rewrite or re-serialization of unchanged
+complete transfers, per-client loading of findings and queue relationships.
+
+These are measurements, not release budgets. Known concern: observation rows
+store verbose JSON signals, so a library with many long-stalled transfers
+grows by tens of MiB per day under the default 7-day retention; a compact
+observation encoding is *remaining*. The typical-small-installation workload,
+CPU/memory budgets on documented modest hardware, and interface latency
+budgets required by the specification are also *remaining*.
+
 ## Environment limitations observed during development
 
 - `go test -race` cannot run on the development host (ThreadSanitizer:
