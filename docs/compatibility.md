@@ -27,6 +27,7 @@ exists yet.
 | 2026-11-15 | Linux aarch64, Go 1.27.4 | rTorrent 0.9.8 / libtorrent 0.13.8 (Debian trixie build, extracted, not installed) via lighttpd 1.4.79 `mod_scgi` with HTTP basic auth | all assertions passed, including wrong-password rejection at the gateway |
 | 2026-11-15 | Linux aarch64, Go 1.27.4 | Deluge 2.2.0 (Debian trixie deluged + deluge-web, libtorrent 2.0.11; extracted, not installed) | all assertions passed after two adapter fixes found by this run (`daemon.get_version`; `[]` params) |
 | 2026-11-15 (isolated: loopback-only network namespace, the new default) | Linux aarch64, Go 1.27.4 | qBittorrent 5.3.0 + Sonarr 4.0.20.3014 + Radarr 6.4.4.10685; qBittorrent 4.6.7 + Sonarr; Transmission 4.0.6; Transmission 4.1.4; rTorrent 0.9.8; Deluge 2.2.0 | all assertions passed in every combination |
+| 2026-11-15 (isolated, with the removal probes and a second partially downloaded movie fixture) | Linux aarch64, Go 1.27.4 | qBittorrent 5.3.0 + Sonarr + Radarr; qBittorrent 4.6.7 + Sonarr; Transmission 4.0.6 and 4.1.4; rTorrent 0.9.8; Deluge 2.2.0 | all observation assertions and both probes passed |
 
 What the suite exercised (`scripts/it/run.sh`, `internal/integration`):
 session login; version probe; listing of complete, half-complete (after
@@ -74,6 +75,26 @@ Not exercised: client error states (`error`, `missingFiles`), queueing,
 checking, real peers or swarm counts, v2/hybrid torrents, authentication
 bypass, reverse-proxy base paths, TLS, large libraries, Sonarr series that
 exist in the library, import completion, and every other application.
+
+## Workflow-semantics probes
+
+Harness-side requests to disposable instances (`internal/integration/probe_test.go`,
+run after the observation tests); Housekeeparr adapters still have no write
+methods. Released `QueueController.RemoveAction` (Sonarr `v4.0.20.3014`,
+Radarr `v6.4.4.10685`) defaults `removeFromClient` to **true**, so every flag
+is sent explicitly.
+
+| Date | Versions | Request | Observed |
+| --- | --- | --- | --- |
+| 2026-11-15 | Sonarr 4.0.20.3014, Radarr 6.4.4.10685, qBittorrent 5.3.0 (isolated) | `DELETE /api/v3/queue/{id}?removeFromClient=false&blocklist=false&skipRedownload=true&changeCategory=false` (ignore path) on an unknown-series / unknown-movie row with partial data | HTTP 200; row removed immediately; **row tracked again after `RefreshMonitoredDownloads`**; no blocklist entry or history event; torrent still registered, same state and verified bytes, payload bytes identical |
+| 2026-11-15 | same | same with `blocklist=true` (`MarkAsFailed`, redownload suppressed) | identical to the ignore path: accepted, row returns after refresh, **nothing blocklisted**, client and payload unchanged |
+
+Interpretation: for content without grab history, acceptance of a removal
+is not a durable effect and does not blocklist anything, so a recovery
+workflow must verify queue state after a refresh and treat these rows as
+ineligible. The same requests on rows with real grab history (managed
+content) are not yet probed; that is the prerequisite for any recovery
+workflow.
 
 ## Workflows by application
 
