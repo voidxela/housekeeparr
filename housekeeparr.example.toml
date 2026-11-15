@@ -1,0 +1,76 @@
+# Housekeeparr configuration (schema version 1).
+#
+# Copy to housekeeparr.toml and adjust. Credentials are never written here:
+# use secret references of the form "env:NAME" or "file:/absolute/path".
+version = 1
+
+# "observe" (default) reads and evaluates but never writes to managers or
+# clients. "paused" keeps visibility and stops new automation. Controlled
+# automatic mode is not available in this milestone.
+mode = "observe"
+
+[state]
+# Small writable directory for the embedded database and lock file.
+# Relative paths resolve against this file's directory. Avoid network
+# filesystems (NFS/SMB) for state.
+dir = "state"
+
+[web]
+# The interface is optional. It binds to loopback only in this milestone;
+# use an SSH tunnel or a local reverse proxy for remote viewing.
+enabled = true
+listen = "127.0.0.1:8484"
+
+[polling]
+interval = "10m"         # transfer sampling interval (proposed default)
+request_timeout = "30s"
+max_concurrency = 4      # connections polled in parallel
+jitter = "30s"           # random delay added to each cycle start
+
+[retention]
+observations = "168h"                 # detailed transfer observations
+max_observations_per_transfer = 1000
+connection_checks = "168h"
+resolved_findings = "2160h"           # unresolved findings are never pruned
+audit_events = "4320h"
+
+[log]
+level = "info"   # debug, info, warn, error
+format = "text"  # text, json
+
+# Global diagnosis settings. Every value shown is the built-in proposed
+# default; omit a key to inherit it. See docs/SPEC.md section 5.1.
+[policy]
+# new_download_grace = "30m"   # measured from the client's added time when known, else first observation
+# no_progress_window = "90m"   # qualifying observation time required, counted after grace
+# near_complete_ratio = 0.95
+# near_complete_window = "4h"  # replaces no_progress_window at or above near_complete_ratio
+# min_observations = 3
+# max_observation_gap = "20m"  # defaults to 2 × polling interval; larger gaps restart qualification
+# metadata_timeout = "60m"
+# import_settle = "30m"
+# min_progress_bytes = 1       # verified-byte increase that counts as progress
+
+[[sonarr]]
+id = "sonarr"
+name = "Sonarr"
+url = "http://127.0.0.1:8989"          # include any reverse-proxy base path
+api_key = "env:HOUSEKEEPARR_SONARR_API_KEY"
+# Map download client names as configured *inside Sonarr* to Housekeeparr
+# client connection ids. Without a mapping, correlation uses infohash only.
+download_clients = { "qBittorrent" = "qbittorrent" }
+# queue_page_size = 200
+# max_queue_pages = 25
+
+[[qbittorrent]]
+id = "qbittorrent"
+name = "qBittorrent"
+url = "http://127.0.0.1:8080"
+username = "admin"
+password = "file:/run/secrets/qbittorrent_password"
+# ca_file = "/etc/ssl/private-ca.pem"   # extra CA; TLS verification is never disabled
+# allow_insecure_http = false           # required for plain HTTP to non-local hosts
+
+# Connection-scoped overrides take precedence over [policy].
+# [qbittorrent.policy]
+# no_progress_window = "3h"
