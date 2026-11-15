@@ -7,6 +7,7 @@ import (
 	"github.com/voidxela/housekeeparr/internal/adapter/qbittorrent"
 	"github.com/voidxela/housekeeparr/internal/adapter/radarr"
 	"github.com/voidxela/housekeeparr/internal/adapter/sonarr"
+	"github.com/voidxela/housekeeparr/internal/adapter/transmission"
 	"github.com/voidxela/housekeeparr/internal/config"
 	"github.com/voidxela/housekeeparr/internal/redact"
 )
@@ -68,8 +69,13 @@ func Build(cfg *config.Config, secrets map[string]string) (*Connections, error) 
 		}
 		out.Managers = append(out.Managers, c)
 	}
-	for _, q := range cfg.QBittorrent {
-		meta := ConnMeta{ID: q.ID, Name: q.DisplayName(), BaseURL: redact.URL(q.URL), Kind: adapter.KindQBittorrent,
+	for _, ce := range cfg.Clients() {
+		q := ce.Config
+		kind := adapter.KindQBittorrent
+		if ce.Section == "transmission" {
+			kind = adapter.KindTransmission
+		}
+		meta := ConnMeta{ID: q.ID, Name: q.DisplayName(), BaseURL: redact.URL(q.URL), Kind: kind,
 			Enabled: q.IsEnabled(), SecretRef: q.Password.Display()}
 		out.Meta[q.ID] = meta
 		if !meta.Enabled {
@@ -77,15 +83,24 @@ func Build(cfg *config.Config, secrets map[string]string) (*Connections, error) 
 		}
 		pw := ""
 		if q.Password != "" {
-			v, ok := secrets["qbittorrent."+q.ID+".password"]
+			v, ok := secrets[ce.Section+"."+q.ID+".password"]
 			if !ok {
-				return nil, fmt.Errorf("qbittorrent.%s: password secret could not be resolved", q.ID)
+				return nil, fmt.Errorf("%s.%s: password secret could not be resolved", ce.Section, q.ID)
 			}
 			pw = v
 		}
-		c, err := qbittorrent.New(qbittorrent.Options{ID: q.ID, BaseURL: q.URL, Username: q.Username, Password: pw, Timeout: timeout, CAFile: q.CAFile})
+		var (
+			c   adapter.DownloadClient
+			err error
+		)
+		switch kind {
+		case adapter.KindTransmission:
+			c, err = transmission.New(transmission.Options{ID: q.ID, BaseURL: q.URL, RPCPath: q.RPCPath, Username: q.Username, Password: pw, Timeout: timeout, CAFile: q.CAFile})
+		default:
+			c, err = qbittorrent.New(qbittorrent.Options{ID: q.ID, BaseURL: q.URL, Username: q.Username, Password: pw, Timeout: timeout, CAFile: q.CAFile})
+		}
 		if err != nil {
-			return nil, fmt.Errorf("qbittorrent.%s: %w", q.ID, err)
+			return nil, fmt.Errorf("%s.%s: %w", ce.Section, q.ID, err)
 		}
 		out.Clients = append(out.Clients, c)
 	}

@@ -42,6 +42,7 @@ type Observation struct {
 	ConnectedPeers    domain.Signal[int64]   `json:"peers"`
 	Availability      domain.Signal[float64] `json:"avail"`
 	AllFilesWanted    domain.Signal[bool]    `json:"all_wanted"`
+	AvailWantedOnly   bool                   `json:"avail_wanted_only,omitempty"`
 }
 
 // Sample converts an observation for the policy evaluator.
@@ -49,6 +50,7 @@ func (o Observation) Sample() policy.Sample {
 	return policy.Sample{
 		At: o.At, RunID: o.RunID, MonoMS: o.MonoMS, StateClass: o.StateClass, NativeState: o.NativeState,
 		WantedBytes: o.WantedBytes, VerifiedBytes: o.VerifiedBytes, Availability: o.Availability, AllFilesWanted: o.AllFilesWanted,
+		AvailabilityWantedOnly: o.AvailWantedOnly,
 	}
 }
 
@@ -57,7 +59,7 @@ func observationOf(t domain.Transfer, at time.Time, runID string, mono int64) Ob
 		At: at, RunID: runID, MonoMS: mono, StateClass: t.StateClass, NativeState: t.NativeState,
 		WantedBytes: t.WantedBytes, VerifiedBytes: t.VerifiedBytes, NetworkDownloaded: t.NetworkDownloadedBytes,
 		DownloadRate: t.DownloadRate, ConnectedSeeds: t.ConnectedSeeds, ConnectedPeers: t.ConnectedPeers,
-		Availability: t.Availability, AllFilesWanted: t.AllFilesWanted,
+		Availability: t.Availability, AllFilesWanted: t.AllFilesWanted, AvailWantedOnly: t.AvailabilityWantedOnly,
 	}
 }
 

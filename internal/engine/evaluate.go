@@ -435,9 +435,9 @@ func (e *Engine) clientErrorDraft(key string, meta ConnMeta, t domain.Transfer, 
 	managers, links := e.managerLinks(queue)
 	explain := "The client reports an error for this download."
 	steps := []string{fmt.Sprintf("Open the torrent in %s to see the error details.", meta.Name)}
-	if t.NativeState == "missingFiles" {
-		explain = "The client cannot find this download's files. This usually means an unmounted or moved download location, or a permission problem — not a problem with the release."
-		steps = append(steps, "Confirm that the download location is mounted and writable by the client, then run “Force recheck” in the client.")
+	if t.NativeState == "missingFiles" || t.NativeState == "local-error" {
+		explain = "The client reports a local problem with this download's files. This usually means an unmounted or moved download location, a full disk, or a permission problem — not a problem with the release."
+		steps = append(steps, "Confirm that the download location is mounted, has free space, and is writable by the client, then ask the client to recheck (verify) the local data.")
 	} else {
 		steps = append(steps, "Check free disk space and permissions on the download location.")
 	}
@@ -453,8 +453,14 @@ func (e *Engine) clientErrorDraft(key string, meta ConnMeta, t domain.Transfer, 
 				{Label: "Client state", Value: t.NativeState, At: &now},
 				{Label: "In error since", Value: since.UTC().Format(time.RFC3339), At: &since},
 				{Label: "Consecutive error observations", Value: fmt.Sprintf("%d", consecutiveErrors(obs))},
+				{Label: "Client message", Value: signalText(t.ClientMessage, func(m string) string {
+					if m == "" {
+						return "none"
+					}
+					return m
+				})},
 			},
-			Missing:     []string{"Error detail: " + t.ClientMessage.Note},
+			Missing:     errorDetailMissing(t),
 			Confidence:  "Reported directly by the client on consecutive observations.",
 			Eligibility: e.modeEligibility("Storage problems are never treated as a failed release."),
 			NextSteps:   steps,
@@ -847,4 +853,11 @@ func importLimitations(meta ConnMeta) []string {
 		out = append(out, "Partial season-pack handling (clearing a stale association and targeted searches) is not implemented in this milestone.")
 	}
 	return out
+}
+
+func errorDetailMissing(t domain.Transfer) []string {
+	if m, ok := t.ClientMessage.Get(); ok && m != "" {
+		return nil
+	}
+	return []string{"Error detail is not reported by this client in its transfer listing."}
 }

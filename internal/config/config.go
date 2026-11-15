@@ -61,16 +61,16 @@ type Config struct {
 	Log       LogConfig       `toml:"log"`
 	Policy    PolicyOverrides `toml:"policy"`
 
-	Sonarr      []ManagerConfig `toml:"sonarr"`
-	Radarr      []ManagerConfig `toml:"radarr"`
-	QBittorrent []ClientConfig  `toml:"qbittorrent"`
+	Sonarr       []ManagerConfig `toml:"sonarr"`
+	Radarr       []ManagerConfig `toml:"radarr"`
+	QBittorrent  []ClientConfig  `toml:"qbittorrent"`
+	Transmission []ClientConfig  `toml:"transmission"`
 
 	// Planned integrations: recognised so that configuring them produces a
 	// clear "not yet implemented" error instead of an unknown-key error or
 	// silent ignorance.
-	Transmission []toml.Primitive `toml:"transmission"`
-	RTorrent     []toml.Primitive `toml:"rtorrent"`
-	Deluge       []toml.Primitive `toml:"deluge"`
+	RTorrent []toml.Primitive `toml:"rtorrent"`
+	Deluge   []toml.Primitive `toml:"deluge"`
 
 	// Path is the file this configuration was loaded from.
 	Path string `toml:"-"`
@@ -165,11 +165,13 @@ type ManagerConfig struct {
 	MaxQueuePages int `toml:"max_queue_pages"`
 }
 
-// ClientConfig configures a qBittorrent instance.
+// ClientConfig configures a download client instance.
 type ClientConfig struct {
 	ConnectionCommon
 	Username string    `toml:"username"`
 	Password SecretRef `toml:"password"`
+	// RPCPath is the Transmission RPC endpoint path (default /transmission/rpc).
+	RPCPath string `toml:"rpc_path"`
 	// Policy holds connection-scoped diagnosis overrides.
 	Policy PolicyOverrides `toml:"policy"`
 }
@@ -255,13 +257,13 @@ func Parse(raw []byte, path string) (*Config, []Problem, error) {
 		for _, k := range undec {
 			key := k.String()
 			// Planned sections are reported once below, not per key.
-			if top := strings.SplitN(key, ".", 2)[0]; top == "transmission" || top == "rtorrent" || top == "deluge" {
+			if top := strings.SplitN(key, ".", 2)[0]; top == "rtorrent" || top == "deluge" {
 				continue
 			}
 			add("error", key, "unknown configuration key")
 		}
 	}
-	for name, n := range map[string]int{"transmission": len(cfg.Transmission), "rtorrent": len(cfg.RTorrent), "deluge": len(cfg.Deluge)} {
+	for name, n := range map[string]int{"rtorrent": len(cfg.RTorrent), "deluge": len(cfg.Deluge)} {
 		if n > 0 {
 			add("error", name, "%s is planned for v1 but not implemented in this build; remove the [[%s]] section for now", name, name)
 		}
@@ -424,22 +426,38 @@ func validate(cfg *Config, md toml.MetaData) []Problem {
 	checkManager("sonarr", cfg.Sonarr)
 	checkManager("radarr", cfg.Radarr)
 	clientIDs := map[string]bool{}
-	for i := range cfg.QBittorrent {
-		c := &cfg.QBittorrent[i]
-		checkCommon("qbittorrent", i, &c.ConnectionCommon)
+	sectionIndex := map[string]int{}
+	for _, ce := range cfg.Clients() {
+		c := ce.Config
+		i := sectionIndex[ce.Section]
+		sectionIndex[ce.Section]++
+		checkCommon(ce.Section, i, &c.ConnectionCommon)
 		clientIDs[c.ID] = true
-		field := "qbittorrent." + c.ID
+		field := ce.Section + "." + c.ID
 		if err := c.Password.validateSyntax(); err != nil {
 			errf(field+".password", "%v", err)
 		}
-		if c.Username != "" && c.Password == "" {
-			errf(field+".password", "required when username is set")
-		}
-		if c.Username == "" && c.Password != "" {
-			errf(field+".username", "required when password is set")
-		}
-		if c.Username == "" {
-			warnf(field, "no credentials configured; this only works if qBittorrent bypasses authentication for Housekeeparr's address")
+		switch ce.Section {
+		case "qbittorrent":
+			if c.Username != "" && c.Password == "" {
+				errf(field+".password", "required when username is set")
+			}
+			if c.Username == "" && c.Password != "" {
+				errf(field+".username", "required when password is set")
+			}
+			if c.Username == "" {
+				warnf(field, "no credentials configured; this only works if qBittorrent bypasses authentication for Housekeeparr's address")
+			}
+			if c.RPCPath != "" {
+				errf(field+".rpc_path", "only applies to Transmission")
+			}
+		case "transmission":
+			if c.RPCPath != "" && !strings.HasPrefix(c.RPCPath, "/") {
+				errf(field+".rpc_path", "must start with /")
+			}
+			if c.Password != "" && c.Username == "" {
+				warnf(field, "a password without a username is sent with an empty user name")
+			}
 		}
 		if _, err := cfg.EffectivePolicy(c.ID); err != nil {
 			errf(field+".policy", "%v", err)
@@ -457,7 +475,7 @@ func validate(cfg *Config, md toml.MetaData) []Problem {
 	if _, err := cfg.EffectivePolicy(""); err != nil {
 		errf("policy", "%v", err)
 	}
-	if len(cfg.Sonarr) == 0 && len(cfg.Radarr) == 0 && len(cfg.QBittorrent) == 0 {
+	if len(cfg.Sonarr) == 0 && len(cfg.Radarr) == 0 && len(cfg.Clients()) == 0 {
 		warnf("", "no connections are configured; Housekeeparr will have nothing to observe")
 	}
 	return probs
@@ -497,7 +515,7 @@ func isLocalNetworkHost(host string) bool {
 
 // EffectivePolicy resolves diagnosis settings for a client connection (or
 // the global scope when clientID is empty): built-in proposed defaults,
-// then [policy], then [qbittorrent.<id>.policy].
+// then [policy], then the client's own [<section>.<id>.policy].
 func (c *Config) EffectivePolicy(clientID string) (policy.Effective, error) {
 	s := policy.DefaultSettings()
 	s.PollInterval = c.Polling.Interval.Duration
@@ -514,9 +532,9 @@ func (c *Config) EffectivePolicy(clientID string) (policy.Effective, error) {
 	id := "global"
 	if clientID != "" {
 		found := false
-		for _, q := range c.QBittorrent {
-			if q.ID == clientID {
-				apply(&s, src, q.Policy, fmt.Sprintf("config [qbittorrent.%s.policy]", q.ID))
+		for _, ce := range c.Clients() {
+			if ce.Config.ID == clientID {
+				apply(&s, src, ce.Config.Policy, fmt.Sprintf("config [%s.%s.policy]", ce.Section, ce.Config.ID))
 				found = true
 			}
 		}
@@ -587,7 +605,7 @@ func apply(s *policy.Settings, src map[string]string, o PolicyOverrides, from st
 func (c *Config) computeRevision() string {
 	cp := *c
 	cp.Path, cp.Revision = "", ""
-	cp.Transmission, cp.RTorrent, cp.Deluge = nil, nil, nil
+	cp.RTorrent, cp.Deluge = nil, nil
 	b, _ := json.Marshal(cp)
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])[:12]
@@ -618,8 +636,8 @@ func (c *Config) ResolvedSecrets(lookupEnv func(string) (string, bool)) (map[str
 	for _, m := range c.Radarr {
 		resolve("radarr."+m.ID+".api_key", m.APIKey)
 	}
-	for _, q := range c.QBittorrent {
-		resolve("qbittorrent."+q.ID+".password", q.Password)
+	for _, ce := range c.Clients() {
+		resolve(ce.Section+"."+ce.Config.ID+".password", ce.Config.Password)
 	}
 	return out, probs
 }
@@ -640,4 +658,22 @@ func Locate(flagPath string) (string, error) {
 		return "housekeeparr.toml", nil
 	}
 	return "", fmt.Errorf("%w: pass --config, set HOUSEKEEPARR_CONFIG, or create ./housekeeparr.toml (see housekeeparr.example.toml)", ErrNoConfig)
+}
+
+// ClientEntry is one configured download client with its section name.
+type ClientEntry struct {
+	Section string // "qbittorrent", "transmission"
+	Config  *ClientConfig
+}
+
+// Clients lists every configured download client.
+func (c *Config) Clients() []ClientEntry {
+	var out []ClientEntry
+	for i := range c.QBittorrent {
+		out = append(out, ClientEntry{"qbittorrent", &c.QBittorrent[i]})
+	}
+	for i := range c.Transmission {
+		out = append(out, ClientEntry{"transmission", &c.Transmission[i]})
+	}
+	return out
 }

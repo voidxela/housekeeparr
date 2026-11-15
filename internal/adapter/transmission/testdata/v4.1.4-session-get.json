@@ -1,0 +1,8 @@
+{
+ "result": "success",
+ "arguments": {
+  "version": "4.1.4 (abcdef0123)",
+  "rpc-version": 19,
+  "rpc-version-semver": "6.0.1"
+ }
+}

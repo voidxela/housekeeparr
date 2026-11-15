@@ -124,7 +124,7 @@ type TransferCounts struct {
 // MilestoneLimitations are shown wherever operators look for actions.
 var MilestoneLimitations = []string{
 	"Observation only: Housekeeparr never changes media managers or download clients in this release.",
-	"Transmission, rTorrent, and Deluge are planned for v1 but not implemented yet.",
+	"rTorrent and Deluge are planned for v1 but not implemented yet.",
 	"No adapter version has been validated against a real released instance yet.",
 }
 
@@ -459,8 +459,8 @@ func (s *Service) Policies() ([]policy.Effective, error) {
 		return nil, err
 	}
 	out := []policy.Effective{g}
-	for _, q := range s.cfg.QBittorrent {
-		e, err := s.cfg.EffectivePolicy(q.ID)
+	for _, ce := range s.cfg.Clients() {
+		e, err := s.cfg.EffectivePolicy(ce.Config.ID)
 		if err != nil {
 			return nil, err
 		}

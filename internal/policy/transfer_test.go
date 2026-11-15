@@ -345,3 +345,15 @@ func TestRevisionIsStableAndSensitive(t *testing.T) {
 		t.Fatal("revision insensitive to changes")
 	}
 }
+
+func TestWantedOnlyAvailabilityIgnoresFileSelection(t *testing.T) {
+	wantedOnly := func(s *Sample) {
+		s.AllFilesWanted = domain.KnownValue(false)
+		s.AvailabilityWantedOnly = true
+	}
+	s := newSampler().every(0, 120, 10, domain.StateDownloading, gib, avail(0.4), wantedOnly)
+	a := eval(t, input(s.out, 0), 120)
+	if a.Availability != AvailLacking || a.Diagnosis != DiagnosisNoProgressUnavailable {
+		t.Fatalf("%s %s", a.Availability, a.Diagnosis)
+	}
+}

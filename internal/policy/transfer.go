@@ -23,6 +23,9 @@ type Sample struct {
 	VerifiedBytes  domain.Signal[int64]
 	Availability   domain.Signal[float64]
 	AllFilesWanted domain.Signal[bool]
+	// AvailabilityWantedOnly marks availability figures that already cover
+	// only wanted data; file selection then cannot make them non-specific.
+	AvailabilityWantedOnly bool
 }
 
 // TransferInput is everything the evaluator needs for one transfer.
@@ -391,12 +394,14 @@ func availabilityEvidence(run []Sample, graceEnds time.Time) AvailabilityEvidenc
 			continue
 		}
 		counted++
-		all, ok := smp.AllFilesWanted.Get()
-		if !ok {
-			return AvailUnknown
-		}
-		if !all {
-			return AvailNotSpecific
+		if !smp.AvailabilityWantedOnly {
+			all, ok := smp.AllFilesWanted.Get()
+			if !ok {
+				return AvailUnknown
+			}
+			if !all {
+				return AvailNotSpecific
+			}
 		}
 		v, ok := smp.Availability.Get()
 		if !ok || v < 0 {

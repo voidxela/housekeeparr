@@ -75,7 +75,7 @@ func TestRejectsLiteralSecrets(t *testing.T) {
 
 func TestRejectsUnknownKeysAndPlannedSections(t *testing.T) {
 	expectProblem(t, minimal+"\n[polling]\nintervall = \"5m\"\n", "polling.intervall", "unknown")
-	expectProblem(t, minimal+"\n[[transmission]]\nid = \"tr\"\n", "transmission", "not implemented")
+	expectProblem(t, minimal+"\n[[deluge]]\nid = \"dl\"\n", "deluge", "not implemented")
 }
 
 func TestRejectsAutomaticMode(t *testing.T) {
@@ -229,4 +229,31 @@ func TestRadarrSection(t *testing.T) {
 	}
 	expectProblem(t, minimal+"\n[[radarr]]\nid = \"radarr\"\nurl = \"http://127.0.0.1:7878\"\n", "radarr.radarr.api_key", "required")
 	expectProblem(t, minimal+"\n[[radarr]]\nid = \"sonarr\"\nurl = \"http://127.0.0.1:7878\"\napi_key = \"env:K\"\n", "radarr[0].id", "duplicate")
+}
+
+func TestTransmissionSection(t *testing.T) {
+	src := minimal + "\n[[transmission]]\nid = \"tr\"\nurl = \"http://127.0.0.1:9091\"\nusername = \"u\"\npassword = \"env:TR_PW\"\n[transmission.policy]\nno_progress_window = \"2h\"\n"
+	cfg := mustParse(t, src)
+	if len(cfg.Clients()) != 2 {
+		t.Fatalf("clients %+v", cfg.Clients())
+	}
+	eff, err := cfg.EffectivePolicy("tr")
+	if err != nil || eff.Settings.NoProgressWindow != 2*time.Hour {
+		t.Fatalf("%+v %v", eff.Settings, err)
+	}
+	for _, s := range eff.Sources {
+		if s.Setting == "no_progress_window" && s.From != "config [transmission.tr.policy]" {
+			t.Fatalf("source %q", s.From)
+		}
+	}
+	_, probs := cfg.ResolvedSecrets(func(string) (string, bool) { return "", false })
+	found := false
+	for _, p := range probs {
+		found = found || p.Field == "transmission.tr.password"
+	}
+	if !found {
+		t.Fatal("transmission password secret not resolved")
+	}
+	expectProblem(t, strings.Replace(src, `id = "tr"`, "id = \"tr\"\nrpc_path = \"rpc\"", 1), "transmission.tr.rpc_path", "must start")
+	expectProblem(t, strings.Replace(minimal, `username = "admin"`, "username = \"admin\"\nrpc_path = \"/x\"", 1), "qbittorrent.qbit.rpc_path", "only applies")
 }

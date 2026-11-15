@@ -110,6 +110,10 @@ type Transfer struct {
 	// qBittorrent: distributed copies among connected peers). Its Note
 	// carries the source-specific meaning.
 	Availability Signal[float64] `json:"availability"`
+	// AvailabilityWantedOnly is true when the availability figure already
+	// covers only wanted data (e.g. Transmission's desiredAvailable), so
+	// deselected files cannot distort it.
+	AvailabilityWantedOnly bool `json:"availability_wanted_only,omitempty"`
 	// AllFilesWanted is true when no files are deselected. Piece availability
 	// figures computed over all pieces are only specific to wanted data when
 	// this is known true.
