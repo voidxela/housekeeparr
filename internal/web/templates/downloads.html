@@ -1,0 +1,47 @@
+{{define "content"}}{{with .Page}}
+<div class="title-row"><h1>Downloads</h1>
+<a class="small" href="{{if .All}}/downloads{{else}}/downloads?all=1{{end}}">{{if .All}}Hide complete{{else}}Include complete{{end}}</a></div>
+{{if .Transfers}}
+<ul class="downloads">
+{{range .Transfers}}{{$t := .Transfer}}
+  <li class="dl{{if .Findings}} dl-flagged{{end}}">
+    <div class="dl-main">
+      <a class="dl-name" href="/downloads/{{$t.ClientID}}/{{$t.NativeID}}">{{$t.Name}}</a>
+      <div class="dl-meta muted small">
+        <span>{{$t.ClientID}}</span> ·
+        <span class="state state-{{$t.StateClass}}">{{$t.StateClass.Describe}}</span> <span title="Native client state">({{$t.Latest.NativeState}})</span> ·
+        <span>{{sigprivacy $t.Latest.Private}}</span> ·
+        <span>seen {{since $t.LastSeen}}</span>
+        {{if eq (printf "%s" .Freshness) "stale"}} · {{template "fresh" .Freshness}}{{end}}
+      </div>
+      {{with .Queue}}<div class="dl-content small">{{range $i, $q := .}}{{if $i}}, {{end}}{{$q.Latest.ContentLabel}}{{end}} <span class="muted">· {{(index . 0).ManagerID}} · {{matchLabel (index . 0).MatchStatus}}</span></div>{{end}}
+    </div>
+    <div class="dl-progress">
+      {{if .Progress}}<progress class="bar" max="100" value="{{pctw .Progress}}" aria-label="Verified progress">{{pct .Progress}}</progress>{{else}}<div class="bar bar-unknown" aria-hidden="true"></div>{{end}}
+      <div class="small"><strong>{{pct .Progress}}</strong> <span class="muted">verified · {{sigbytes $t.Latest.VerifiedBytes}} of {{sigbytes $t.Latest.WantedBytes}}</span></div>
+    </div>
+    <div class="dl-assess">
+      {{with $t.Assessment}}
+        <span class="assess assess-{{.Status}}">{{assessLabel .Status}}</span>
+        <p class="small">{{.Headline}}</p>
+      {{else}}<span class="muted small">{{if eq (printf "%s" $t.StateClass) "complete"}}Complete — no diagnosis applies.{{else}}Not yet evaluated.{{end}}</span>{{end}}
+      {{range .Findings}}<a class="small finding-chip" href="/findings/{{.ID}}">{{template "sev" .Severity}} #{{.ID}}</a>{{end}}
+    </div>
+  </li>
+{{end}}
+</ul>
+{{else}}
+{{template "empty" "No incomplete downloads observed."}}
+<p class="muted center">Downloads appear after the first successful client listing. Complete torrents are tracked but hidden by default.</p>
+{{end}}
+
+{{with .Unmatched}}
+<section class="card" aria-labelledby="h-unm">
+  <h2 id="h-unm">Queue rows without a correlated transfer</h2>
+  <p class="muted small">Correlation uses infohashes, never names or paths. Rows here are either outside v1 scope, not downloading yet, or not matched to a configured client.</p>
+  <table class="table"><thead><tr><th scope="col">Manager</th><th scope="col">Item</th><th scope="col">Status</th><th scope="col">Correlation</th></tr></thead><tbody>
+  {{range .}}<tr><td>{{.ManagerID}}</td><td>{{.Latest.ContentLabel}}<div class="muted small">{{.Latest.Title}}</div></td><td>{{.Latest.Status}}{{with .Latest.TrackedState.Value}} · {{.}}{{end}}</td><td>{{matchLabel .MatchStatus}}<div class="muted small">{{.MatchNote}}</div></td></tr>{{end}}
+  </tbody></table>
+</section>
+{{end}}
+{{end}}{{end}}

@@ -1,0 +1,53 @@
+{{define "content"}}{{with .Page}}
+<h1>Connections &amp; policy</h1>
+{{if not .Connections}}{{template "empty" "No connections configured."}}<p class="muted center">Add <code>[[sonarr]]</code> and <code>[[qbittorrent]]</code> sections to the configuration file.</p>{{end}}
+{{range .Connections}}
+<section class="card conn-card" aria-labelledby="c-{{.ID}}">
+  <div class="card-head">
+    <h2 id="c-{{.ID}}"><span class="conn-status conn-{{.Status}}"><span class="dot" aria-hidden="true"></span></span> {{.Name}} <span class="muted small">{{.Kind}} · <code>{{.ID}}</code></span></h2>
+    {{template "fresh" .Freshness}}
+  </div>
+  <p>{{.Explanation}}</p>
+  <dl class="facts compact">
+    <div><dt>URL</dt><dd><code class="break">{{.BaseURL}}</code></dd></div>
+    <div><dt>Last success</dt><dd>{{sincep .LastSuccessAt}}</dd></div>
+    <div><dt>Last attempt</dt><dd>{{sincep .LastAttemptAt}}</dd></div>
+    {{if .NextAttemptAt}}<div><dt>Next attempt</dt><dd>{{until .NextAttemptAt}} <span class="muted small">(backing off)</span></dd></div>{{end}}
+    {{with .Probe}}<div><dt>Detected</dt><dd>{{.App}} {{.Version}}{{with .APIVersion}} <span class="muted small">API {{.}}</span>{{end}}</dd></div>
+    <div><dt>Compatibility</dt><dd><span class="compat compat-{{.Compatibility}}">{{.Compatibility}}</span> <span class="muted small">{{.CompatNote}}</span></dd></div>
+    <div><dt>Authentication</dt><dd>{{.Auth}}</dd></div>{{end}}
+  </dl>
+  {{if .LastError}}<div class="callout callout-error"><strong>Last error ({{.LastErrorClass}})</strong><p>{{.LastError}}</p></div>{{end}}
+  {{with .Probe}}
+  <details><summary>Capabilities</summary>
+    <div class="grid-2">
+      <div><h3>Read</h3><ul class="caps">{{range $k, $v := .Read}}<li><span class="cap cap-{{$v.Support}}">{{$v.Support}}</span> <code>{{$k}}</code>{{with $v.Note}}<div class="muted small">{{.}}</div>{{end}}</li>{{end}}</ul></div>
+      <div><h3>Write</h3><ul class="caps">{{range $k, $v := .Write}}<li><span class="cap cap-{{$v.Support}}">{{$v.Support}}</span> <code>{{$k}}</code>{{with $v.Note}}<div class="muted small">{{.}}</div>{{end}}</li>{{end}}</ul></div>
+    </div>
+    {{with .Limitations}}<ul class="plain muted small">{{range .}}<li>{{.}}</li>{{end}}</ul>{{end}}
+  </details>
+  {{end}}
+  {{with .Health}}{{if .Items}}
+  <details><summary>Health checks reported by the application ({{len .Items}}, checked {{since .CollectedAt}})</summary>
+    <ul class="plain">{{range .Items}}<li><span class="health health-{{.Type}}">{{.Type}}</span> <code>{{.Source}}</code> {{.Message}}</li>{{end}}</ul>
+  </details>
+  {{end}}{{end}}
+</section>
+{{end}}
+
+<section class="card" aria-labelledby="h-policy">
+  <h2 id="h-policy">Effective diagnosis policy</h2>
+  <p class="muted small">Resolution order: built-in proposed defaults → <code>[policy]</code> → connection <code>[qbittorrent.&lt;id&gt;.policy]</code>. These timings are starting proposals from the specification, not validated recommendations.</p>
+  {{range .Policies}}
+  <h3><code>{{.ID}}</code> <span class="muted small">revision {{.Revision}}</span></h3>
+  <table class="table compact"><thead><tr><th scope="col">Setting</th><th scope="col">Value</th><th scope="col">Source</th></tr></thead><tbody>
+  {{range .Sources}}<tr><th scope="row"><code>{{.Setting}}</code></th><td>{{.Value}}</td><td class="muted small">{{.From}}</td></tr>{{end}}
+  </tbody></table>
+  {{end}}
+  <p class="muted small">Grace starts at the client's added time when known, otherwise at Housekeeparr's first observation. The no-progress window counts qualifying time only after grace ends; each interval between observations counts for at most one polling interval, and a gap larger than the maximum restarts qualification.</p>
+</section>
+
+<section class="card subtle"><h2>Automation</h2>
+  <ul class="plain">{{range .Limitations}}<li>{{.}}</li>{{end}}</ul>
+</section>
+{{end}}{{end}}

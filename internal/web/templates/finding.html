@@ -1,0 +1,69 @@
+{{define "content"}}{{$csrf := .CSRF}}{{with .Page}}
+<nav class="crumbs" aria-label="Breadcrumb"><a href="/attention">Needs attention</a> / #{{.ID}}</nav>
+<div class="finding-hero sev-border-{{.Severity}}">
+  <div class="finding-head">
+    {{template "sev" .Severity}} <span class="pill">{{stateLabel .State}}</span>
+    {{if gt .Occurrence 1}}<span class="pill">Recurrence {{.Occurrence}}</span>{{end}}
+    <span class="muted small push">{{.Type}}</span>
+  </div>
+  <h1>{{.Title}}</h1>
+  <p class="lead">{{.Summary}}</p>
+  {{if .Detail.CurrentState}}<p class="finding-current"><span class="label">Since then:</span> {{.Detail.CurrentState}}</p>{{end}}
+  {{if .ResolvedAt}}<p class="resolved"><span class="glyph" aria-hidden="true">✓</span> Resolved {{sincep .ResolvedAt}}: {{.Resolution}}</p>{{end}}
+  <dl class="facts">
+    <div><dt>First seen</dt><dd><time datetime="{{iso .FirstSeen}}">{{clock .FirstSeen}}</time></dd></div>
+    <div><dt>Last observed</dt><dd>{{since .LastObserved}}</dd></div>
+    <div><dt>Evidence</dt><dd>{{since .EvidenceAt}} {{if ne (printf "%s" .State) "resolved"}}{{template "fresh" .Freshness}}{{end}}</dd></div>
+    {{if and .NextEvaluationAt (ne (printf "%s" .State) "resolved")}}<div><dt>Next evaluation</dt><dd>{{until .NextEvaluationAt}}</dd></div>{{end}}
+    {{if .SnoozedUntil}}<div><dt>Snoozed until</dt><dd>{{clockp .SnoozedUntil}}</dd></div>{{end}}
+    {{with .Subject.Content}}<div><dt>Affects</dt><dd>{{join . ", "}}</dd></div>{{end}}
+    {{if .Subject.ClientID}}{{if .Subject.NativeID}}<div><dt>Transfer</dt><dd><a href="/downloads/{{.Subject.ClientID}}/{{.Subject.NativeID}}">{{if .Subject.TransferName}}{{.Subject.TransferName}}{{else}}{{.Subject.NativeID}}{{end}}</a></dd></div>{{end}}{{end}}
+  </dl>
+</div>
+
+{{if ne (printf "%s" .State) "resolved"}}
+<section class="card actions" aria-labelledby="h-act">
+  <h2 id="h-act">What happens next</h2>
+  <p>{{.Detail.Eligibility}}</p>
+  {{if .Detail.ProposedEffects}}<ul>{{range .Detail.ProposedEffects}}<li>{{.}}</li>{{end}}</ul>{{else}}<p class="muted small">No external effects are proposed.</p>{{end}}
+  <div class="action-row">
+    {{if eq (printf "%s" .State) "open"}}
+    <form method="post" action="/findings/{{.ID}}/ack"><input type="hidden" name="csrf" value="{{$csrf}}"><button type="submit">Acknowledge</button></form>
+    {{else}}
+    <form method="post" action="/findings/{{.ID}}/reopen"><input type="hidden" name="csrf" value="{{$csrf}}"><button type="submit" class="secondary">Return to open</button></form>
+    {{end}}
+    <form method="post" action="/findings/{{.ID}}/snooze" class="inline">
+      <input type="hidden" name="csrf" value="{{$csrf}}">
+      <label for="snooze-d">Snooze for</label>
+      <select id="snooze-d" name="duration"><option value="4h">4 hours</option><option value="24h" selected>1 day</option><option value="168h">1 week</option><option value="720h">30 days</option></select>
+      <button type="submit" class="secondary">Snooze</button>
+    </form>
+  </div>
+  <p class="muted small">Acknowledging keeps the finding visible until the condition resolves. Snoozing suppresses notifications and automation for this finding until it expires; observation continues either way.</p>
+</section>
+{{end}}
+
+{{with .Detail.NextSteps}}
+<section class="card" aria-labelledby="h-steps"><h2 id="h-steps">Suggested next steps</h2><ol>{{range .}}<li>{{.}}</li>{{end}}</ol>
+{{with $.Page.Detail.Links}}<p class="links">{{range .}}<a href="{{.URL}}" rel="noopener noreferrer" target="_blank">{{.Label}} ↗</a>{{end}}</p>{{end}}
+</section>
+{{end}}
+
+<section class="card" aria-labelledby="h-ev">
+  <h2 id="h-ev">Evidence</h2>
+  {{if .Detail.Confidence}}<p>{{.Detail.Confidence}}</p>{{end}}
+  {{with .Detail.Limitations}}<div class="callout"><strong>Limitations</strong><ul>{{range .}}<li>{{.}}</li>{{end}}</ul></div>{{end}}
+  {{with .Detail.Missing}}<div class="callout callout-muted"><strong>Missing information</strong><ul>{{range .}}<li>{{.}}</li>{{end}}</ul></div>{{end}}
+  <details>
+    <summary>Detailed evidence ({{len .Detail.Evidence}} items)</summary>
+    <dl class="evidence">{{range .Detail.Evidence}}<div><dt>{{.Label}}</dt><dd>{{.Value}}{{if .Source}} <span class="muted small">· {{.Source}}</span>{{end}}</dd></div>{{end}}</dl>
+    {{if .PolicyID}}<p class="muted small">Policy <code>{{.PolicyID}}</code>, revision <code>{{.PolicyRevision}}</code>. Deduplication key <code>{{.DedupKey}}</code>.</p>{{end}}
+  </details>
+</section>
+
+<section class="card" aria-labelledby="h-hist">
+  <h2 id="h-hist">History</h2>
+  <ol class="timeline">{{range .Events}}<li><time datetime="{{iso .At}}" title="{{clock .At}}">{{clock .At}}</time> <span class="event event-{{.Kind}}">{{.Kind}}</span> <span class="muted small">{{.Actor}}</span> {{.Detail}}</li>{{end}}</ol>
+  {{with .History}}<h3>Earlier occurrences</h3><ul class="plain">{{range .}}<li><a href="/findings/{{.ID}}">#{{.ID}}</a> {{clock .FirstSeen}} – {{clockp .ResolvedAt}}: {{.Resolution}}</li>{{end}}</ul>{{end}}
+</section>
+{{end}}{{end}}

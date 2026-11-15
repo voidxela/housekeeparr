@@ -1,0 +1,20 @@
+{{define "content"}}{{with .Page}}
+<h1>Activity</h1>
+<div class="banner banner-info"><span class="glyph" aria-hidden="true">●</span> <span>{{.Note}}</span></div>
+<section class="card" aria-labelledby="h-ev">
+  <h2 id="h-ev">Finding lifecycle</h2>
+  {{if .Events}}<ol class="timeline">{{range .Events}}<li><time datetime="{{iso .At}}">{{clock .At}}</time> <a href="/findings/{{.FindingID}}">#{{.FindingID}}</a> <span class="event event-{{.Kind}}">{{.Kind}}</span> <span class="muted small">{{.Actor}}</span> {{.Detail}}</li>{{end}}</ol>
+  {{else}}{{template "empty" "No finding events yet."}}{{end}}
+</section>
+<section class="card" aria-labelledby="h-audit">
+  <h2 id="h-audit">Audit</h2>
+  {{if .Audit}}<ol class="timeline">{{range .Audit}}<li><time datetime="{{iso .At}}">{{clock .At}}</time> <span class="event">{{.Kind}}</span> <span class="muted small">{{.Actor}}</span> {{.Detail}}</li>{{end}}</ol>
+  {{else}}{{template "empty" "No audit events yet."}}{{end}}
+</section>
+<section class="card" aria-labelledby="h-runs">
+  <h2 id="h-runs">Runs</h2>
+  <table class="table compact"><thead><tr><th scope="col">Started</th><th scope="col">Kind</th><th scope="col">Version</th><th scope="col">Mode</th><th scope="col">Last cycle</th><th scope="col">Ended</th></tr></thead><tbody>
+  {{range .Runs}}<tr><td>{{clock .StartedAt}}</td><td>{{.Kind}}</td><td>{{.Version}}</td><td>{{.Mode}}</td><td>{{clockp .LastCycleFinishedAt}}</td><td>{{if .StoppedAt}}{{clockp .StoppedAt}} <span class="muted small">{{.StopReason}}</span>{{else}}running{{end}}</td></tr>{{end}}
+  </tbody></table>
+</section>
+{{end}}{{end}}

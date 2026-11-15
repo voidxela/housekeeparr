@@ -1,0 +1,64 @@
+{{define "content"}}{{with .Page}}{{$t := .Transfer}}{{$l := $t.Latest}}
+<nav class="crumbs" aria-label="Breadcrumb"><a href="/downloads">Downloads</a> / {{$t.ClientID}}</nav>
+<h1 class="break">{{$t.Name}}</h1>
+<dl class="facts">
+  <div><dt>State</dt><dd><span class="state state-{{$t.StateClass}}">{{$t.StateClass.Describe}}</span> <span class="muted small">({{$l.NativeState}})</span></dd></div>
+  <div><dt>Verified progress</dt><dd>{{pct .Progress}} <span class="muted small">{{sigbytes $l.VerifiedBytes}} of {{sigbytes $l.WantedBytes}}</span></dd></div>
+  <div><dt>Privacy</dt><dd>{{sigprivacy $l.Private}}</dd></div>
+  <div><dt>Connected seeds / peers</dt><dd>{{$l.ConnectedSeeds}} / {{$l.ConnectedPeers}}</dd></div>
+  <div><dt>Download rate</dt><dd>{{sigrate $l.DownloadRate}} <span class="muted small">instantaneous</span></dd></div>
+  <div><dt>Last observed</dt><dd>{{since $t.LastSeen}} {{template "fresh" .Freshness}}</dd></div>
+  <div><dt>First observed</dt><dd>{{clock $t.FirstSeen}}</dd></div>
+  <div><dt>Identity</dt><dd><code class="small break">{{$t.ClientID}} / {{$t.NativeID}}</code>{{if $l.Hashes.V2}} <span class="pill">v2</span>{{end}}</dd></div>
+</dl>
+{{if not $t.Present}}<div class="banner banner-warn"><span class="glyph" aria-hidden="true">▲</span> <span>This transfer was absent from a complete client listing {{sincep $t.GoneAt}}. History is kept for reference.</span></div>{{end}}
+
+<section class="card" aria-labelledby="h-assess">
+  <h2 id="h-assess">Assessment</h2>
+  {{with $t.Assessment}}
+    <p><span class="assess assess-{{.Status}}">{{assessLabel .Status}}</span> {{.Headline}}</p>
+    {{range .Details}}<p class="small">{{.}}</p>{{end}}
+    <dl class="facts compact">
+      <div><dt>Grace</dt><dd>ends {{clock .GraceEnds}} <span class="muted small">(from {{.GraceFrom}})</span></dd></div>
+      {{if .Window}}<div><dt>Qualifying time</dt><dd>{{dur .Elapsed}} of {{dur .Window}} <span class="muted small">({{.WindowReason}})</span></dd></div>{{end}}
+      <div><dt>Qualifying observations</dt><dd>{{.Observations}}</dd></div>
+      {{if .QualifiesAt}}<div><dt>Diagnosis if unchanged</dt><dd>{{until .QualifiesAt}} <span class="muted small">({{clockp .QualifiesAt}})</span></dd></div>{{end}}
+      <div><dt>Last verified progress</dt><dd>{{clockp .LastProgressAt}}</dd></div>
+      <div><dt>Piece availability</dt><dd>{{.Availability}}</dd></div>
+    </dl>
+    {{with .Resets}}<details><summary>Recent qualification resets ({{len .}})</summary><ul class="plain">{{range .}}<li>{{clock .At}} — {{.Reason}}</li>{{end}}</ul></details>{{end}}
+    {{with .Limitations}}<div class="callout"><strong>Limitations</strong><ul>{{range .}}<li>{{.}}</li>{{end}}</ul></div>{{end}}
+    <p class="muted small">Assessed with policy revision <code>{{.PolicyRevision}}</code>.</p>
+  {{else}}<p class="muted">{{if eq (printf "%s" $t.StateClass) "complete"}}Complete — no progress diagnosis applies.{{else}}Not yet evaluated.{{end}}</p>{{end}}
+</section>
+
+{{with .Findings}}
+<section class="card" aria-labelledby="h-f"><h2 id="h-f">Findings</h2><ul class="findings">{{range .}}{{template "findingrow" .}}{{end}}</ul></section>
+{{end}}
+
+<section class="card" aria-labelledby="h-mgr">
+  <h2 id="h-mgr">Manager relationships</h2>
+  {{if .Queue}}
+  <table class="table"><thead><tr><th scope="col">Manager</th><th scope="col">Content</th><th scope="col">Tracked state</th><th scope="col">Correlation</th></tr></thead><tbody>
+  {{range .Queue}}<tr><td>{{.ManagerID}}</td><td>{{.Latest.ContentLabel}}</td><td>{{.Latest.TrackedState}} / {{.Latest.TrackedStatus}}{{range .Latest.StatusMessages}}{{range .Messages}}<div class="muted small">{{.}}</div>{{end}}{{end}}</td><td>{{matchLabel .MatchStatus}}<div class="muted small">{{.MatchNote}}</div></td></tr>{{end}}
+  </tbody></table>
+  {{else}}<p class="muted">No manager queue row is correlated with this transfer.</p>{{end}}
+</section>
+
+<section class="card" aria-labelledby="h-pol">
+  <h2 id="h-pol">Effective policy</h2>
+  <p class="muted small"><code>{{.Policy.ID}}</code> revision <code>{{.Policy.Revision}}</code></p>
+  <table class="table compact"><tbody>{{range .Policy.Sources}}<tr><th scope="row">{{.Setting}}</th><td>{{.Value}}</td><td class="muted small">{{.From}}</td></tr>{{end}}</tbody></table>
+</section>
+
+<section class="card" aria-labelledby="h-obs">
+  <h2 id="h-obs">Observation history</h2>
+  {{if .Recent}}
+  <div class="table-wrap"><table class="table compact numeric">
+    <thead><tr><th scope="col">Time</th><th scope="col">State</th><th scope="col">Verified</th><th scope="col">Rate</th><th scope="col">Seeds / peers</th><th scope="col">Availability</th></tr></thead>
+    <tbody>{{range .Recent}}<tr><td><time datetime="{{iso .At}}">{{clock .At}}</time></td><td>{{.NativeState}}</td><td>{{sigbytes .VerifiedBytes}}</td><td>{{sigrate .DownloadRate}}</td><td>{{.ConnectedSeeds}} / {{.ConnectedPeers}}</td><td>{{.Availability}}</td></tr>{{end}}</tbody>
+  </table></div>
+  <p class="muted small">Observations are stored only for incomplete transfers and are bounded by retention.</p>
+  {{else}}<p class="muted">No stored observations in the last 48 hours.</p>{{end}}
+</section>
+{{end}}{{end}}

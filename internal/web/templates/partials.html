@@ -1,0 +1,22 @@
+{{define "sev"}}<span class="sev sev-{{.}}"><span class="glyph" aria-hidden="true">{{if eq (printf "%s" .) "error"}}■{{else if eq (printf "%s" .) "warning"}}▲{{else}}●{{end}}</span>{{sevlabel .}}</span>{{end}}
+
+{{define "fresh"}}{{/* . is app.Freshness */}}<span class="fresh fresh-{{.}}">{{if eq (printf "%s" .) "stale"}}<span aria-hidden="true">⏱ </span>Stale{{else if eq (printf "%s" .) "never"}}No data{{else}}Fresh{{end}}</span>{{end}}
+
+{{define "findingrow"}}
+<li class="finding sev-border-{{.Severity}}">
+  <a href="/findings/{{.ID}}" class="finding-link">
+    <div class="finding-head">
+      {{template "sev" .Severity}}
+      {{if ne (printf "%s" .State) "open"}}<span class="pill">{{stateLabel .State}}</span>{{end}}
+      {{if gt .Occurrence 1}}<span class="pill" title="This condition happened before">Recurrence {{.Occurrence}}</span>{{end}}
+      <span class="muted small push">Evidence {{since .EvidenceAt}}{{if and (eq (printf "%s" .Freshness) "stale") (ne (printf "%s" .State) "resolved")}} · {{template "fresh" .Freshness}}{{end}}</span>
+    </div>
+    <div class="finding-title">{{.Title}}</div>
+    <div class="finding-summary">{{.Summary}}</div>
+    {{if .Detail.CurrentState}}<div class="finding-current"><span class="label">Since then:</span> {{.Detail.CurrentState}}</div>{{end}}
+    {{with .Subject.Content}}<div class="muted small">Affects {{join . ", "}}</div>{{end}}
+  </a>
+</li>
+{{end}}
+
+{{define "empty"}}<div class="empty"><p class="empty-title">{{.}}</p></div>{{end}}
