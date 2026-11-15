@@ -99,7 +99,10 @@ const MinimumVersion = "0.9.8"
 
 // TestedVersions lists released versions whose read path passed the
 // disposable-instance integration suite. Only add after a real run.
-var TestedVersions = []string{}
+//
+// 0.9.8 (Debian trixie build, through a lighttpd 1.4.79 SCGI gateway with
+// basic auth) passed on 2026-11-15; see docs/compatibility.md.
+var TestedVersions = []string{"0.9.8"}
 
 func versionAtLeast(v, min string) bool {
 	pv, pm := strings.Split(v, "."), strings.Split(min, ".")

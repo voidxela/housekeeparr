@@ -139,7 +139,10 @@ const MinimumRPCVersion = 15
 
 // TestedVersions lists released versions whose read path passed the
 // disposable-instance integration suite. Only add after a real run.
-var TestedVersions = []string{}
+//
+// 4.0.6 and 4.1.4 (built from release tarballs, linux aarch64) passed on
+// 2026-11-15 using the legacy protocol; see docs/compatibility.md.
+var TestedVersions = []string{"4.0.6", "4.1.4"}
 
 // Probe detects version and capabilities.
 func (c *Client) Probe(ctx context.Context) (adapter.Probe, error) {
@@ -165,7 +168,7 @@ func (c *Client) Probe(ctx context.Context) (adapter.Probe, error) {
 		p.Compatibility, p.CompatNote = adapter.CompatUntested, "observation proceeds; this version has not been validated by the integration suite"
 	}
 	if semverMajor(s.RPCVersionSemver) >= 6 {
-		p.Limitations = append(p.Limitations, "This Transmission version prefers JSON-RPC 2.0; Housekeeparr uses the legacy protocol, which Transmission documents as deprecated and scheduled for removal.")
+		p.Limitations = append(p.Limitations, "This Transmission version prefers JSON-RPC 2.0; Housekeeparr uses the legacy protocol, which Transmission 4.1 documents as deprecated but still supported throughout Transmission 4 (validated on 4.1.4).")
 	}
 	p.Read = adapter.Capabilities{
 		adapter.CapTransferList:      {Support: adapter.Supported, Note: "torrent-get for all torrents"},
@@ -202,6 +205,11 @@ func semverMajor(s string) int {
 var fields = []string{"hashString", "name", "status", "error", "errorString", "addedDate", "sizeWhenDone", "leftUntilDone",
 	"totalSize", "downloadedEver", "corruptEver", "rateDownload", "peersConnected", "peersSendingToUs", "isPrivate",
 	"metadataPercentComplete", "desiredAvailable", "labels"}
+
+// RequestedFields returns a copy of the torrent-get fields this adapter
+// requests, so integration tests can verify that a released version returns
+// every one of them.
+func RequestedFields() []string { return append([]string(nil), fields...) }
 
 type torrent struct {
 	HashString       string   `json:"hashString"`

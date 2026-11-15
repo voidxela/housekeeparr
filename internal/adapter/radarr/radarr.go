@@ -50,7 +50,9 @@ const MinimumMajor = 5
 // TestedVersions lists released versions whose read path passed the
 // disposable-instance integration suite. Only add versions after a real,
 // passing run.
-var TestedVersions = []string{}
+//
+// 6.4.4.10685 (linux-core-arm64) passed on 2026-11-15; see docs/compatibility.md.
+var TestedVersions = []string{"6.4.4.10685"}
 
 // Probe authenticates and detects version and capabilities.
 func (c *Client) Probe(ctx context.Context) (adapter.Probe, error) {

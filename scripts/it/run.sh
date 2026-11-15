@@ -1,32 +1,52 @@
 #!/usr/bin/env bash
 # Disposable-instance integration suite.
 #
-# Downloads pinned, checksum-verified releases of qBittorrent (static
-# qbittorrent-nox) and Sonarr, starts them on loopback in a temporary
-# directory, adds locally generated torrents whose tracker is a closed
-# loopback port (DHT/PeX/LSD disabled: no swarm can ever be contacted), and
-# runs the Go integration tests against them. Everything is removed on exit.
+# Starts pinned, checksum-verified released applications on loopback in a
+# temporary directory, adds locally generated torrents whose tracker is a
+# closed loopback port (DHT/PeX/LSD disabled: no swarm can ever be
+# contacted), and runs the Go integration tests against them. Everything is
+# removed on exit.
 #
-# Usage: scripts/it/run.sh [--qbt 5.3.0|4.6.7] [--capture] [--keep]
-#   --capture  write sanitized raw responses to testdata/captured/ for review
-#   --keep     keep the work directory for debugging
+# Usage: scripts/it/run.sh [--clients LIST] [--managers LIST] [--qbt 5.3.0|4.6.7]
+#                          [--tr 4.0.6|4.1.4] [--capture] [--keep]
+#   --clients   comma-separated: qbittorrent,transmission,deluge,rtorrent (default qbittorrent)
+#   --managers  comma-separated: sonarr,radarr, or none (default sonarr)
+#               Managers use qBittorrent as their download client, so they
+#               require qbittorrent in --clients.
+#   --capture   write sanitized raw responses to testdata/captured/ for review
+#   --keep      keep the work directory for debugging
 #
-# Note: Sonarr itself may contact its own update/metadata services while it
-# runs. No real user data or public torrent is involved.
+# Every selected application's tests must report PASS; a skipped test fails
+# the run, so a missing environment variable can never be recorded as a pass.
+#
+# Note: Sonarr and Radarr may contact their own update/metadata services
+# while they run. No real user data or public torrent is involved.
 set -euo pipefail
 
 QBT_VERSION=5.3.0
+TR_VERSION=4.0.6
 SONARR_VERSION=4.0.20.3014
+RADARR_VERSION=6.4.4.10685
+CLIENTS=qbittorrent
+MANAGERS=sonarr
 CAPTURE=0
 KEEP=0
 while [ $# -gt 0 ]; do
 	case "$1" in
+	--clients) CLIENTS="$2"; shift 2 ;;
+	--managers) MANAGERS="$2"; shift 2 ;;
 	--qbt) QBT_VERSION="$2"; shift 2 ;;
+	--tr) TR_VERSION="$2"; shift 2 ;;
 	--capture) CAPTURE=1; shift ;;
 	--keep) KEEP=1; shift ;;
 	*) echo "unknown argument: $1" >&2; exit 2 ;;
 	esac
 done
+[ "$MANAGERS" = none ] && MANAGERS=""
+has() { case ",$1," in *",$2,"*) return 0 ;; esac; return 1; }
+if [ -n "$MANAGERS" ] && ! has "$CLIENTS" qbittorrent; then
+	echo "managers use qBittorrent as their download client; add qbittorrent to --clients or pass --managers none" >&2; exit 2
+fi
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 if ! command -v go >/dev/null 2>&1; then
@@ -39,6 +59,7 @@ ARCH=$(uname -m)
 case "$ARCH" in arm64) ARCH=aarch64 ;; amd64) ARCH=x86_64 ;; esac
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/housekeeparr-it.XXXXXX")
 PIDS=()
+LOGS=()
 cleanup() {
 	for p in "${PIDS[@]:-}"; do [ -n "$p" ] && kill "$p" 2>/dev/null || true; done
 	wait 2>/dev/null || true
@@ -62,22 +83,53 @@ fetch() { # name version -> path of verified artifact
 	echo "$dst"
 }
 
+# fetch_debs root name... : downloads pinned Debian packages with apt-get
+# (archive signatures verified by apt), checks the pinned sha256, and
+# extracts them into a private root. Nothing is installed.
+fetch_debs() {
+	local root=$1; shift
+	mkdir -p "$root" "$CACHE/debs"
+	local n line ver sum spec f
+	for n in "$@"; do
+		line=$(awk -v n="deb:$n" -v a="$ARCH" '$1==n && $3==a' "$HERE/artifacts.txt")
+		[ -n "$line" ] || { echo "no pinned deb:$n for $ARCH in artifacts.txt" >&2; exit 3; }
+		ver=$(echo "$line" | awk '{print $2}'); sum=$(echo "$line" | awk '{print $4}'); spec=$(echo "$line" | awk '{print $5}')
+		f=$(ls "$CACHE/debs/${n}_"*.deb 2>/dev/null | head -1 || true)
+		if [ -z "$f" ] || ! echo "$sum  $f" | sha256sum -c --status; then
+			(cd "$CACHE/debs" && apt-get download "${spec#apt:}" >&2)
+			f=$(ls "$CACHE/debs/${n}_"*.deb | head -1)
+		fi
+		echo "$sum  $f" | sha256sum -c --status || { echo "checksum mismatch for $f (Debian may have updated $n $ver; re-pin deliberately)" >&2; exit 3; }
+		dpkg-deb -x "$f" "$root"
+	done
+}
+
 freeport() { python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()'; }
+secret() { python3 -c 'import secrets; print(secrets.token_urlsafe(18))'; }
 
 waitfor() { # url seconds
-	for _ in $(seq 1 "$2"); do curl -fs -o /dev/null "$1" 2>/dev/null && return 0; curl -s -o /dev/null -w '%{http_code}' "$1" 2>/dev/null | grep -qE '^(401|403)$' && return 0; sleep 1; done
+	for _ in $(seq 1 "$2"); do curl -fs -o /dev/null "$1" 2>/dev/null && return 0; curl -s -o /dev/null -w '%{http_code}' "$1" 2>/dev/null | grep -qE '^(401|403|405|409)$' && return 0; sleep 1; done
 	echo "timed out waiting for $1" >&2; return 1
 }
+
+# Each client gets its own copy of the payload directory so no two clients
+# ever share files.
+payload() { mkdir -p "$WORK/$1"; cp -a "$WORK/downloads/." "$WORK/$1/"; echo "$WORK/$1"; }
+
+TESTS=()
+export HK_IT_MANIFEST="$WORK/torrents/manifest.json" HK_IT_WORK="$WORK"
 
 # --- synthetic torrents -----------------------------------------------------
 python3 -I "$HERE/fixtures.py" "$WORK/torrents" "$WORK/downloads"
 
 # --- qBittorrent --------------------------------------------------------------
-QBT_BIN=$(fetch qbittorrent "$QBT_VERSION"); chmod +x "$QBT_BIN"
-QBT_PORT=$(freeport); BT_PORT=$(freeport)
-QBT_PASS=$(python3 -c 'import secrets; print(secrets.token_urlsafe(18))')
-mkdir -p "$WORK/qbt/qBittorrent/config"
-cat > "$WORK/qbt/qBittorrent/config/qBittorrent.conf" <<EOF
+start_qbittorrent() {
+	QBT_BIN=$(fetch qbittorrent "$QBT_VERSION"); chmod +x "$QBT_BIN"
+	QBT_PORT=$(freeport); local bt; bt=$(freeport)
+	QBT_PASS=$(secret)
+	local save; save=$(payload qbt-downloads)
+	mkdir -p "$WORK/qbt/qBittorrent/config"
+	cat > "$WORK/qbt/qBittorrent/config/qBittorrent.conf" <<EOF
 [LegalNotice]
 Accepted=true
 
@@ -85,9 +137,9 @@ Accepted=true
 Session\\DHTEnabled=false
 Session\\PeXEnabled=false
 Session\\LSDEnabled=false
-Session\\Port=$BT_PORT
+Session\\Port=$bt
 Session\\InterfaceAddress=127.0.0.1
-Session\\DefaultSavePath=$WORK/downloads
+Session\\DefaultSavePath=$save
 Session\\QueueingSystemEnabled=false
 Session\\AddTorrentStopped=false
 
@@ -101,23 +153,24 @@ WebUI\\CSRFProtection=true
 WebUI\\HostHeaderValidation=true
 General\\Locale=en
 EOF
-QBT_ARGS=(--profile="$WORK/qbt" --webui-port="$QBT_PORT")
-case "$QBT_VERSION" in 5.*) QBT_ARGS+=(--confirm-legal-notice) ;; esac
-"$QBT_BIN" "${QBT_ARGS[@]}" > "$WORK/qbt.log" 2>&1 &
-PIDS+=($!)
-QBT="http://127.0.0.1:$QBT_PORT"
-waitfor "$QBT/api/v2/app/version" 60
+	local args=(--profile="$WORK/qbt" --webui-port="$QBT_PORT")
+	case "$QBT_VERSION" in 5.*) args+=(--confirm-legal-notice) ;; esac
+	"$QBT_BIN" "${args[@]}" > "$WORK/qbt.log" 2>&1 &
+	PIDS+=($!); LOGS+=("$WORK/qbt.log")
+	QBT="http://127.0.0.1:$QBT_PORT"
+	waitfor "$QBT/api/v2/app/version" 60
 
-# Setup writes go to the disposable instance only (never through Housekeeparr).
-JAR="$WORK/qbt.cookies"
-curl -fsS -c "$JAR" -H "Referer: $QBT" --data-urlencode "username=admin" --data-urlencode "password=$QBT_PASS" "$QBT/api/v2/auth/login" >/dev/null
-python3 -I - "$WORK/torrents/manifest.json" "$WORK/torrents" "$QBT" "$JAR" <<'PY'
+	# Setup writes go to the disposable instance only (never through Housekeeparr).
+	local jar="$WORK/qbt.cookies"
+	curl -fsS -c "$jar" -H "Referer: $QBT" --data-urlencode "username=admin" --data-urlencode "password=$QBT_PASS" "$QBT/api/v2/auth/login" >/dev/null
+	python3 -I - "$WORK/torrents/manifest.json" "$WORK/torrents" "$QBT" "$jar" "$save" <<'PY'
 import json, subprocess, sys, time
-manifest, tdir, qbt, jar = sys.argv[1:]
+manifest, tdir, qbt, jar, save = sys.argv[1:]
 def curl(*a):
     return subprocess.run(["curl", "-fsS", "-b", jar, "-H", "Referer: " + qbt, *a], check=True, capture_output=True, text=True).stdout
 for t in json.load(open(manifest)):
-    common = ["-F", "category=tv-sonarr", "-F", "savepath=" + tdir.replace("torrents", "downloads")]
+    cat = "movies-radarr" if t.get("manager") == "radarr" else "tv-sonarr"
+    common = ["-F", "category=" + cat, "-F", "savepath=" + save]
     if t["key"] == "magnet":
         curl(*common, "-F", "urls=magnet:?xt=urn:btih:%s&dn=%s" % (t["hash"], t["name"]), qbt + "/api/v2/torrents/add")
     else:
@@ -135,52 +188,166 @@ for t in json.load(open(manifest)):
             except subprocess.CalledProcessError: pass
 time.sleep(5)
 PY
+	export HK_IT_QBT_URL="$QBT" HK_IT_QBT_USER=admin HK_IT_QBT_PASS="$QBT_PASS" HK_IT_QBT_VERSION="$QBT_VERSION"
+	TESTS+=(TestQBittorrentReleasedBehaviour)
+}
 
-# --- Sonarr ---------------------------------------------------------------
-SONARR_TGZ=$(fetch sonarr "$SONARR_VERSION")
-mkdir -p "$WORK/sonarr-app" "$WORK/sonarr-data"
-tar -xzf "$SONARR_TGZ" -C "$WORK/sonarr-app"
-SONARR_PORT=$(freeport)
-SONARR_KEY=$(python3 -c 'import secrets; print(secrets.token_hex(16))')
-cat > "$WORK/sonarr-data/config.xml" <<EOF
+# --- Transmission (built from a pinned release by build-transmission.sh) ----
+start_transmission() {
+	local bin; bin=$("$HERE/build-transmission.sh" "$TR_VERSION")
+	local port bt pass save cfg
+	port=$(freeport); bt=$(freeport); pass=$(secret); save=$(payload tr-downloads); cfg="$WORK/tr-config"
+	mkdir -p "$cfg"
+	# Plain rpc-password is hashed by the daemon on first start.
+	cat > "$cfg/settings.json" <<EOF
+{"rpc-enabled": true, "rpc-bind-address": "127.0.0.1", "rpc-port": $port,
+ "rpc-authentication-required": true, "rpc-username": "admin", "rpc-password": "$pass",
+ "rpc-whitelist-enabled": true, "rpc-whitelist": "127.0.0.1", "rpc-host-whitelist-enabled": true,
+ "dht-enabled": false, "pex-enabled": false, "lpd-enabled": false, "utp-enabled": false,
+ "port-forwarding-enabled": false, "peer-port": $bt, "peer-port-random-on-start": false,
+ "bind-address-ipv4": "127.0.0.1", "bind-address-ipv6": "::1",
+ "download-dir": "$save", "incomplete-dir-enabled": false, "start-added-torrents": true,
+ "download-queue-enabled": false, "seed-queue-enabled": false, "message-level": 2}
+EOF
+	"$bin" -f -g "$cfg" > "$WORK/tr.log" 2>&1 &
+	PIDS+=($!); LOGS+=("$WORK/tr.log")
+	TR="http://127.0.0.1:$port"
+	waitfor "$TR/transmission/rpc" 60
+	python3 -I "$HERE/setup_clients.py" transmission "$TR/transmission/rpc" admin "$pass" "$WORK/torrents/manifest.json" "$WORK/torrents" "$save"
+	export HK_IT_TR_URL="$TR" HK_IT_TR_USER=admin HK_IT_TR_PASS="$pass" HK_IT_TR_VERSION="$TR_VERSION"
+	TESTS+=(TestTransmissionReleasedBehaviour)
+}
+
+# --- rTorrent (Debian 0.9.8) behind a lighttpd SCGI gateway with basic auth ---
+start_rtorrent() {
+	local root="$WORK/rt-root"
+	fetch_debs "$root" rtorrent libtorrent21t64 libxmlrpc-core-c3t64 libxmlrpc-util4 lighttpd
+	local lib="$root/usr/lib/$(uname -m)-linux-gnu"
+	local scgi bt http pass save
+	scgi=$(freeport); bt=$(freeport); http=$(freeport); pass=$(secret); save=$(payload rt-downloads)
+	mkdir -p "$WORK/rt-session" "$WORK/rt-home" "$WORK/lighttpd-root"
+	cat > "$WORK/rtorrent.rc" <<EOF
+directory.default.set = $save
+session.path.set = $WORK/rt-session
+network.scgi.open_port = 127.0.0.1:$scgi
+network.port_range.set = $bt-$bt
+network.port_random.set = no
+network.bind_address.set = 127.0.0.1
+dht.mode.set = disable
+protocol.pex.set = no
+trackers.use_udp.set = no
+system.daemon.set = true
+EOF
+	HOME="$WORK/rt-home" LD_LIBRARY_PATH="$lib" "$root/usr/bin/rtorrent" -n -o "import=$WORK/rtorrent.rc" > "$WORK/rtorrent.log" 2>&1 &
+	PIDS+=($!); LOGS+=("$WORK/rtorrent.log")
+	printf 'admin:%s\n' "$pass" > "$WORK/lighttpd-users"
+	cat > "$WORK/lighttpd.conf" <<EOF
+server.document-root = "$WORK/lighttpd-root"
+server.bind = "127.0.0.1"
+server.port = $http
+server.errorlog = "$WORK/lighttpd-error.log"
+server.modules = ("mod_auth", "mod_authn_file", "mod_scgi")
+auth.backend = "plain"
+auth.backend.plain.userfile = "$WORK/lighttpd-users"
+auth.require = ("/RPC2" => ("method" => "basic", "realm" => "rtorrent", "require" => "valid-user"))
+scgi.server = ("/RPC2" => (("host" => "127.0.0.1", "port" => $scgi, "check-local" => "disable")))
+EOF
+	LD_LIBRARY_PATH="$lib" "$root/usr/sbin/lighttpd" -D -f "$WORK/lighttpd.conf" -m "$root/usr/lib/lighttpd" > "$WORK/lighttpd.log" 2>&1 &
+	PIDS+=($!); LOGS+=("$WORK/lighttpd.log" "$WORK/lighttpd-error.log")
+	for _ in $(seq 1 30); do python3 -c "import socket; socket.create_connection(('127.0.0.1', $scgi), 1)" 2>/dev/null && break; sleep 1; done
+	waitfor "http://127.0.0.1:$http/RPC2" 30
+	python3 -I "$HERE/setup_clients.py" rtorrent "$scgi" "$WORK/torrents/manifest.json" "$WORK/torrents" "$save"
+	export HK_IT_RT_URL="http://127.0.0.1:$http" HK_IT_RT_USER=admin HK_IT_RT_PASS="$pass" HK_IT_RT_VERSION=0.9.8
+	TESTS+=(TestRTorrentReleasedBehaviour)
+}
+
+# --- *arr managers ------------------------------------------------------------
+start_arr() { # app version port-var key-var
+	local app=$1 version=$2 tgz port key title branch=main
+	title=$(python3 -c "print('$app'.capitalize())")
+	[ "$app" = radarr ] && branch=master
+	tgz=$(fetch "$app" "$version")
+	mkdir -p "$WORK/$app-app" "$WORK/$app-data"
+	tar -xzf "$tgz" -C "$WORK/$app-app"
+	port=$(freeport); key=$(python3 -c 'import secrets; print(secrets.token_hex(16))')
+	cat > "$WORK/$app-data/config.xml" <<EOF
 <Config>
   <BindAddress>127.0.0.1</BindAddress>
-  <Port>$SONARR_PORT</Port>
-  <ApiKey>$SONARR_KEY</ApiKey>
+  <Port>$port</Port>
+  <ApiKey>$key</ApiKey>
   <AuthenticationMethod>Forms</AuthenticationMethod>
   <AuthenticationRequired>DisabledForLocalAddresses</AuthenticationRequired>
   <UpdateMechanism>External</UpdateMechanism>
   <AnalyticsEnabled>False</AnalyticsEnabled>
   <LaunchBrowser>False</LaunchBrowser>
-  <Branch>main</Branch>
+  <Branch>$branch</Branch>
   <LogLevel>info</LogLevel>
 </Config>
 EOF
-DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1 "$WORK/sonarr-app/Sonarr/Sonarr" -nobrowser -data="$WORK/sonarr-data" > "$WORK/sonarr.log" 2>&1 &
-PIDS+=($!)
-SONARR="http://127.0.0.1:$SONARR_PORT"
-waitfor "$SONARR/api/v3/system/status?apikey=$SONARR_KEY" 120
-curl -fsS -H "X-Api-Key: $SONARR_KEY" -H "Content-Type: application/json" "$SONARR/api/v3/downloadclient?forceSave=true" -d @- >/dev/null <<EOF
+	# Sonarr runs (and was validated) with invariant globalization; Radarr's
+	# migrations require ICU cultures, so it uses the host ICU.
+	local invariant=0
+	[ "$app" = sonarr ] && invariant=1
+	DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=$invariant "$WORK/$app-app/$title/$title" -nobrowser -data="$WORK/$app-data" > "$WORK/$app.log" 2>&1 &
+	PIDS+=($!); LOGS+=("$WORK/$app.log")
+	local url="http://127.0.0.1:$port"
+	waitfor "$url/api/v3/system/status?apikey=$key" 180
+	local catfield=tvCategory cat=tv-sonarr
+	if [ "$app" = radarr ]; then catfield=movieCategory; cat=movies-radarr; fi
+	curl -fsS -H "X-Api-Key: $key" -H "Content-Type: application/json" "$url/api/v3/downloadclient?forceSave=true" -d @- >/dev/null <<EOF
 {"enable": true, "protocol": "torrent", "priority": 1, "name": "qBittorrent", "implementation": "QBittorrent",
  "configContract": "QBittorrentSettings", "removeCompletedDownloads": false, "removeFailedDownloads": false, "tags": [],
  "fields": [{"name": "host", "value": "127.0.0.1"}, {"name": "port", "value": $QBT_PORT}, {"name": "useSsl", "value": false},
-            {"name": "username", "value": "admin"}, {"name": "password", "value": "$QBT_PASS"}, {"name": "tvCategory", "value": "tv-sonarr"}]}
+            {"name": "username", "value": "admin"}, {"name": "password", "value": "$QBT_PASS"}, {"name": "$catfield", "value": "$cat"}]}
 EOF
-curl -fsS -H "X-Api-Key: $SONARR_KEY" -H "Content-Type: application/json" "$SONARR/api/v3/command" -d '{"name": "RefreshMonitoredDownloads"}' >/dev/null
-sleep 10
+	curl -fsS -H "X-Api-Key: $key" -H "Content-Type: application/json" "$url/api/v3/command" -d '{"name": "RefreshMonitoredDownloads"}' >/dev/null
+	eval "${3}=\$url"; eval "${4}=\$key"
+}
+
+start_sonarr() {
+	start_arr sonarr "$SONARR_VERSION" SONARR SONARR_KEY
+	export HK_IT_SONARR_URL="$SONARR" HK_IT_SONARR_KEY="$SONARR_KEY" HK_IT_SONARR_VERSION="$SONARR_VERSION"
+	TESTS+=(TestSonarrReleasedBehaviour TestEngineCorrelatesRealInstances)
+}
+
+start_radarr() {
+	start_arr radarr "$RADARR_VERSION" RADARR RADARR_KEY
+	export HK_IT_RADARR_URL="$RADARR" HK_IT_RADARR_KEY="$RADARR_KEY" HK_IT_RADARR_VERSION="$RADARR_VERSION"
+	TESTS+=(TestRadarrReleasedBehaviour TestEngineCorrelatesRadarr)
+}
+
+for c in ${CLIENTS//,/ }; do
+	case "$c" in
+	qbittorrent) start_qbittorrent ;;
+	transmission) start_transmission ;;
+	rtorrent) start_rtorrent ;;
+	*) echo "client $c is not in the harness yet" >&2; exit 2 ;;
+	esac
+done
+for m in ${MANAGERS//,/ }; do
+	case "$m" in
+	sonarr) start_sonarr ;;
+	radarr) start_radarr ;;
+	*) echo "unknown manager $m" >&2; exit 2 ;;
+	esac
+done
+[ -n "$MANAGERS" ] && sleep 10
 
 # --- tests ------------------------------------------------------------------
-export HK_IT_QBT_URL="$QBT" HK_IT_QBT_USER=admin HK_IT_QBT_PASS="$QBT_PASS" HK_IT_QBT_VERSION="$QBT_VERSION"
-export HK_IT_SONARR_URL="$SONARR" HK_IT_SONARR_KEY="$SONARR_KEY" HK_IT_SONARR_VERSION="$SONARR_VERSION"
-export HK_IT_MANIFEST="$WORK/torrents/manifest.json" HK_IT_WORK="$WORK"
 if [ "$CAPTURE" = 1 ]; then export HK_IT_CAPTURE_DIR="$ROOT/internal/integration/testdata/captured"; fi
 cd "$ROOT"
+RUN=$(IFS='|'; echo "^(${TESTS[*]})\$")
 set +e
-go test -tags integration -count=1 -v ./internal/integration/
-STATUS=$?
+go test -tags integration -count=1 -v -run "$RUN" ./internal/integration/ | tee "$WORK/go-test.log"
+STATUS=${PIPESTATUS[0]}
 set -e
+for t in "${TESTS[@]}"; do
+	if ! grep -q -- "^--- PASS: $t " "$WORK/go-test.log"; then
+		echo "required test $t did not pass (skipped, failed, or not run)" >&2
+		STATUS=1
+	fi
+done
 if [ $STATUS -ne 0 ]; then
-	echo "--- qBittorrent log (tail)"; tail -n 40 "$WORK/qbt.log" || true
-	echo "--- Sonarr log (tail)"; tail -n 60 "$WORK/sonarr.log" || true
+	for l in "${LOGS[@]}"; do echo "--- $(basename "$l") (tail)"; tail -n 40 "$l" || true; done
 fi
 exit $STATUS

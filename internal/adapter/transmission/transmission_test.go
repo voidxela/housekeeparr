@@ -92,7 +92,7 @@ func TestContract406(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.App != "Transmission" || p.Version != "4.0.6 (38c164933e)" || p.Compatibility != adapter.CompatUntested || len(p.Limitations) != 2 {
+	if p.App != "Transmission" || p.Version != "4.0.6 (38c164933e)" || p.Compatibility != adapter.CompatTested || len(p.Limitations) != 2 {
 		t.Fatalf("%+v", p)
 	}
 	if f.conflict.Load() != 1 {

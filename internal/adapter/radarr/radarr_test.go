@@ -62,7 +62,7 @@ func TestRadarrContract(t *testing.T) {
 	c := server(t, "")
 	ctx := context.Background()
 	p, err := c.Probe(ctx)
-	if err != nil || p.App != "Radarr" || p.Version != "6.4.4.10685" || p.Compatibility != adapter.CompatUntested {
+	if err != nil || p.App != "Radarr" || p.Version != "6.4.4.10685" || p.Compatibility != adapter.CompatTested {
 		t.Fatalf("%+v %v", p, err)
 	}
 	q, err := c.Queue(ctx)
