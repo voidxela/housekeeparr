@@ -9,6 +9,7 @@ The tracker URL and magnet link intentionally contain a fake passkey
 (`0123456789abcdef0123456789abcdef`) so contract tests can prove that such
 fields are never decoded, stored, or displayed.
 
-These fixtures establish adapter *contracts* only. Released-version
-compatibility is established solely by `scripts/it/run.sh`, which can also
-replace these files with sanitized captures (`--capture`).
+These fixtures establish adapter *contracts* only; they are not captures from
+a running instance. Released-version compatibility has not been established.
+A disposable-instance integration harness that can also produce sanitized
+captures is planned but not yet written (see `docs/STATUS.md`).

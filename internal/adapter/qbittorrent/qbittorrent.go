@@ -225,7 +225,8 @@ func compatibility(v version) (adapter.Compatibility, string) {
 }
 
 // TestedVersions lists released versions whose read path passed the
-// integration suite (scripts/it). Only add versions after a real run.
+// disposable-instance integration suite (planned; see docs/STATUS.md).
+// Only add versions after a real, passing run.
 var TestedVersions = []string{}
 
 // torrent mirrors the fields Housekeeparr reads. Sensitive fields
