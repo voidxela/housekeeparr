@@ -1,0 +1,164 @@
+{
+ "page": 2,
+ "pageSize": 3,
+ "sortKey": "added",
+ "sortDirection": "ascending",
+ "totalRecords": 6,
+ "records": [
+  {
+   "seriesId": 12,
+   "episodeId": 104,
+   "seasonNumber": 1,
+   "series": {
+    "title": "Example Show",
+    "sortTitle": "example show",
+    "id": 12,
+    "tvdbId": 999001
+   },
+   "episode": {
+    "seriesId": 12,
+    "tvdbId": 0,
+    "episodeFileId": 0,
+    "seasonNumber": 1,
+    "episodeNumber": 4,
+    "title": "Episode 4",
+    "hasFile": false,
+    "monitored": true,
+    "id": 104
+   },
+   "languages": [
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 3,
+     "name": "WEBDL-1080p",
+     "source": "web",
+     "resolution": 1080
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "customFormatScore": 0,
+   "size": 2147483648.0,
+   "title": "Usenet.Show.S01E01.1080p.WEB.h264-TEST",
+   "added": "2026-11-01T10:00:00Z",
+   "status": "downloading",
+   "trackedDownloadStatus": "ok",
+   "trackedDownloadState": "downloading",
+   "statusMessages": [],
+   "downloadId": "SABnzbd_nzo_abcdef",
+   "protocol": "usenet",
+   "downloadClient": "SABnzbd",
+   "downloadClientHasPostImportCategory": false,
+   "indexer": "Example Indexer (Prowlarr)",
+   "outputPath": "/downloads/incomplete/Usenet.Show.S01E01.1080p.WEB.h264-TEST",
+   "episodeHasFile": false,
+   "sizeleft": 1610612736.0,
+   "timeleft": "01:00:00",
+   "id": 1004
+  },
+  {
+   "languages": [],
+   "quality": {
+    "quality": {
+     "id": 0,
+     "name": "Unknown"
+    }
+   },
+   "customFormats": [],
+   "customFormatScore": 0,
+   "size": 1073741824.0,
+   "title": "Mystery.Release.2026.1080p.WEB.h264-TEST",
+   "added": "2026-11-01T11:00:00Z",
+   "status": "completed",
+   "trackedDownloadStatus": "warning",
+   "trackedDownloadState": "importPending",
+   "statusMessages": [
+    {
+     "title": "Mystery.Release.2026.1080p.WEB.h264-TEST",
+     "messages": [
+      "Unknown Series"
+     ]
+    }
+   ],
+   "errorMessage": "Failed to reach http://indexer.example/api?apikey=SECRETAPIKEY0000",
+   "downloadId": "9999999999999999999999999999999999999999",
+   "protocol": "torrent",
+   "downloadClient": "qBittorrent",
+   "downloadClientHasPostImportCategory": false,
+   "outputPath": "/downloads/complete/Mystery",
+   "episodeHasFile": false,
+   "sizeleft": 0.0,
+   "timeleft": "00:00:00",
+   "id": 1005
+  },
+  {
+   "seriesId": 12,
+   "episodeId": 105,
+   "seasonNumber": 1,
+   "series": {
+    "title": "Example Show",
+    "sortTitle": "example show",
+    "id": 12,
+    "tvdbId": 999001
+   },
+   "episode": {
+    "seriesId": 12,
+    "tvdbId": 0,
+    "episodeFileId": 0,
+    "seasonNumber": 1,
+    "episodeNumber": 5,
+    "title": "Episode 5",
+    "hasFile": false,
+    "monitored": true,
+    "id": 105
+   },
+   "languages": [
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 3,
+     "name": "WEBDL-1080p",
+     "source": "web",
+     "resolution": 1080
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "customFormatScore": 0,
+   "size": 2147483648.0,
+   "title": "Example.Show.S01E05.1080p.WEB.h264-TEST",
+   "added": "2026-11-01T12:00:00Z",
+   "status": "delay",
+   "trackedDownloadStatus": null,
+   "trackedDownloadState": null,
+   "statusMessages": [],
+   "downloadId": null,
+   "protocol": "torrent",
+   "downloadClient": null,
+   "downloadClientHasPostImportCategory": false,
+   "indexer": "Example Indexer (Prowlarr)",
+   "outputPath": "/downloads/incomplete/Example.Show.S01E05.1080p.WEB.h264-TEST",
+   "episodeHasFile": false,
+   "sizeleft": 1610612736.0,
+   "timeleft": "01:00:00",
+   "id": 1006
+  }
+ ]
+}

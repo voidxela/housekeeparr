@@ -1,0 +1,23 @@
+[
+ {
+  "source": "IndexerSearchCheck",
+  "type": "warning",
+  "message": "All search-capable indexers are temporarily unavailable due to recent indexer errors",
+  "wikiUrl": "https://wiki.servarr.com/sonarr/system#indexers-are-unavailable-due-to-failures",
+  "id": 0
+ },
+ {
+  "source": "DownloadClientStatusCheck",
+  "type": "error",
+  "message": "All download clients are unavailable due to failures",
+  "wikiUrl": "https://wiki.servarr.com/sonarr/system#download-clients-are-unavailable-due-to-failures",
+  "id": 0
+ },
+ {
+  "source": "UpdateCheck",
+  "type": "notice",
+  "message": "New update is available",
+  "wikiUrl": "https://wiki.servarr.com/sonarr/system#new-update-is-available",
+  "id": 0
+ }
+]

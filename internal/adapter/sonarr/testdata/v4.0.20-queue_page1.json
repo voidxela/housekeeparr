@@ -1,0 +1,203 @@
+{
+ "page": 1,
+ "pageSize": 3,
+ "sortKey": "added",
+ "sortDirection": "ascending",
+ "totalRecords": 6,
+ "records": [
+  {
+   "seriesId": 12,
+   "episodeId": 101,
+   "seasonNumber": 1,
+   "series": {
+    "title": "Example Show",
+    "sortTitle": "example show",
+    "id": 12,
+    "tvdbId": 999001
+   },
+   "episode": {
+    "seriesId": 12,
+    "tvdbId": 0,
+    "episodeFileId": 0,
+    "seasonNumber": 1,
+    "episodeNumber": 1,
+    "title": "Episode 1",
+    "hasFile": false,
+    "monitored": true,
+    "id": 101
+   },
+   "languages": [
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 3,
+     "name": "WEBDL-1080p",
+     "source": "web",
+     "resolution": 1080
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "customFormatScore": 0,
+   "size": 2147483648.0,
+   "title": "Example.Show.S01E01.1080p.WEB.h264-TEST",
+   "added": "2026-11-01T10:00:00Z",
+   "status": "downloading",
+   "trackedDownloadStatus": "ok",
+   "trackedDownloadState": "downloading",
+   "statusMessages": [],
+   "downloadId": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+   "protocol": "torrent",
+   "downloadClient": "qBittorrent",
+   "downloadClientHasPostImportCategory": false,
+   "indexer": "Example Indexer (Prowlarr)",
+   "outputPath": "/downloads/incomplete/Example.Show.S01E01.1080p.WEB.h264-TEST",
+   "episodeHasFile": false,
+   "sizeleft": 1610612736.0,
+   "timeleft": "01:00:00",
+   "id": 1001
+  },
+  {
+   "seriesId": 12,
+   "episodeId": 102,
+   "seasonNumber": 1,
+   "series": {
+    "title": "Example Show",
+    "sortTitle": "example show",
+    "id": 12,
+    "tvdbId": 999001
+   },
+   "episode": {
+    "seriesId": 12,
+    "tvdbId": 0,
+    "episodeFileId": 0,
+    "seasonNumber": 1,
+    "episodeNumber": 2,
+    "title": "Episode 2",
+    "hasFile": false,
+    "monitored": true,
+    "id": 102
+   },
+   "languages": [
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 3,
+     "name": "WEBDL-1080p",
+     "source": "web",
+     "resolution": 1080
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "customFormatScore": 0,
+   "size": 2147483648.0,
+   "title": "Example.Show.S01.1080p.WEB.h264-TEST",
+   "added": "2026-11-01T10:00:00Z",
+   "status": "completed",
+   "trackedDownloadStatus": "warning",
+   "trackedDownloadState": "importBlocked",
+   "statusMessages": [
+    {
+     "title": "Example.Show.S01.1080p.WEB.h264-TEST",
+     "messages": [
+      "One or more episodes expected in this release were not imported or missing from the release"
+     ]
+    }
+   ],
+   "downloadId": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+   "protocol": "torrent",
+   "downloadClient": "qBittorrent",
+   "downloadClientHasPostImportCategory": false,
+   "indexer": "Example Indexer (Prowlarr)",
+   "outputPath": "/downloads/incomplete/Example.Show.S01.1080p.WEB.h264-TEST",
+   "episodeHasFile": false,
+   "sizeleft": 0.0,
+   "timeleft": "00:00:00",
+   "id": 1002
+  },
+  {
+   "seriesId": 12,
+   "episodeId": 103,
+   "seasonNumber": 1,
+   "series": {
+    "title": "Example Show",
+    "sortTitle": "example show",
+    "id": 12,
+    "tvdbId": 999001
+   },
+   "episode": {
+    "seriesId": 12,
+    "tvdbId": 0,
+    "episodeFileId": 0,
+    "seasonNumber": 1,
+    "episodeNumber": 3,
+    "title": "Episode 3",
+    "hasFile": false,
+    "monitored": true,
+    "id": 103
+   },
+   "languages": [
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 3,
+     "name": "WEBDL-1080p",
+     "source": "web",
+     "resolution": 1080
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "customFormatScore": 0,
+   "size": 2147483648.0,
+   "title": "Example.Show.S01.1080p.WEB.h264-TEST",
+   "added": "2026-11-01T10:00:00Z",
+   "status": "completed",
+   "trackedDownloadStatus": "warning",
+   "trackedDownloadState": "importBlocked",
+   "statusMessages": [
+    {
+     "title": "Example.Show.S01.1080p.WEB.h264-TEST",
+     "messages": [
+      "One or more episodes expected in this release were not imported or missing from the release"
+     ]
+    }
+   ],
+   "downloadId": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+   "protocol": "torrent",
+   "downloadClient": "qBittorrent",
+   "downloadClientHasPostImportCategory": false,
+   "indexer": "Example Indexer (Prowlarr)",
+   "outputPath": "/downloads/incomplete/Example.Show.S01.1080p.WEB.h264-TEST",
+   "episodeHasFile": false,
+   "sizeleft": 0.0,
+   "timeleft": "00:00:00",
+   "id": 1003
+  }
+ ]
+}
