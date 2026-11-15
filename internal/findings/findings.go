@@ -148,6 +148,14 @@ func update(tx *store.Tx, f *domain.Finding, d Draft, now time.Time, actor strin
 	if f.Title != d.Title {
 		changes = append(changes, fmt.Sprintf("now: %s", d.Title))
 	}
+	if f.Detail.CurrentState != d.Detail.CurrentState {
+		switch {
+		case d.Detail.CurrentState == "":
+			changes = append(changes, "condition re-established on current evidence")
+		default:
+			changes = append(changes, "current state: "+d.Detail.CurrentState)
+		}
+	}
 	if f.PolicyRevision != d.PolicyRevision && f.PolicyRevision != "" {
 		changes = append(changes, fmt.Sprintf("policy revision %s → %s", f.PolicyRevision, d.PolicyRevision))
 	}

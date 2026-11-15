@@ -86,6 +86,13 @@ type FindingDetail struct {
 	ProposedEffects []string `json:"proposed_effects,omitempty"`
 	NextSteps       []string `json:"next_steps,omitempty"`
 	Links           []Link   `json:"links,omitempty"`
+	// CurrentState explains how the situation changed since the condition
+	// was established, when the finding stays open without currently
+	// re-qualifying (for example a stalled transfer that is now paused).
+	CurrentState string `json:"current_state,omitempty"`
+	// Baseline holds machine-readable values captured when the condition
+	// was established; resolution compares fresh evidence against them.
+	Baseline map[string]int64 `json:"baseline,omitempty"`
 }
 
 // Finding is a persistent, user-facing assessment.

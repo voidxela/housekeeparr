@@ -1,0 +1,628 @@
+package engine
+
+import (
+	"context"
+	"errors"
+	"io"
+	"log/slog"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/voidxela/housekeeparr/internal/adapter"
+	"github.com/voidxela/housekeeparr/internal/config"
+	"github.com/voidxela/housekeeparr/internal/domain"
+	"github.com/voidxela/housekeeparr/internal/fake"
+	"github.com/voidxela/housekeeparr/internal/findings"
+	"github.com/voidxela/housekeeparr/internal/store"
+)
+
+var ctx = context.Background()
+
+const (
+	gib  = int64(1) << 30
+	hash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+)
+
+var t0 = time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+
+const baseConfig = `
+version = 1
+[polling]
+interval = "10m"
+jitter = "0s"
+[[sonarr]]
+id = "sonarr"
+name = "Sonarr"
+url = "http://127.0.0.1:8989"
+api_key = "env:X"
+download_clients = { "qBittorrent" = "qbit" }
+[[qbittorrent]]
+id = "qbit"
+name = "qBittorrent"
+url = "http://127.0.0.1:8080"
+[[qbittorrent]]
+id = "qbit2"
+name = "qBittorrent 2"
+url = "http://127.0.0.1:8081"
+`
+
+type harness struct {
+	t      *testing.T
+	dir    string
+	cfg    *config.Config
+	clock  *fake.Clock
+	client *fake.Client
+	other  *fake.Client
+	mgr    *fake.Manager
+	st     *store.Store
+	eng    *Engine
+}
+
+func newHarness(t *testing.T, cfgSrc string) *harness {
+	t.Helper()
+	cfg, _, err := config.Parse([]byte(cfgSrc), "/x/housekeeparr.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &harness{t: t, dir: t.TempDir(), cfg: cfg, clock: fake.NewClock(t0),
+		client: fake.NewClient("qbit"), other: fake.NewClient("qbit2"), mgr: fake.NewManager("sonarr")}
+	h.start()
+	return h
+}
+
+func (h *harness) conns() *Connections {
+	meta := map[string]ConnMeta{
+		"sonarr": {ID: "sonarr", Name: "Sonarr", BaseURL: "http://127.0.0.1:8989", Kind: adapter.KindSonarr, Enabled: true,
+			SecretRef: "env:X", DownloadClients: h.cfg.Sonarr[0].DownloadClients},
+		"qbit":  {ID: "qbit", Name: "qBittorrent", BaseURL: "http://127.0.0.1:8080", Kind: adapter.KindQBittorrent, Enabled: true},
+		"qbit2": {ID: "qbit2", Name: "qBittorrent 2", BaseURL: "http://127.0.0.1:8081", Kind: adapter.KindQBittorrent, Enabled: true},
+	}
+	return &Connections{Clients: []adapter.DownloadClient{h.client, h.other}, Managers: []adapter.MediaManager{h.mgr}, Meta: meta}
+}
+
+func (h *harness) start() {
+	h.t.Helper()
+	st, err := store.Open(ctx, h.dir, store.Options{Now: h.clock.Now})
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	h.st = st
+	e, err := New(ctx, Options{Config: h.cfg, Store: st, Conns: h.conns(), Clock: h.clock,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), RunKind: "test", Version: "test"})
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	h.eng = e
+	h.t.Cleanup(func() { h.st.Close() })
+}
+
+// restart simulates a process restart (optionally without clean shutdown).
+func (h *harness) restart(clean bool) {
+	h.t.Helper()
+	if clean {
+		_ = h.eng.Stop(ctx, "test restart")
+	}
+	h.st.Close()
+	h.start()
+}
+
+func (h *harness) cycle() CycleReport {
+	h.t.Helper()
+	rep := h.eng.Cycle(ctx, nil)
+	if rep.StoreError != "" {
+		h.t.Fatalf("cycle store error: %s", rep.StoreError)
+	}
+	return rep
+}
+
+// run advances the clock in steps and cycles after each step.
+func (h *harness) run(minutes, step int) {
+	h.t.Helper()
+	for m := 0; m < minutes; m += step {
+		h.clock.Advance(time.Duration(step) * time.Minute)
+		h.cycle()
+	}
+}
+
+func (h *harness) active(typ string) []domain.Finding {
+	h.t.Helper()
+	fs, err := h.st.Findings(ctx, store.FindingFilter{Type: typ,
+		States: []domain.FindingState{domain.FindingOpen, domain.FindingAcknowledged, domain.FindingSnoozed}})
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	return fs
+}
+
+func (h *harness) all(typ string) []domain.Finding {
+	h.t.Helper()
+	fs, err := h.st.Findings(ctx, store.FindingFilter{Type: typ})
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	return fs
+}
+
+func (h *harness) mustOneActive(typ string) domain.Finding {
+	h.t.Helper()
+	fs := h.active(typ)
+	if len(fs) != 1 {
+		h.t.Fatalf("want 1 active %s finding, got %d: %+v", typ, len(fs), fs)
+	}
+	return fs[0]
+}
+
+// stalledSetup creates a public stalled transfer with a matching Sonarr row
+// and runs until the stall is diagnosed.
+func stalledSetup(t *testing.T) *harness {
+	h := newHarness(t, baseConfig)
+	h.client.SetTransfers(fake.Transfer(hash, "Example.Show.S01E01", domain.StateDownloading, 2*gib, 10*gib, t0))
+	h.mgr.SetQueue(fake.Episode(1, hash, "Example.Show.S01E01", "Example Show", 1, 1))
+	h.cycle()
+	h.run(120, 10)
+	return h
+}
+
+func TestStallDiagnosedWithCorrelationAndBaseline(t *testing.T) {
+	h := stalledSetup(t)
+	f := h.mustOneActive(domain.FindingTransferStalled)
+	if f.Subject.ClientID != "qbit" || f.Subject.NativeID != hash || len(f.Subject.Content) != 1 || f.Subject.Content[0] != "Example Show S01E01" {
+		t.Fatalf("subject %+v", f.Subject)
+	}
+	if f.Detail.Baseline[baseVerified] != 2*gib || f.Detail.Baseline[baseWanted] != 10*gib {
+		t.Fatalf("baseline %+v", f.Detail.Baseline)
+	}
+	if f.Detail.CurrentState != "" {
+		t.Fatalf("freshly qualified finding must not carry a suspended note: %q", f.Detail.CurrentState)
+	}
+	for _, s := range f.Detail.NextSteps {
+		if strings.Contains(s, "Remove from client") || strings.Contains(s, "keep the partial data") {
+			t.Fatalf("guidance promises unverified preservation: %q", s)
+		}
+	}
+	q, _ := h.st.QueueItems(ctx, store.QueueFilter{ManagerID: "sonarr"})
+	if len(q) != 1 || q[0].MatchStatus != store.MatchMatched || q[0].MatchNativeID != hash {
+		t.Fatalf("correlation %+v", q)
+	}
+}
+
+func TestStallIsNotResolvedBySuspensionOrMissingEvidence(t *testing.T) {
+	transitions := []struct {
+		name  string
+		apply func(h *harness)
+		note  string
+	}{
+		{"paused", func(h *harness) {
+			h.client.Update(hash, func(t *domain.Transfer) { t.StateClass, t.NativeState = domain.StatePaused, "stoppedDL" })
+		}, "paused"},
+		{"queued", func(h *harness) {
+			h.client.Update(hash, func(t *domain.Transfer) { t.StateClass, t.NativeState = domain.StateQueued, "queuedDL" })
+		}, "active slot"},
+		{"checking", func(h *harness) {
+			h.client.Update(hash, func(t *domain.Transfer) { t.StateClass, t.NativeState = domain.StateChecking, "checkingDL" })
+		}, "checking"},
+		{"verified progress unknown", func(h *harness) {
+			h.client.Update(hash, func(t *domain.Transfer) { t.VerifiedBytes = domain.UnknownValue[int64]("glitch") })
+		}, "unavailable"},
+		{"observation gap", func(h *harness) { h.clock.Advance(45 * time.Minute) }, "gap"},
+		{"wall clock jump", func(h *harness) { h.clock.JumpWall(5 * time.Minute) }, "jumped"},
+		{"recheck lowers verified data", func(h *harness) {
+			h.client.Update(hash, func(t *domain.Transfer) { t.VerifiedBytes = domain.KnownValue(gib) })
+		}, "decreased"},
+	}
+	for _, tc := range transitions {
+		t.Run(tc.name, func(t *testing.T) {
+			h := stalledSetup(t)
+			before := h.mustOneActive(domain.FindingTransferStalled)
+			tc.apply(h)
+			h.clock.Advance(10 * time.Minute)
+			h.cycle()
+			after := h.mustOneActive(domain.FindingTransferStalled)
+			if after.ID != before.ID {
+				t.Fatalf("finding replaced: %d → %d", before.ID, after.ID)
+			}
+			if !strings.Contains(after.Detail.CurrentState, tc.note) {
+				t.Fatalf("current state %q does not explain %q", after.Detail.CurrentState, tc.note)
+			}
+			if after.Detail.Baseline[baseVerified] != 2*gib {
+				t.Fatalf("baseline changed: %+v", after.Detail.Baseline)
+			}
+			if len(h.all(domain.FindingTransferStalled)) != 1 {
+				t.Fatal("a resolved finding was created")
+			}
+			// Several more cycles in the same condition keep it open without event spam.
+			h.run(30, 10)
+			if got := h.mustOneActive(domain.FindingTransferStalled); got.ID != before.ID {
+				t.Fatal("finding replaced while suspended")
+			}
+			evs, _ := h.st.FindingEvents(ctx, before.ID)
+			if len(evs) > 4 {
+				t.Fatalf("repeated suspended cycles produced %d events: %+v", len(evs), evs)
+			}
+		})
+	}
+}
+
+func TestStallResolvesOnlyOnVerifiedEvidence(t *testing.T) {
+	t.Run("verified progress", func(t *testing.T) {
+		h := stalledSetup(t)
+		h.client.Update(hash, func(t *domain.Transfer) { t.VerifiedBytes = domain.KnownValue(2*gib + 4<<20) })
+		h.run(10, 10)
+		if len(h.active(domain.FindingTransferStalled)) != 0 {
+			t.Fatal("verified progress must resolve the stall")
+		}
+		f := h.all(domain.FindingTransferStalled)[0]
+		if !strings.HasPrefix(f.Resolution, "Verified progress") {
+			t.Fatalf("resolution %q", f.Resolution)
+		}
+	})
+	t.Run("progress after pause and resume", func(t *testing.T) {
+		h := stalledSetup(t)
+		h.client.Update(hash, func(t *domain.Transfer) { t.StateClass = domain.StatePaused })
+		h.run(20, 10)
+		h.client.Update(hash, func(t *domain.Transfer) {
+			t.StateClass = domain.StateDownloading
+			t.VerifiedBytes = domain.KnownValue(3 * gib)
+		})
+		h.run(10, 10)
+		if len(h.active(domain.FindingTransferStalled)) != 0 {
+			t.Fatal("progress beyond the baseline after resume must resolve")
+		}
+	})
+	t.Run("completion", func(t *testing.T) {
+		h := stalledSetup(t)
+		h.client.Update(hash, func(t *domain.Transfer) {
+			t.StateClass, t.NativeState, t.VerifiedBytes = domain.StateComplete, "stalledUP", domain.KnownValue(10*gib)
+		})
+		h.run(10, 10)
+		f := h.all(domain.FindingTransferStalled)[0]
+		if f.State != domain.FindingResolved || !strings.Contains(f.Resolution, "completed") {
+			t.Fatalf("%s %q", f.State, f.Resolution)
+		}
+	})
+	t.Run("authoritative disappearance", func(t *testing.T) {
+		h := stalledSetup(t)
+		h.client.Remove(hash)
+		h.run(10, 10)
+		f := h.all(domain.FindingTransferStalled)[0]
+		if f.State != domain.FindingResolved || !strings.Contains(f.Resolution, "no longer present") || len(f.Detail.Limitations) == 0 {
+			t.Fatalf("%s %q %v", f.State, f.Resolution, f.Detail.Limitations)
+		}
+		if !strings.Contains(f.Detail.Limitations[len(f.Detail.Limitations)-1], "cannot tell") {
+			t.Fatal("unknown cause of disappearance must be recorded")
+		}
+	})
+	t.Run("partial listing omitting the transfer", func(t *testing.T) {
+		h := stalledSetup(t)
+		h.client.Remove(hash)
+		h.client.Partial(true)
+		h.run(30, 10)
+		h.mustOneActive(domain.FindingTransferStalled)
+	})
+	t.Run("client read failure", func(t *testing.T) {
+		h := stalledSetup(t)
+		h.client.Fail(&adapter.Error{Class: adapter.ErrTransient, Op: "fake", Message: "connection refused"})
+		h.run(60, 10)
+		f := h.mustOneActive(domain.FindingTransferStalled)
+		if f.Detail.CurrentState != "" {
+			t.Fatal("a dependency failure must not modify the finding")
+		}
+		h.mustOneActive(domain.FindingConnectionFailure)
+	})
+	t.Run("file selection change rebaselines", func(t *testing.T) {
+		h := stalledSetup(t)
+		h.client.Update(hash, func(t *domain.Transfer) {
+			t.WantedBytes, t.VerifiedBytes = domain.KnownValue(8*gib), domain.KnownValue(gib)
+		})
+		h.run(10, 10)
+		f := h.mustOneActive(domain.FindingTransferStalled)
+		if f.Detail.Baseline[baseWanted] != 8*gib || !strings.Contains(f.Detail.CurrentState, "File selection changed") {
+			t.Fatalf("%+v %q", f.Detail.Baseline, f.Detail.CurrentState)
+		}
+		h.client.Update(hash, func(t *domain.Transfer) { t.VerifiedBytes = domain.KnownValue(gib + 1<<20) })
+		h.run(10, 10)
+		if len(h.active(domain.FindingTransferStalled)) != 0 {
+			t.Fatal("progress on the new selection must resolve")
+		}
+	})
+}
+
+func TestStallRecurrenceLinksOccurrences(t *testing.T) {
+	h := stalledSetup(t)
+	first := h.mustOneActive(domain.FindingTransferStalled)
+	h.client.Update(hash, func(t *domain.Transfer) { t.VerifiedBytes = domain.KnownValue(3 * gib) })
+	h.run(10, 10)
+	h.run(100, 10) // flat again for a full window
+	again := h.mustOneActive(domain.FindingTransferStalled)
+	if again.ID == first.ID || again.PreviousID == nil || *again.PreviousID != first.ID || again.Occurrence != 2 {
+		t.Fatalf("recurrence %+v", again)
+	}
+	if again.Detail.Baseline[baseVerified] != 3*gib {
+		t.Fatalf("recurrence baseline %+v", again.Detail.Baseline)
+	}
+}
+
+func TestAcknowledgedAndSnoozedStallsKeepStateWhileSuspended(t *testing.T) {
+	h := stalledSetup(t)
+	f := h.mustOneActive(domain.FindingTransferStalled)
+	if err := h.st.Write(ctx, func(tx *store.Tx) error {
+		_, err := findingsAcknowledge(tx, f.ID, h.clock.Now())
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	h.client.Update(hash, func(t *domain.Transfer) { t.StateClass = domain.StatePaused })
+	h.run(20, 10)
+	got := h.mustOneActive(domain.FindingTransferStalled)
+	if got.State != domain.FindingAcknowledged {
+		t.Fatalf("state %s", got.State)
+	}
+}
+
+func TestMetadataTimeoutLifecycle(t *testing.T) {
+	h := newHarness(t, baseConfig)
+	h.client.SetTransfers(fake.Transfer(hash, "Magnet.Only", domain.StateMetadata, 0, 0, t0))
+	h.cycle()
+	h.run(90, 10)
+	h.mustOneActive(domain.FindingMetadataTimeout)
+	// Paused while still without metadata: carried, not resolved.
+	h.client.Update(hash, func(t *domain.Transfer) { t.StateClass, t.NativeState = domain.StatePaused, "stoppedDL" })
+	h.run(10, 10)
+	f := h.mustOneActive(domain.FindingMetadataTimeout)
+	if !strings.Contains(f.Detail.CurrentState, "Metadata has not been acquired") {
+		t.Fatalf("note %q", f.Detail.CurrentState)
+	}
+	// Metadata acquired.
+	h.client.SetTransfers(fake.Transfer(hash, "Magnet.Only", domain.StateDownloading, 0, 4*gib, t0))
+	h.run(10, 10)
+	if len(h.active(domain.FindingMetadataTimeout)) != 0 {
+		t.Fatal("acquired metadata must resolve the finding")
+	}
+}
+
+func TestClientErrorRequiresConsecutiveObservations(t *testing.T) {
+	h := newHarness(t, baseConfig)
+	h.client.SetTransfers(fake.Transfer(hash, "Broken", domain.StateError, gib, 2*gib, t0))
+	h.cycle()
+	if len(h.active(domain.FindingTransferError)) != 0 {
+		t.Fatal("a single error observation must not open a finding")
+	}
+	h.run(10, 10)
+	h.mustOneActive(domain.FindingTransferError)
+	h.client.Update(hash, func(t *domain.Transfer) { t.StateClass, t.NativeState = domain.StateDownloading, "stalledDL" })
+	h.run(10, 10)
+	if f := h.mustOneActive(domain.FindingTransferError); !strings.Contains(f.Detail.CurrentState, "awaiting") {
+		t.Fatalf("note %q", f.Detail.CurrentState)
+	}
+	h.run(10, 10)
+	if len(h.active(domain.FindingTransferError)) != 0 {
+		t.Fatal("two non-error observations must resolve")
+	}
+}
+
+func TestConnectionFailureThresholdsAndRecovery(t *testing.T) {
+	h := stalledSetup(t)
+	h.client.Fail(&adapter.Error{Class: adapter.ErrTransient, Op: "fake", Message: "connection refused"})
+	h.run(10, 10)
+	if len(h.active(domain.FindingConnectionFailure)) != 0 {
+		t.Fatal("one transient failure must not open a finding")
+	}
+	h.run(10, 10)
+	c := h.mustOneActive(domain.FindingConnectionFailure)
+	if c.Severity != domain.SeverityWarning || !strings.Contains(c.Title, "unreachable") {
+		t.Fatalf("%s %q", c.Severity, c.Title)
+	}
+	// Unrelated healthy connections keep being observed.
+	if reads := h.mgr.Reads(); reads < 14 {
+		t.Fatalf("manager reads %d", reads)
+	}
+	h.client.Fail(nil)
+	h.run(60, 10) // backoff may skip some cycles
+	if len(h.active(domain.FindingConnectionFailure)) != 0 {
+		t.Fatal("successful read must resolve the connection finding")
+	}
+	h.mustOneActive(domain.FindingTransferStalled)
+}
+
+func TestUnauthorizedBacksOffAndOpensImmediately(t *testing.T) {
+	h := newHarness(t, baseConfig)
+	h.client.Fail(&adapter.Error{Class: adapter.ErrUnauthorized, Op: "fake", Message: "HTTP 401"})
+	h.cycle()
+	f := h.mustOneActive(domain.FindingConnectionFailure)
+	if f.Severity != domain.SeverityError {
+		t.Fatalf("severity %s", f.Severity)
+	}
+	before := h.client.Lists()
+	h.run(50, 10)
+	if h.client.Lists() != before {
+		t.Fatalf("unauthorized connection retried within the backoff: %d → %d", before, h.client.Lists())
+	}
+	h.run(20, 10)
+	if h.client.Lists() == before {
+		t.Fatal("connection never retried after backoff")
+	}
+	// A configuration change resets backoff on the next start.
+	h.client.Fail(&adapter.Error{Class: adapter.ErrUnauthorized, Op: "fake", Message: "HTTP 401"})
+	h.cycle()
+	n := h.client.Lists()
+	h.cfg.Revision = "changed"
+	h.restart(true)
+	h.clock.Advance(time.Minute)
+	h.cycle()
+	if h.client.Lists() != n+1 {
+		t.Fatal("configuration change must reset backoff")
+	}
+}
+
+func TestStateStoreFailureSkipsCycleAndRecovers(t *testing.T) {
+	h := stalledSetup(t)
+	reads := h.client.Lists()
+	h.st.InjectWriteFault(errors.New("disk full"))
+	h.clock.Advance(10 * time.Minute)
+	rep := h.eng.Cycle(ctx, nil)
+	if rep.StoreError == "" || !strings.Contains(rep.StoreError, "disk full") {
+		t.Fatalf("store error not reported: %+v", rep)
+	}
+	if h.client.Lists() != reads {
+		t.Fatal("no external work may run when state cannot be persisted")
+	}
+	if _, err := h.eng.LastCycle(); err == nil {
+		t.Fatal("engine must expose the store error")
+	}
+	h.st.InjectWriteFault(nil)
+	h.run(10, 10)
+	if _, err := h.eng.LastCycle(); err != nil {
+		t.Fatalf("store error not cleared: %v", err)
+	}
+	h.mustOneActive(domain.FindingTransferStalled)
+}
+
+func TestRestartContinuity(t *testing.T) {
+	h := newHarness(t, baseConfig)
+	h.client.SetTransfers(fake.Transfer(hash, "Example.Show.S01E01", domain.StateDownloading, 2*gib, 10*gib, t0))
+	h.cycle()
+	h.run(70, 10)
+	h.restart(false) // abrupt termination
+	h.run(50, 10)
+	h.mustOneActive(domain.FindingTransferStalled)
+	audit, _ := h.st.RecentAudit(ctx, 10)
+	found := false
+	for _, a := range audit {
+		found = found || a.Kind == "startup.reconcile"
+	}
+	if !found {
+		t.Fatal("abrupt termination must be recorded at startup")
+	}
+	runs, _ := h.st.RecentRuns(ctx, 5)
+	if len(runs) != 2 || runs[1].StopReason != "terminated without clean shutdown" {
+		t.Fatalf("runs %+v", runs)
+	}
+}
+
+func TestQueueCorrelationOwnership(t *testing.T) {
+	t.Run("shared infohash with explicit mapping", func(t *testing.T) {
+		h := newHarness(t, baseConfig)
+		tr := fake.Transfer(hash, "Shared", domain.StateDownloading, gib, 2*gib, t0)
+		h.client.SetTransfers(tr)
+		h.other.SetTransfers(tr)
+		h.mgr.SetQueue(fake.Episode(1, hash, "Shared", "Show", 1, 1))
+		h.cycle()
+		q, _ := h.st.QueueItems(ctx, store.QueueFilter{})
+		if q[0].MatchStatus != store.MatchMatched || q[0].MatchClientID != "qbit" || !strings.Contains(q[0].MatchNote, "shared") {
+			t.Fatalf("%+v", q[0])
+		}
+	})
+	t.Run("ambiguous without mapping", func(t *testing.T) {
+		h := newHarness(t, strings.Replace(baseConfig, `download_clients = { "qBittorrent" = "qbit" }`, "", 1))
+		tr := fake.Transfer(hash, "Shared", domain.StateDownloading, gib, 2*gib, t0)
+		h.client.SetTransfers(tr)
+		h.other.SetTransfers(tr)
+		h.mgr.SetQueue(fake.Episode(1, hash, "Shared", "Show", 1, 1))
+		h.cycle()
+		h.mustOneActive(domain.FindingQueueAmbiguous)
+	})
+	t.Run("hash only without mapping", func(t *testing.T) {
+		h := newHarness(t, strings.Replace(baseConfig, `download_clients = { "qBittorrent" = "qbit" }`, "", 1))
+		h.client.SetTransfers(fake.Transfer(hash, "One", domain.StateDownloading, gib, 2*gib, t0))
+		h.mgr.SetQueue(fake.Episode(1, hash, "One", "Show", 1, 1))
+		h.cycle()
+		q, _ := h.st.QueueItems(ctx, store.QueueFilter{})
+		if q[0].MatchStatus != store.MatchHashOnly {
+			t.Fatalf("%+v", q[0])
+		}
+	})
+	t.Run("not found needs persistence; stale client is unknown", func(t *testing.T) {
+		h := newHarness(t, baseConfig)
+		h.mgr.SetQueue(fake.Episode(1, hash, "Missing", "Show", 1, 1))
+		h.cycle()
+		if len(h.active(domain.FindingQueueUnmatched)) != 0 {
+			t.Fatal("not-found must persist across cycles before a finding")
+		}
+		h.run(10, 10)
+		h.mustOneActive(domain.FindingQueueUnmatched)
+		// Client failure: correlation becomes unknown; the finding is kept, not resolved.
+		h.client.Fail(&adapter.Error{Class: adapter.ErrTransient, Op: "fake", Message: "down"})
+		h.run(30, 10)
+		q, _ := h.st.QueueItems(ctx, store.QueueFilter{})
+		if q[0].MatchStatus != store.MatchClientUnavailable {
+			t.Fatalf("match %s", q[0].MatchStatus)
+		}
+		h.mustOneActive(domain.FindingQueueUnmatched)
+		// The transfer appears once the client is back: resolved by evidence.
+		h.client.Fail(nil)
+		h.client.SetTransfers(fake.Transfer(hash, "Missing", domain.StateDownloading, gib, 2*gib, t0))
+		h.run(60, 10)
+		if len(h.active(domain.FindingQueueUnmatched)) != 0 {
+			t.Fatal("finding should resolve once the transfer is listed")
+		}
+	})
+}
+
+func TestImportAttentionSettlesAndSurvivesManagerFailure(t *testing.T) {
+	h := newHarness(t, baseConfig)
+	blocked := func(id int64, ep int64) domain.QueueItem {
+		q := fake.Episode(id, hash, "Show.S01.Pack", "Show", 1, ep)
+		q.TrackedState, q.TrackedStatus = domain.KnownValue("importBlocked"), domain.KnownValue("warning")
+		q.StatusMessages = []domain.StatusMessage{{Title: "Show.S01.Pack", Messages: []string{"One or more episodes expected in this release were not imported or missing from the release"}}}
+		return q
+	}
+	h.client.SetTransfers(fake.Transfer(hash, "Show.S01.Pack", domain.StateComplete, 2*gib, 2*gib, t0))
+	h.mgr.SetQueue(blocked(1, 1), blocked(2, 2))
+	h.cycle()
+	h.run(20, 10)
+	if len(h.active(domain.FindingImportAttention)) != 0 {
+		t.Fatal("import attention must wait for the settling period")
+	}
+	h.run(10, 10)
+	f := h.mustOneActive(domain.FindingImportAttention)
+	if len(f.Subject.Content) != 2 || f.Subject.ClientID != "qbit" {
+		t.Fatalf("season pack grouping %+v", f.Subject)
+	}
+	h.mgr.Fail(&adapter.Error{Class: adapter.ErrTransient, Op: "fake", Message: "down"})
+	h.run(60, 10)
+	h.mustOneActive(domain.FindingImportAttention)
+	h.mgr.Fail(nil)
+	h.mgr.Partial(true)
+	h.mgr.SetQueue()
+	h.run(30, 10)
+	h.mustOneActive(domain.FindingImportAttention)
+	h.mgr.Partial(false)
+	h.run(10, 10)
+	f = h.all(domain.FindingImportAttention)[0]
+	if f.State != domain.FindingResolved || !strings.Contains(f.Resolution, "No longer in") {
+		t.Fatalf("%s %q", f.State, f.Resolution)
+	}
+}
+
+func TestManagerHealthFindings(t *testing.T) {
+	h := newHarness(t, baseConfig)
+	h.mgr.SetHealth(domain.HealthItem{Source: "IndexerSearchCheck", Type: "warning", Message: "All search-capable indexers are temporarily unavailable"},
+		domain.HealthItem{Source: "UpdateCheck", Type: "notice", Message: "Update available"})
+	h.cycle()
+	f := h.mustOneActive(domain.FindingManagerHealth)
+	if !strings.Contains(f.Summary, "incomplete source coverage") {
+		t.Fatalf("summary %q", f.Summary)
+	}
+	h.mgr.SetHealth()
+	h.run(10, 10)
+	if len(h.active(domain.FindingManagerHealth)) != 0 {
+		t.Fatal("cleared health check must resolve")
+	}
+}
+
+func TestNoProgressDiagnosisSurvivesManagerOutage(t *testing.T) {
+	h := newHarness(t, baseConfig)
+	h.client.SetTransfers(fake.Transfer(hash, "Example", domain.StateDownloading, gib, 2*gib, t0))
+	h.mgr.Fail(&adapter.Error{Class: adapter.ErrTransient, Op: "fake", Message: "down"})
+	h.cycle()
+	h.run(120, 10)
+	h.mustOneActive(domain.FindingTransferStalled)
+	if len(h.active(domain.FindingConnectionFailure)) != 1 {
+		t.Fatal("manager outage should be its own finding")
+	}
+}
+
+func findingsAcknowledge(tx *store.Tx, id int64, now time.Time) (*domain.Finding, error) {
+	return findings.Acknowledge(tx, id, "test", now)
+}

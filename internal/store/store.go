@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -72,6 +73,18 @@ type Store struct {
 	readOnly bool
 	warnings []string
 	now      func() time.Time
+
+	faultMu sync.Mutex
+	fault   error
+}
+
+// InjectWriteFault makes every subsequent Write fail with err (nil clears
+// it). It exists for fault-injection tests and operator drills of the
+// "state store unwritable" path; production code never calls it.
+func (s *Store) InjectWriteFault(err error) {
+	s.faultMu.Lock()
+	s.fault = err
+	s.faultMu.Unlock()
 }
 
 // Open opens (creating if necessary) the store in dir.
@@ -362,6 +375,12 @@ type Tx struct {
 func (s *Store) Write(ctx context.Context, fn func(*Tx) error) error {
 	if s.w == nil {
 		return ErrReadOnly
+	}
+	s.faultMu.Lock()
+	fault := s.fault
+	s.faultMu.Unlock()
+	if fault != nil {
+		return fmt.Errorf("state store: %w", fault)
 	}
 	tx, err := s.w.BeginTx(ctx, nil)
 	if err != nil {
