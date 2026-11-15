@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/voidxela/housekeeparr/internal/domain"
 	"github.com/voidxela/housekeeparr/internal/policy"
@@ -19,6 +20,12 @@ const (
 const (
 	baseVerified = "verified_bytes"
 	baseWanted   = "wanted_bytes"
+	// baseRecheck is set while a data check observed after diagnosis has not
+	// yet been followed by a downloading observation. Verified counters
+	// reported during or after a check are not comparable with the earlier
+	// baseline, so the first downloading observation afterwards becomes the
+	// new baseline instead of counting as progress.
+	baseRecheck = "recheck_pending"
 )
 
 // transferOutcome is the decision for one existing finding that does not
@@ -40,32 +47,54 @@ func stallBaseline(t domain.Transfer) map[string]int64 {
 	return map[string]int64{baseVerified: v, baseWanted: w}
 }
 
+func withRecheck(base map[string]int64) map[string]int64 {
+	out := make(map[string]int64, len(base)+1)
+	for k, v := range base {
+		out[k] = v
+	}
+	out[baseRecheck] = 1
+	return out
+}
+
 // decideStall determines what happens to an open stall finding when the
 // transfer is listed but does not currently qualify. Only verified progress
-// beyond the diagnosis baseline resolves it here; completion and
+// beyond the applicable baseline, observed while the client is actively
+// downloading and the evidence is fresh, resolves it here; completion and
 // disappearance are handled by the caller. A pause, queue wait, check,
 // error, observation gap, clock anomaly, or missing evidence only changes
-// the explanation.
+// the explanation. A check establishes a new baseline: counters that rise
+// during or because of a recheck are not download progress.
 func decideStall(f domain.Finding, t domain.Transfer, a policy.Assessment, s policy.Settings) transferOutcome {
 	base := f.Detail.Baseline
+	const tail = " The stall is not treated as recovered; this finding resolves on verified progress, completion, or removal of the transfer."
+	if t.StateClass == domain.StateChecking {
+		return transferOutcome{baseline: withRecheck(base), note: suspendedNote(t, a) + tail}
+	}
 	v, okV := t.VerifiedBytes.Get()
 	w, okW := t.WantedBytes.Get()
 	bv, hasV := base[baseVerified]
 	bw, hasW := base[baseWanted]
-	if okV && okW && hasV && hasW && w == bw && v-bv >= s.MinProgressBytes {
+	evaluable := t.StateClass == domain.StateDownloading && okV && okW && a.Status != policy.StatusStale
+	if evaluable && base[baseRecheck] != 0 {
+		return transferOutcome{baseline: stallBaseline(t), note: fmt.Sprintf(
+			"The client finished checking the data; progress is now measured from the %s of %s verified after the check.",
+			HumanBytes(v), HumanBytes(w)) + tail}
+	}
+	if evaluable && hasV && hasW && w == bw && v-bv >= s.MinProgressBytes {
 		return transferOutcome{resolve: true, reason: fmt.Sprintf(
 			"Verified progress: %s more hash-checked data than when the stall was diagnosed (%s of %s wanted).",
 			HumanBytes(v-bv), HumanBytes(v), HumanBytes(w))}
 	}
 	out := transferOutcome{baseline: base}
-	const tail = " The stall is not treated as recovered; this finding resolves on verified progress, completion, or removal of the transfer."
 	switch {
-	case okV && okW && (!hasV || !hasW):
+	case evaluable && (!hasV || !hasW):
 		out.baseline = stallBaseline(t)
 		out.note = "No diagnosis baseline was recorded; the current verified data is now the baseline." + tail
-	case okV && okW && w != bw:
+	case evaluable && w != bw:
 		out.baseline = stallBaseline(t)
 		out.note = fmt.Sprintf("File selection changed since diagnosis (wanted %s → %s); progress is now measured from the new selection.", HumanBytes(bw), HumanBytes(w)) + tail
+	case base[baseRecheck] != 0:
+		out.note = suspendedNote(t, a) + " A data check was observed; progress will be measured from the first active observation after it." + tail
 	default:
 		out.note = suspendedNote(t, a) + tail
 	}
@@ -113,21 +142,47 @@ func decideMetadata(t domain.Transfer, a policy.Assessment) transferOutcome {
 	return transferOutcome{note: suspendedNote(t, a) + " Metadata has not been acquired; this finding resolves when it is, or when the transfer completes or is removed."}
 }
 
-// decideError resolves a client-error finding after two consecutive
-// non-error observations.
-func decideError(t domain.Transfer, obs []store.Observation) transferOutcome {
-	if consecutiveNonErrors(obs) >= 2 {
-		return transferOutcome{resolve: true, reason: fmt.Sprintf("Verified: the client has reported a non-error state on consecutive observations (now %s).", t.NativeState)}
+// decideError resolves a client-error finding only on positive evidence of
+// clearance: the two latest observations both report a recognised non-error
+// state, are fresh, and are not separated by a gap or clock anomaly. An
+// unrecognised or unknown state is not evidence that the error cleared.
+func decideError(t domain.Transfer, obs []store.Observation, a policy.Assessment, s policy.Settings) transferOutcome {
+	if a.Status != policy.StatusStale && consecutiveCleared(obs, s.MaxObservationGap) >= 2 {
+		return transferOutcome{resolve: true, reason: fmt.Sprintf("Verified: the client has reported a recognised non-error state on consecutive observations (now %s).", t.NativeState)}
 	}
-	if t.StateClass == domain.StateError {
+	switch {
+	case t.StateClass == domain.StateError:
 		return transferOutcome{note: "The client still reports an error."}
+	case t.StateClass == domain.StateUnknown:
+		return transferOutcome{note: fmt.Sprintf("The client now reports an unrecognised state (%s), which does not establish that the error cleared; this finding stays open until a recognised non-error state is observed twice in a row.", t.NativeState)}
+	case a.Status == policy.StatusStale:
+		return transferOutcome{note: fmt.Sprintf("The client now reports %s, but the evidence is too old or inconsistent with the system clock to verify recovery.", t.NativeState)}
 	}
 	return transferOutcome{note: fmt.Sprintf("The client now reports %s; awaiting a second consecutive non-error observation before resolving.", t.NativeState)}
 }
 
-func consecutiveNonErrors(obs []store.Observation) int {
+// clearsError reports whether a state is positive evidence that the client
+// is not in an error state.
+func clearsError(c domain.StateClass) bool {
+	switch c {
+	case domain.StateQueued, domain.StatePaused, domain.StateChecking, domain.StateMetadata,
+		domain.StateDownloading, domain.StateComplete, domain.StateTransient:
+		return true
+	}
+	return false
+}
+
+// consecutiveCleared counts the latest run of error-clearing observations
+// with no gap larger than maxGap and strictly increasing timestamps.
+func consecutiveCleared(obs []store.Observation, maxGap time.Duration) int {
 	n := 0
-	for i := len(obs) - 1; i >= 0 && obs[i].StateClass != domain.StateError; i-- {
+	for i := len(obs) - 1; i >= 0 && clearsError(obs[i].StateClass); i-- {
+		if i < len(obs)-1 {
+			d := obs[i+1].At.Sub(obs[i].At)
+			if d <= 0 || d > maxGap {
+				break
+			}
+		}
 		n++
 	}
 	return n

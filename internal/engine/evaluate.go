@@ -150,7 +150,7 @@ func (e *Engine) evaluateClient(tx *store.Tx, snap domain.TransferSnapshot, gone
 		case t.StateClass == domain.StateError && consecutiveErrors(obs) >= 2:
 			ev.Drafts = append(ev.Drafts, e.clientErrorDraft(base+kindError, meta, t, obs, queue, now))
 		case errF != nil:
-			if o := decideError(t, obs); o.resolve {
+			if o := decideError(t, obs, a, s); o.resolve {
 				reasons[base+kindError] = o.reason
 			} else {
 				carry(errF, o)
