@@ -25,6 +25,8 @@ exists yet.
 | 2026-11-15 | Linux aarch64, Go 1.27.4 | Transmission 4.0.6 (daemon built from the release tarball; sha256 cross-checked against Arch's PKGBUILD) | all assertions passed; every requested `torrent-get` field present |
 | 2026-11-15 | Linux aarch64, Go 1.27.4 | Transmission 4.1.4 (daemon built from the release tarball; GitHub-published digest) | all assertions passed with the legacy protocol; every requested field present |
 | 2026-11-15 | Linux aarch64, Go 1.27.4 | rTorrent 0.9.8 / libtorrent 0.13.8 (Debian trixie build, extracted, not installed) via lighttpd 1.4.79 `mod_scgi` with HTTP basic auth | all assertions passed, including wrong-password rejection at the gateway |
+| 2026-11-15 | Linux aarch64, Go 1.27.4 | Deluge 2.2.0 (Debian trixie deluged + deluge-web, libtorrent 2.0.11; extracted, not installed) | all assertions passed after two adapter fixes found by this run (`daemon.get_version`; `[]` params) |
+| 2026-11-15 (isolated: loopback-only network namespace, the new default) | Linux aarch64, Go 1.27.4 | qBittorrent 5.3.0 + Sonarr 4.0.20.3014 + Radarr 6.4.4.10685; qBittorrent 4.6.7 + Sonarr; Transmission 4.0.6; Transmission 4.1.4; rTorrent 0.9.8; Deluge 2.2.0 | all assertions passed in every combination |
 
 What the suite exercised (`scripts/it/run.sh`, `internal/integration`):
 session login; version probe; listing of complete, half-complete (after
@@ -45,9 +47,20 @@ privacy, file selection, and availability semantics (Transmission reports
 known 0 with no connected peers; rTorrent availability is unsupported). For
 Transmission the test also sends the adapter's exact `torrent-get` request and
 checks every field is present, which is what establishes that the legacy
-protocol remains sufficient on 4.1.4. rTorrent 0.9.8 does not list a magnet
+protocol remains sufficient on 4.1.4. With `--clients deluge`, the same set is
+observed through deluge-web, which the harness (not Housekeeparr) connects to
+the daemon; Deluge reports distributed copies of 0.5 for the half torrent
+(own pieces counted, as with qBittorrent) and 0, treated as unknown, otherwise. rTorrent 0.9.8 does not list a magnet
 without a tracker when DHT is off, so the harness adds the closed loopback
-tracker to it. Every run also asserts
+tracker to it. Since 2026-11-15 the harness pre-fetches every artifact and then re-runs
+itself in an unprivileged loopback-only network namespace (`unshare -rn`;
+`--no-netns` opts out). Earlier runs were not isolated: qBittorrent ran with
+UPnP/NAT-PMP enabled (now disabled explicitly, with peer-country lookup off,
+which crashed qBittorrent 4.6.7 without network), and Deluge's libtorrent
+session starts with libtorrent defaults before Deluge applies its own
+settings. No torrent was ever announced to a public network in either case
+(DHT/PeX/LSD were off before torrents were added and trackers point at a
+closed loopback port), but isolation now enforces it. Every run also asserts
 that real listings are complete and that queue row counts equal
 `totalRecords`.
 
@@ -68,7 +81,7 @@ exist in the library, import completion, and every other application.
 | Radarr | 5.0 | `v6.4.4.10685` | HTTP API v3, API key header | **tested: 6.4.4.10685** (unknown-movie queue items only); others contract-tested | not implemented | not implemented | not implemented | n/a (Sonarr-specific in v1) |
 | qBittorrent | 4.1 (WebUI API v2) | `release-4.6.7`, `release-5.3.0` | WebUI API v2, session cookie | **tested: 5.3.0, 4.6.7**; others contract-tested | not implemented | not implemented | not implemented | — |
 | Transmission | 2.80 (RPC 15) | `4.0.6`, `4.1.4` | legacy RPC (deprecated in 4.1, still supported throughout 4.x), session-id handshake, optional basic auth | **tested: 4.0.6, 4.1.4**; others contract-tested | not implemented | not implemented | not implemented | — |
-| Deluge | 2.0 | `deluge-2.1.1` | deluge-web JSON API (`/json`); daemon protocol unsupported | contract-tested | not implemented | not implemented | not implemented | — |
+| Deluge | 2.0 | `deluge-2.0.0`, `deluge-2.1.1`, `deluge-2.2.0` | deluge-web JSON API (`/json`); daemon protocol unsupported | **tested: 2.2.0**; others contract-tested | not implemented | not implemented | not implemented | — |
 | rTorrent | 0.9.8 | `v0.9.8`, `v0.16.28` | XML-RPC over an HTTP(S) SCGI gateway (tested: lighttpd `mod_scgi`); raw SCGI unsupported | **tested: 0.9.8**; others contract-tested | not implemented | not implemented | not implemented | — |
 
 ## Observation signals by client
