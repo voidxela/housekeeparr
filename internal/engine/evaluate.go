@@ -177,7 +177,7 @@ func (e *Engine) evaluateClient(tx *store.Tx, snap domain.TransferSnapshot, gone
 		}
 		return findings.Resolution{
 			Reason:     fmt.Sprintf("The transfer is no longer present in %s (absent %s).", meta.Name, when),
-			Limitation: "Housekeeparr cannot tell whether it was removed by a user, by Sonarr, or by the client.",
+			Limitation: "Housekeeparr cannot tell whether it was removed by a user, by a media manager, or by the client.",
 		}
 	}
 	return findings.Apply(tx, ev, now)
@@ -211,7 +211,7 @@ func consecutiveErrors(obs []store.Observation) int {
 
 // unverifiedRecovery states the recovery limitation until a version-tested
 // preservation workflow exists.
-const unverifiedRecovery = "Recovery semantics (Sonarr queue removal, blocklisting, replacement-search ownership, and whether the torrent, its data, its tracker registration, and its active slot are retained) have not been verified for any version, so Housekeeparr proposes no action and makes no preservation claim."
+const unverifiedRecovery = "Recovery semantics (media-manager queue removal, blocklisting, replacement-search ownership, and whether the torrent, its data, its tracker registration, and its active slot are retained) have not been verified for any version, so Housekeeparr proposes no action and makes no preservation claim."
 
 func (e *Engine) modeEligibility(extra ...string) string {
 	var b strings.Builder
@@ -219,7 +219,7 @@ func (e *Engine) modeEligibility(extra ...string) string {
 	case config.ModePaused:
 		b.WriteString("Paused: no automation will start. ")
 	default:
-		b.WriteString("Observe-only: Housekeeparr will not change anything in Sonarr or the client. ")
+		b.WriteString("Observe-only: Housekeeparr will not change anything in the media manager or the client. ")
 	}
 	b.WriteString("Automatic recovery is not implemented in this release.")
 	for _, x := range extra {
@@ -373,9 +373,10 @@ func (e *Engine) stalledDraft(key string, meta ConnMeta, eff policy.Effective, t
 		"If it is slow but alive, no action is needed; Housekeeparr re-evaluates on every poll and resolves this finding on verified progress.",
 	}
 	if len(queue) > 0 {
-		steps = append(steps, "Review the item in Sonarr → Activity → Queue. Before removing or blocklisting anything manually, confirm in your Sonarr version's documentation what each removal option does to the torrent, its data, and future searches — Housekeeparr has not verified those effects.")
+		mgr := e.conns.Meta[queue[0].ManagerID].Name
+		steps = append(steps, fmt.Sprintf("Review the item in %s → Activity → Queue. Before removing or blocklisting anything manually, confirm in your %s version's documentation what each removal option does to the torrent, its data, and future searches — Housekeeparr has not verified those effects.", mgr, mgr))
 	} else {
-		steps = append(steps, "No Sonarr queue item is associated with this transfer.")
+		steps = append(steps, "No media-manager queue item is associated with this transfer.")
 	}
 	return findings.Draft{
 		DedupKey: key, Type: domain.FindingTransferStalled, Severity: domain.SeverityWarning, Title: title,
@@ -422,7 +423,7 @@ func (e *Engine) metadataDraft(key string, meta ConnMeta, eff policy.Effective, 
 			Eligibility: e.modeEligibility(),
 			NextSteps: []string{
 				fmt.Sprintf("Inspect the magnet in %s: tracker messages and whether any peer is connected.", meta.Name),
-				"Review the item in Sonarr → Activity → Queue. Before removing or blocklisting anything manually, confirm in your Sonarr version's documentation what each removal option does — Housekeeparr has not verified those effects.",
+				"Review the item in the media manager's Activity → Queue. Before removing or blocklisting anything manually, confirm in that version's documentation what each removal option does — Housekeeparr has not verified those effects.",
 			},
 			Links: links,
 		},
@@ -590,7 +591,7 @@ func (e *Engine) importDraft(key string, meta ConnMeta, dl, state string, since 
 	if state == "failedPending" {
 		sev = domain.SeverityNotice
 	}
-	verb := map[string]string{"importBlocked": "import blocked", "importPending": "import pending with warnings", "failedPending": "marked failed, awaiting Sonarr's handling"}[state]
+	verb := map[string]string{"importBlocked": "import blocked", "importPending": "import pending with warnings", "failedPending": "marked failed, awaiting the manager's own handling"}[state]
 	var msgs []string
 	seen := map[string]bool{}
 	for _, it := range items {
@@ -631,17 +632,14 @@ func (e *Engine) importDraft(key string, meta ConnMeta, dl, state string, since 
 		Title:   fmt.Sprintf("%s %s: %s", meta.Name, verb, q.Title),
 		Summary: summary, Subject: sub,
 		Detail: domain.FindingDetail{
-			Evidence:   evidence,
-			Missing:    []string{"Import history and episode file records are not read in this release."},
-			Confidence: fmt.Sprintf("Cause as reported by %s; Housekeeparr has not verified import history, files, or episode mapping, so the cause is explicitly uncertain. Reported after the %s import settling period.", meta.Name, policy.HumanDuration(eff.Settings.ImportSettle)),
-			Limitations: []string{
-				"A generic missing-episode message is not proof that the release lacks those episodes; permissions, extraction, mappings, or samples can produce similar messages.",
-				"Partial season-pack handling (clearing a stale association and targeted searches) is not implemented in this milestone.",
-			},
+			Evidence:    evidence,
+			Missing:     []string{"Import history and episode file records are not read in this release."},
+			Confidence:  fmt.Sprintf("Cause as reported by %s; Housekeeparr has not verified import history, files, or episode mapping, so the cause is explicitly uncertain. Reported after the %s import settling period.", meta.Name, policy.HumanDuration(eff.Settings.ImportSettle)),
+			Limitations: importLimitations(meta),
 			Eligibility: e.modeEligibility("No association will be cleared."),
 			NextSteps: []string{
 				fmt.Sprintf("Review the item in %s → Activity → Queue; the message explains what could not be imported.", meta.Name),
-				"Check whether the files Sonarr expects are present in the download and readable by Sonarr (paths, permissions, extraction). Housekeeparr has not verified which manual step is safe for your Sonarr version and does not change the queue.",
+				fmt.Sprintf("Check whether the files %s expects are present in the download and readable by it (paths, permissions, extraction). Housekeeparr has not verified which manual step is safe for your version and does not change the queue.", meta.Name),
 			},
 			Links: []domain.Link{{Label: meta.Name + " queue", URL: meta.BaseURL + "/activity/queue"}},
 		},
@@ -663,7 +661,7 @@ func (e *Engine) unmatchedDraft(key string, meta ConnMeta, dl string, items []st
 				{Label: "Not found since", Value: it.MatchSince.UTC().Format(time.RFC3339), At: it.MatchSince},
 			},
 			Confidence:  "Based on complete client listings on consecutive cycles; a download added between the two reads would match on the next cycle.",
-			Limitations: []string{"If Sonarr's download client name maps to the wrong Housekeeparr connection, this finding is a configuration problem."},
+			Limitations: []string{fmt.Sprintf("If %s's download client name maps to the wrong Housekeeparr connection, this finding is a configuration problem.", meta.Name)},
 			Eligibility: e.modeEligibility(),
 			NextSteps: []string{
 				"Check whether the torrent was removed from the client manually.",
@@ -680,14 +678,14 @@ func (e *Engine) ambiguousDraft(key string, meta ConnMeta, dl string, items []st
 	return findings.Draft{
 		DedupKey: key, Type: domain.FindingQueueAmbiguous, Severity: domain.SeverityNotice,
 		Title:   "Ownership ambiguous: " + it.Latest.Title,
-		Summary: "More than one transfer matches this Sonarr download, so Housekeeparr cannot tell which one Sonarr is tracking.",
+		Summary: fmt.Sprintf("More than one transfer matches this %s download, so Housekeeparr cannot tell which one it is tracking.", meta.Name),
 		Subject: domain.Subject{Connections: []string{meta.ID}, ManagerID: meta.ID, DownloadID: dl, Content: queueContent(items), TransferName: it.Latest.Title},
 		Detail: domain.FindingDetail{
 			Evidence:    []domain.Evidence{{Label: "Correlation", Value: it.MatchNote}},
 			Confidence:  "Matching is by infohash; a matching name or path is never treated as identity.",
 			Limitations: []string{"Ambiguous or shared ownership will block any future write workflow for this download until resolved."},
 			Eligibility: e.modeEligibility(),
-			NextSteps:   []string{fmt.Sprintf("Map Sonarr's download client %q to one Housekeeparr connection with download_clients.", it.Latest.DownloadClient)},
+			NextSteps:   []string{fmt.Sprintf("Map %s's download client %q to one Housekeeparr connection with download_clients.", meta.Name, it.Latest.DownloadClient)},
 		},
 		EvidenceAt: now,
 	}
@@ -698,12 +696,12 @@ var sourceImpact = map[string]string{
 	"IndexerRssCheck":            "RSS sync may miss new releases while this persists.",
 	"IndexerStatusCheck":         "Some indexers are disabled after failures; searches may have incomplete source coverage.",
 	"IndexerLongTermStatusCheck": "Some indexers have failed for a long time; searches may have incomplete source coverage.",
-	"IndexerJackettAllCheck":     "Some indexers use an aggregate endpoint that Sonarr warns about.",
-	"DownloadClientCheck":        "Sonarr may be unable to send or track downloads.",
-	"DownloadClientStatusCheck":  "Sonarr may be unable to send or track downloads.",
+	"IndexerJackettAllCheck":     "Some indexers use an aggregate endpoint that the manager warns about.",
+	"DownloadClientCheck":        "The manager may be unable to send or track downloads.",
+	"DownloadClientStatusCheck":  "The manager may be unable to send or track downloads.",
 	"ImportMechanismCheck":       "Completed downloads may not be imported automatically.",
 	"RootFolderCheck":            "Imports into the missing root folder will fail.",
-	"RemotePathMappingCheck":     "Sonarr may be unable to find completed downloads to import them.",
+	"RemotePathMappingCheck":     "The manager may be unable to find completed downloads to import them.",
 }
 
 func (e *Engine) evaluateHealth(tx *store.Tx, managerID string, h domain.HealthSnapshot, now time.Time) (findings.Result, error) {
@@ -728,7 +726,7 @@ func (e *Engine) evaluateHealth(tx *store.Tx, managerID string, h domain.HealthS
 		seen[key] = true
 		impact := sourceImpact[it.Source]
 		if impact == "" {
-			impact = "See Sonarr's System → Status page for impact."
+			impact = fmt.Sprintf("See %s's System → Status page for impact.", meta.Name)
 		}
 		links := []domain.Link{{Label: meta.Name + " system status", URL: meta.BaseURL + "/system/status"}}
 		if it.WikiURL != "" {
@@ -841,4 +839,12 @@ func (e *Engine) evaluateConnection(tx *store.Tx, f *fetched, failures int, now 
 		return findings.Resolution{Reason: "The failure cause changed; see the newer connection finding."}
 	}
 	return findings.Apply(tx, ev, now)
+}
+
+func importLimitations(meta ConnMeta) []string {
+	out := []string{"A generic import message is not proof of what the release contains; permissions, extraction, path mappings, or samples can produce similar messages."}
+	if meta.Kind == adapter.KindSonarr {
+		out = append(out, "Partial season-pack handling (clearing a stale association and targeted searches) is not implemented in this milestone.")
+	}
+	return out
 }

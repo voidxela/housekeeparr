@@ -379,7 +379,7 @@ func (e *Engine) correlate(tx *store.Tx, managerID string, fresh map[string]bool
 				switch {
 				case len(inMapped) == 1:
 					status, clientID, nativeID = store.MatchMatched, mapped, inMapped[0].NativeID
-					note = fmt.Sprintf("infohash matched in %s, which Sonarr's download client %q maps to", mapped, q.DownloadClient)
+					note = fmt.Sprintf("infohash matched in %s, which %s's download client %q maps to", mapped, meta.Name, q.DownloadClient)
 					if len(other) > 0 {
 						note += fmt.Sprintf("; the same infohash is also present in %d other client(s), so data may be shared", len(other))
 					}
@@ -392,11 +392,11 @@ func (e *Engine) correlate(tx *store.Tx, managerID string, fresh map[string]bool
 				}
 			case len(present) == 1:
 				status, clientID, nativeID = store.MatchHashOnly, present[0].ClientID, present[0].NativeID
-				note = fmt.Sprintf("matched by infohash only; Sonarr download client %q is not mapped in download_clients", q.DownloadClient)
+				note = fmt.Sprintf("matched by infohash only; %s download client %q is not mapped in download_clients", meta.Name, q.DownloadClient)
 			case len(present) > 1:
-				status, note = store.MatchAmbiguous, fmt.Sprintf("infohash present in %d clients and Sonarr download client %q is not mapped", len(present), q.DownloadClient)
+				status, note = store.MatchAmbiguous, fmt.Sprintf("infohash present in %d clients and %s download client %q is not mapped", len(present), meta.Name, q.DownloadClient)
 			default:
-				status, note = store.MatchNotConfigured, fmt.Sprintf("Sonarr download client %q is not mapped to a Housekeeparr connection and no configured client holds this infohash", q.DownloadClient)
+				status, note = store.MatchNotConfigured, fmt.Sprintf("%s download client %q is not mapped to a Housekeeparr connection and no configured client holds this infohash", meta.Name, q.DownloadClient)
 			}
 		}
 		if _, err := tx.SetQueueMatch(managerID, it.ItemKey, status, clientID, nativeID, note, now); err != nil {

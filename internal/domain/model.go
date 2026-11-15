@@ -164,6 +164,9 @@ type QueueItem struct {
 	SeasonNumber  Signal[int64] `json:"season_number"`
 	EpisodeNumber Signal[int64] `json:"episode_number"`
 	EpisodeTitle  string        `json:"episode_title,omitempty"`
+	MovieID       int64         `json:"movie_id,omitempty"`
+	MovieTitle    string        `json:"movie_title,omitempty"`
+	Year          Signal[int64] `json:"year"`
 
 	Status         string          `json:"status"`
 	TrackedState   Signal[string]  `json:"tracked_state"`
@@ -178,6 +181,15 @@ type QueueItem struct {
 
 // ContentLabel renders a compact human label such as "Show S01E02".
 func (q QueueItem) ContentLabel() string {
+	if q.ContentKind == "movie" {
+		if q.MovieTitle == "" {
+			return q.Title
+		}
+		if y, ok := q.Year.Get(); ok {
+			return fmt.Sprintf("%s (%d)", q.MovieTitle, y)
+		}
+		return q.MovieTitle
+	}
 	label := q.SeriesTitle
 	if label == "" {
 		label = q.Title

@@ -75,7 +75,6 @@ func TestRejectsLiteralSecrets(t *testing.T) {
 
 func TestRejectsUnknownKeysAndPlannedSections(t *testing.T) {
 	expectProblem(t, minimal+"\n[polling]\nintervall = \"5m\"\n", "polling.intervall", "unknown")
-	expectProblem(t, minimal+"\n[[radarr]]\nid = \"radarr\"\nurl = \"http://127.0.0.1:7878\"\n", "radarr", "not implemented")
 	expectProblem(t, minimal+"\n[[transmission]]\nid = \"tr\"\n", "transmission", "not implemented")
 }
 
@@ -221,4 +220,13 @@ func TestExampleConfigIsValid(t *testing.T) {
 	if cfg.Mode != ModeObserve || !cfg.Web.Enabled {
 		t.Fatalf("unexpected example config: mode=%s web=%v", cfg.Mode, cfg.Web.Enabled)
 	}
+}
+
+func TestRadarrSection(t *testing.T) {
+	cfg := mustParse(t, minimal+"\n[[radarr]]\nid = \"radarr\"\nurl = \"http://127.0.0.1:7878\"\napi_key = \"env:RADARR_KEY\"\ndownload_clients = { \"qBittorrent\" = \"qbit\" }\n")
+	if len(cfg.Radarr) != 1 || cfg.Radarr[0].QueuePageSize != 200 {
+		t.Fatalf("%+v", cfg.Radarr)
+	}
+	expectProblem(t, minimal+"\n[[radarr]]\nid = \"radarr\"\nurl = \"http://127.0.0.1:7878\"\n", "radarr.radarr.api_key", "required")
+	expectProblem(t, minimal+"\n[[radarr]]\nid = \"sonarr\"\nurl = \"http://127.0.0.1:7878\"\napi_key = \"env:K\"\n", "radarr[0].id", "duplicate")
 }

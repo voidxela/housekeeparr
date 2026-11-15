@@ -5,6 +5,7 @@ import (
 
 	"github.com/voidxela/housekeeparr/internal/adapter"
 	"github.com/voidxela/housekeeparr/internal/adapter/qbittorrent"
+	"github.com/voidxela/housekeeparr/internal/adapter/radarr"
 	"github.com/voidxela/housekeeparr/internal/adapter/sonarr"
 	"github.com/voidxela/housekeeparr/internal/config"
 	"github.com/voidxela/housekeeparr/internal/redact"
@@ -46,6 +47,24 @@ func Build(cfg *config.Config, secrets map[string]string) (*Connections, error) 
 			PageSize: m.QueuePageSize, MaxPages: m.MaxQueuePages})
 		if err != nil {
 			return nil, fmt.Errorf("sonarr.%s: %w", m.ID, err)
+		}
+		out.Managers = append(out.Managers, c)
+	}
+	for _, m := range cfg.Radarr {
+		meta := ConnMeta{ID: m.ID, Name: m.DisplayName(), BaseURL: redact.URL(m.URL), Kind: adapter.KindRadarr,
+			Enabled: m.IsEnabled(), SecretRef: m.APIKey.Display(), DownloadClients: m.DownloadClients}
+		out.Meta[m.ID] = meta
+		if !meta.Enabled {
+			continue
+		}
+		key, ok := secrets["radarr."+m.ID+".api_key"]
+		if !ok {
+			return nil, fmt.Errorf("radarr.%s: api key secret could not be resolved", m.ID)
+		}
+		c, err := radarr.New(radarr.Options{ID: m.ID, BaseURL: m.URL, APIKey: key, Timeout: timeout, CAFile: m.CAFile,
+			PageSize: m.QueuePageSize, MaxPages: m.MaxQueuePages})
+		if err != nil {
+			return nil, fmt.Errorf("radarr.%s: %w", m.ID, err)
 		}
 		out.Managers = append(out.Managers, c)
 	}

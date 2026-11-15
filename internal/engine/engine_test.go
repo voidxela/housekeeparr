@@ -642,3 +642,65 @@ func TestBackoffIsBounded(t *testing.T) {
 		t.Fatalf("retry-after not honoured: %s", d)
 	}
 }
+
+func TestRadarrManagerCorrelationAndWording(t *testing.T) {
+	cfgSrc := baseConfig + `
+[[radarr]]
+id = "radarr"
+name = "Radarr"
+url = "http://127.0.0.1:7878"
+api_key = "env:Y"
+download_clients = { "qBittorrent" = "qbit" }
+`
+	cfg, _, err := config.Parse([]byte(cfgSrc), "/x/h.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock := fake.NewClock(t0)
+	client, rad := fake.NewClient("qbit"), fake.NewRadarr("radarr")
+	st, err := store.Open(ctx, t.TempDir(), store.Options{Now: clock.Now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	conns := &Connections{Clients: []adapter.DownloadClient{client}, Managers: []adapter.MediaManager{rad}, Meta: map[string]ConnMeta{
+		"qbit":   {ID: "qbit", Name: "qBittorrent", Kind: adapter.KindQBittorrent, Enabled: true},
+		"radarr": {ID: "radarr", Name: "Radarr", BaseURL: "http://127.0.0.1:7878", Kind: adapter.KindRadarr, Enabled: true, DownloadClients: cfg.Radarr[0].DownloadClients},
+	}}
+	e, err := New(ctx, Options{Config: cfg, Store: st, Conns: conns, Clock: clock, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), RunKind: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.SetTransfers(fake.Transfer(hash, "Example.Film.2024", domain.StateDownloading, gib, 4*gib, t0))
+	mv := fake.Movie(1, hash, "Example.Film.2024", "Example Film", 2024)
+	mv.TrackedState, mv.TrackedStatus = domain.KnownValue("importPending"), domain.KnownValue("warning")
+	rad.SetQueue(mv)
+	for i := 0; i <= 12; i++ {
+		e.Cycle(ctx, nil)
+		clock.Advance(10 * time.Minute)
+	}
+	fs, _ := st.Findings(ctx, store.FindingFilter{States: []domain.FindingState{domain.FindingOpen}})
+	var stall, imp *domain.Finding
+	for i := range fs {
+		switch fs[i].Type {
+		case domain.FindingTransferStalled:
+			stall = &fs[i]
+		case domain.FindingImportAttention:
+			imp = &fs[i]
+		}
+	}
+	if stall == nil || len(stall.Subject.Content) != 1 || stall.Subject.Content[0] != "Example Film (2024)" {
+		t.Fatalf("stall %+v", stall)
+	}
+	if !strings.Contains(strings.Join(stall.Detail.NextSteps, " "), "Radarr → Activity → Queue") {
+		t.Fatalf("steps must name Radarr: %v", stall.Detail.NextSteps)
+	}
+	if imp == nil || !strings.HasPrefix(imp.Title, "Radarr import pending") {
+		t.Fatalf("import %+v", imp)
+	}
+	for _, l := range imp.Detail.Limitations {
+		if strings.Contains(l, "season-pack") {
+			t.Fatal("season-pack limitation must be Sonarr-only")
+		}
+	}
+}

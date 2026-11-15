@@ -47,6 +47,9 @@ type QueueRecord struct {
 // transient queue row ID.
 func QueueItemKey(q domain.QueueItem) string {
 	content := q.EpisodeID
+	if q.ContentKind == "movie" {
+		content = q.MovieID
+	}
 	if content == 0 {
 		content = q.SeriesID
 	}

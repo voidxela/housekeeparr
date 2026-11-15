@@ -1,0 +1,9 @@
+[
+ {
+  "source": "IndexerRssCheck",
+  "type": "warning",
+  "message": "All rss-capable indexers are temporarily unavailable due to recent indexer errors",
+  "wikiUrl": "https://wiki.servarr.com/radarr/system#indexers-are-unavailable-due-to-failures",
+  "id": 0
+ }
+]

@@ -62,12 +62,12 @@ type Config struct {
 	Policy    PolicyOverrides `toml:"policy"`
 
 	Sonarr      []ManagerConfig `toml:"sonarr"`
+	Radarr      []ManagerConfig `toml:"radarr"`
 	QBittorrent []ClientConfig  `toml:"qbittorrent"`
 
 	// Planned integrations: recognised so that configuring them produces a
 	// clear "not yet implemented" error instead of an unknown-key error or
 	// silent ignorance.
-	Radarr       []toml.Primitive `toml:"radarr"`
 	Transmission []toml.Primitive `toml:"transmission"`
 	RTorrent     []toml.Primitive `toml:"rtorrent"`
 	Deluge       []toml.Primitive `toml:"deluge"`
@@ -151,7 +151,7 @@ func (c ConnectionCommon) DisplayName() string {
 	return c.ID
 }
 
-// ManagerConfig configures a Sonarr instance.
+// ManagerConfig configures a Sonarr or Radarr instance.
 type ManagerConfig struct {
 	ConnectionCommon
 	APIKey SecretRef `toml:"api_key"`
@@ -255,13 +255,13 @@ func Parse(raw []byte, path string) (*Config, []Problem, error) {
 		for _, k := range undec {
 			key := k.String()
 			// Planned sections are reported once below, not per key.
-			if top := strings.SplitN(key, ".", 2)[0]; top == "radarr" || top == "transmission" || top == "rtorrent" || top == "deluge" {
+			if top := strings.SplitN(key, ".", 2)[0]; top == "transmission" || top == "rtorrent" || top == "deluge" {
 				continue
 			}
 			add("error", key, "unknown configuration key")
 		}
 	}
-	for name, n := range map[string]int{"radarr": len(cfg.Radarr), "transmission": len(cfg.Transmission), "rtorrent": len(cfg.RTorrent), "deluge": len(cfg.Deluge)} {
+	for name, n := range map[string]int{"transmission": len(cfg.Transmission), "rtorrent": len(cfg.RTorrent), "deluge": len(cfg.Deluge)} {
 		if n > 0 {
 			add("error", name, "%s is planned for v1 but not implemented in this build; remove the [[%s]] section for now", name, name)
 		}
@@ -397,28 +397,32 @@ func validate(cfg *Config, md toml.MetaData) []Problem {
 		}
 	}
 
-	for i := range cfg.Sonarr {
-		m := &cfg.Sonarr[i]
-		checkCommon("sonarr", i, &m.ConnectionCommon)
-		field := "sonarr." + m.ID
-		if m.APIKey == "" {
-			errf(field+".api_key", "required (e.g. \"env:SONARR_API_KEY\" or \"file:/run/secrets/sonarr_api_key\")")
-		} else if err := m.APIKey.validateSyntax(); err != nil {
-			errf(field+".api_key", "%v", err)
-		}
-		if m.QueuePageSize == 0 {
-			m.QueuePageSize = 200
-		}
-		if m.MaxQueuePages == 0 {
-			m.MaxQueuePages = 25
-		}
-		if m.QueuePageSize < 10 || m.QueuePageSize > 1000 {
-			errf(field+".queue_page_size", "must be between 10 and 1000")
-		}
-		if m.MaxQueuePages < 1 || m.MaxQueuePages > 200 {
-			errf(field+".max_queue_pages", "must be between 1 and 200")
+	checkManager := func(section string, list []ManagerConfig) {
+		for i := range list {
+			m := &list[i]
+			checkCommon(section, i, &m.ConnectionCommon)
+			field := section + "." + m.ID
+			if m.APIKey == "" {
+				errf(field+".api_key", "required (e.g. \"env:%s_API_KEY\" or \"file:/run/secrets/%s_api_key\")", strings.ToUpper(section), section)
+			} else if err := m.APIKey.validateSyntax(); err != nil {
+				errf(field+".api_key", "%v", err)
+			}
+			if m.QueuePageSize == 0 {
+				m.QueuePageSize = 200
+			}
+			if m.MaxQueuePages == 0 {
+				m.MaxQueuePages = 25
+			}
+			if m.QueuePageSize < 10 || m.QueuePageSize > 1000 {
+				errf(field+".queue_page_size", "must be between 10 and 1000")
+			}
+			if m.MaxQueuePages < 1 || m.MaxQueuePages > 200 {
+				errf(field+".max_queue_pages", "must be between 1 and 200")
+			}
 		}
 	}
+	checkManager("sonarr", cfg.Sonarr)
+	checkManager("radarr", cfg.Radarr)
 	clientIDs := map[string]bool{}
 	for i := range cfg.QBittorrent {
 		c := &cfg.QBittorrent[i]
@@ -441,17 +445,19 @@ func validate(cfg *Config, md toml.MetaData) []Problem {
 			errf(field+".policy", "%v", err)
 		}
 	}
-	for _, m := range cfg.Sonarr {
-		for name, target := range m.DownloadClients {
-			if !clientIDs[target] {
-				errf("sonarr."+m.ID+".download_clients", "%q maps to unknown client connection %q", name, target)
+	for section, list := range map[string][]ManagerConfig{"sonarr": cfg.Sonarr, "radarr": cfg.Radarr} {
+		for _, m := range list {
+			for name, target := range m.DownloadClients {
+				if !clientIDs[target] {
+					errf(section+"."+m.ID+".download_clients", "%q maps to unknown client connection %q", name, target)
+				}
 			}
 		}
 	}
 	if _, err := cfg.EffectivePolicy(""); err != nil {
 		errf("policy", "%v", err)
 	}
-	if len(cfg.Sonarr) == 0 && len(cfg.QBittorrent) == 0 {
+	if len(cfg.Sonarr) == 0 && len(cfg.Radarr) == 0 && len(cfg.QBittorrent) == 0 {
 		warnf("", "no connections are configured; Housekeeparr will have nothing to observe")
 	}
 	return probs
@@ -581,7 +587,7 @@ func apply(s *policy.Settings, src map[string]string, o PolicyOverrides, from st
 func (c *Config) computeRevision() string {
 	cp := *c
 	cp.Path, cp.Revision = "", ""
-	cp.Radarr, cp.Transmission, cp.RTorrent, cp.Deluge = nil, nil, nil, nil
+	cp.Transmission, cp.RTorrent, cp.Deluge = nil, nil, nil
 	b, _ := json.Marshal(cp)
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])[:12]
@@ -608,6 +614,9 @@ func (c *Config) ResolvedSecrets(lookupEnv func(string) (string, bool)) (map[str
 	}
 	for _, m := range c.Sonarr {
 		resolve("sonarr."+m.ID+".api_key", m.APIKey)
+	}
+	for _, m := range c.Radarr {
+		resolve("radarr."+m.ID+".api_key", m.APIKey)
 	}
 	for _, q := range c.QBittorrent {
 		resolve("qbittorrent."+q.ID+".password", q.Password)

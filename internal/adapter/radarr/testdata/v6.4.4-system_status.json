@@ -1,0 +1,11 @@
+{
+ "appName": "Radarr",
+ "instanceName": "Radarr",
+ "version": "6.4.4.10685",
+ "isDocker": true,
+ "urlBase": "",
+ "branch": "master",
+ "authentication": "forms",
+ "databaseType": "sqLite",
+ "runtimeName": ".NET"
+}

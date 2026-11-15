@@ -153,6 +153,7 @@ func (c *Client) Lists() int { c.mu.Lock(); defer c.mu.Unlock(); return c.lists 
 type Manager struct {
 	mu        sync.Mutex
 	id        string
+	kind      adapter.Kind
 	items     []domain.QueueItem
 	health    []domain.HealthItem
 	err       error
@@ -162,10 +163,13 @@ type Manager struct {
 }
 
 // NewManager creates a fake Sonarr-kind manager.
-func NewManager(id string) *Manager { return &Manager{id: id} }
+func NewManager(id string) *Manager { return &Manager{id: id, kind: adapter.KindSonarr} }
+
+// NewRadarr creates a fake Radarr-kind manager.
+func NewRadarr(id string) *Manager { return &Manager{id: id, kind: adapter.KindRadarr} }
 
 func (m *Manager) ID() string         { return m.id }
-func (m *Manager) Kind() adapter.Kind { return adapter.KindSonarr }
+func (m *Manager) Kind() adapter.Kind { return m.kind }
 
 // Probe always succeeds unless reads fail.
 func (m *Manager) Probe(context.Context) (adapter.Probe, error) {
@@ -174,7 +178,11 @@ func (m *Manager) Probe(context.Context) (adapter.Probe, error) {
 	if m.err != nil {
 		return adapter.Probe{}, m.err
 	}
-	return adapter.Probe{App: "Sonarr", Version: "0.0.0-fake", Transport: "fake", Auth: "fake",
+	app := "Sonarr"
+	if m.kind == adapter.KindRadarr {
+		app = "Radarr"
+	}
+	return adapter.Probe{App: app, Version: "0.0.0-fake", Transport: "fake", Auth: "fake",
 		Compatibility: adapter.CompatUntested, CompatNote: "synthetic adapter",
 		Read: adapter.Capabilities{adapter.CapQueue: {Support: adapter.Supported}, adapter.CapHealth: {Support: adapter.Supported}}}, nil
 }
@@ -263,6 +271,18 @@ func Episode(queueID int64, downloadID, title, series string, season, episode in
 		SeasonNumber: domain.KnownValue(season), EpisodeNumber: domain.KnownValue(episode),
 		Status: "downloading", TrackedState: domain.KnownValue("downloading"), TrackedStatus: domain.KnownValue("ok"),
 		SizeBytes: domain.KnownValue[int64](1 << 30), RemainingBytes: domain.KnownValue[int64](1 << 29),
+		Added: domain.UnknownValue[time.Time]("synthetic"),
+	}
+}
+
+// Movie builds a synthetic Radarr queue row for a transfer hash.
+func Movie(queueID int64, downloadID, title, movie string, year int64) domain.QueueItem {
+	return domain.QueueItem{
+		QueueID: queueID, DownloadID: downloadID, Protocol: "torrent", DownloadClient: "qBittorrent", Title: title,
+		ContentKind: "movie", MovieID: queueID + 1000, MovieTitle: movie, Year: domain.KnownValue(year),
+		SeasonNumber: domain.UnknownValue[int64]("n/a"), EpisodeNumber: domain.UnknownValue[int64]("n/a"),
+		Status: "downloading", TrackedState: domain.KnownValue("downloading"), TrackedStatus: domain.KnownValue("ok"),
+		SizeBytes: domain.KnownValue[int64](4 << 30), RemainingBytes: domain.KnownValue[int64](2 << 30),
 		Added: domain.UnknownValue[time.Time]("synthetic"),
 	}
 }
