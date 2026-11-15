@@ -26,10 +26,12 @@ implemented.
 | Pure no-progress / metadata diagnosis policy | done | Deterministic tests cover grace, windows, observation counts, gaps, clock anomalies, pauses, rechecks, file selection, near-complete windows, and piece availability. |
 | Persistent findings (dedup, recurrence, acknowledge, snooze, evidence-based resolution) | done | |
 | Observation engine (bounded polling, backoff, correlation, evaluation) | done | Engine tests use fake adapters and a deterministic clock; see `internal/engine/engine_test.go`. |
-| Shared application services, CLI | remaining | |
-| Web interface | remaining | |
-| Demo mode (clearly separated synthetic data) | remaining | `internal/fake` exists; demo command does not. |
-| Integration harness against disposable released instances | remaining | Running downloaded release binaries was not permitted in the development environment; see "Compatibility". |
+| Shared application services (`internal/app`) used by both CLI and web | done | Pages and read commands read local state only. |
+| CLI: `run` (daemon / `--once` / `--headless`), `status`, `findings`, `finding`, `downloads`, `connections`, `policy`, `activity`, `ack`, `snooze`, `reopen`, `check`, `config validate`, `demo`, `--json` | done | End-to-end test runs the real adapters against fixture-backed HTTP servers (`cmd/housekeeparr/main_test.go`). Local mutations take the writer lock or refuse with exit code 3; routing them through a running headless worker is *remaining*. |
+| Web interface: overview, needs attention, finding detail with ack/snooze/reopen, downloads, download detail, activity, connections & policy, JSON API, `/healthz` | done | Loopback only; Host allowlist, strict CSP, same-origin + CSRF checks on mutations. Exercised in tests and manually via `curl`; not yet reviewed in a real browser. |
+| Demo mode (`housekeeparr demo`) | done | Real engine over scripted fakes and a simulated clock; state marked `demo`, refused as live state; persistent banner in UI and CLI. |
+| Integration harness against disposable released instances | remaining | Blocked: running downloaded release binaries was not permitted in the development environment. |
+| Packaging (container image, user-level systemd unit) | remaining | |
 
 ## Remaining v1 scope (not started unless noted)
 

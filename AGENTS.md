@@ -6,7 +6,7 @@ Housekeeparr is in early implementation: a read-only foundation (milestone 1) is
 
 Go (single static binary; `CGO_ENABLED=0` works), embedded SQLite through the pure-Go `modernc.org/sqlite` driver, TOML configuration via `github.com/BurntSushi/toml`. The web interface will use server-rendered `html/template` with embedded assets; no Node toolchain. Avoid adding dependencies without a clear need.
 
-Layout: `internal/domain` (facts, signals, findings), `internal/adapter/*` (read-only adapters, no policy), `internal/policy` (pure decisions), `internal/findings` (lifecycle), `internal/store` (state, lock, migrations), `internal/engine` (polling, correlation, evaluation), `internal/fake` (deterministic fakes for tests and demo).
+Layout: `internal/domain` (facts, signals, findings), `internal/adapter/*` (read-only adapters, no policy), `internal/policy` (pure decisions), `internal/findings` (lifecycle), `internal/store` (state, lock, migrations), `internal/engine` (polling, correlation, evaluation), `internal/fake` (deterministic fakes for tests and demo), `internal/app` (services shared by CLI and web), `internal/web` (server-rendered interface; templates and static assets are embedded), `internal/demo`, `cmd/housekeeparr` (CLI).
 
 ## Product priorities
 
@@ -40,7 +40,15 @@ go test ./...           # unit, contract, store, and engine tests
 
 `go test -race ./...` should be run where supported; it fails on hosts whose kernel uses a 39-bit virtual address space (ThreadSanitizer limitation).
 
-There is no CLI entry point, integration harness, or container build yet. Do not invent commands or claim checks passed without running them. Adapter `TestedVersions` lists stay empty until a real disposable-instance run passes; fixtures in `testdata/` are synthetic and must say so.
+Binary and manual checks:
+
+```sh
+CGO_ENABLED=0 go build -trimpath -o bin/housekeeparr ./cmd/housekeeparr
+bin/housekeeparr demo --listen 127.0.0.1:8485   # synthetic data only
+bin/housekeeparr config validate --config housekeeparr.example.toml  # exits 2: example secret refs do not resolve
+```
+
+There is no integration harness or container build yet. Do not invent commands or claim checks passed without running them. Adapter `TestedVersions` lists stay empty until a real disposable-instance run passes; fixtures in `testdata/` are synthetic and must say so.
 
 ## Migrations
 
