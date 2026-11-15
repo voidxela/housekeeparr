@@ -11,5 +11,6 @@ fields are never decoded, stored, or displayed.
 
 These fixtures establish adapter *contracts* only; they are not captures from
 a running instance. Released-version compatibility has not been established.
-A disposable-instance integration harness that can also produce sanitized
-captures is planned but not yet written (see `docs/STATUS.md`).
+The disposable-instance harness `scripts/it/run.sh` (which can also write
+sanitized captures with `--capture`) exists but has not yet been executed;
+see `docs/STATUS.md`.

@@ -225,7 +225,7 @@ func compatibility(v version) (adapter.Compatibility, string) {
 }
 
 // TestedVersions lists released versions whose read path passed the
-// disposable-instance integration suite (planned; see docs/STATUS.md).
+// disposable-instance integration suite (scripts/it/run.sh).
 // Only add versions after a real, passing run.
 var TestedVersions = []string{}
 

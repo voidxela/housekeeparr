@@ -1,0 +1,7 @@
+# Pinned release artifacts for the disposable-instance integration suite.
+# name  version  arch  sha256  url  provenance
+qbittorrent 5.3.0 aarch64 ac1e57089795270489491320c5fff0ceaed8e8910cf3abb6be597879408eb033 https://github.com/userdocs/qbittorrent-nox-static/releases/download/release-5.3.0_v2.1.2/aarch64-qbittorrent-nox github-published-digest
+qbittorrent 5.3.0 x86_64 563e695a2b830e62e627e1ae403bcfcc494e444d5cabb5ecc1e09907353d8ed5 https://github.com/userdocs/qbittorrent-nox-static/releases/download/release-5.3.0_v2.1.2/x86_64-qbittorrent-nox github-published-digest
+qbittorrent 4.6.7 aarch64 fae582473ae0146dd2f1a65c353dca9e67266baf82d70adbb49cb95c17eefe3c https://github.com/userdocs/qbittorrent-nox-static/releases/download/release-4.6.7_v2.0.10/aarch64-qbittorrent-nox trust-on-first-download
+sonarr 4.0.20.3014 aarch64 bd93f7f06b8cb940da0814106d1293df12bf9199af0514e95b893f0c603fc7b9 https://github.com/Sonarr/Sonarr/releases/download/v4.0.20.3014/Sonarr.main.4.0.20.3014.linux-arm64.tar.gz github-published-digest
+sonarr 4.0.20.3014 x86_64 1fc48544b5a3401b2fc3df8d0642c1e6a73a28e41a351169edd9cd8f54770db5 https://github.com/Sonarr/Sonarr/releases/download/v4.0.20.3014/Sonarr.main.4.0.20.3014.linux-x64.tar.gz github-published-digest

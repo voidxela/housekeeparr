@@ -30,7 +30,7 @@ implemented.
 | CLI: `run` (daemon / `--once` / `--headless`), `status`, `findings`, `finding`, `downloads`, `connections`, `policy`, `activity`, `ack`, `snooze`, `reopen`, `check`, `config validate`, `demo`, `--json` | done | End-to-end test runs the real adapters against fixture-backed HTTP servers (`cmd/housekeeparr/main_test.go`). Local mutations take the writer lock or refuse with exit code 3; routing them through a running headless worker is *remaining*. |
 | Web interface: overview, needs attention, finding detail with ack/snooze/reopen, downloads, download detail, activity, connections & policy, JSON API, `/healthz` | done | Loopback only; Host allowlist, strict CSP, same-origin + CSRF checks on mutations. Exercised in tests and manually via `curl`; not yet reviewed in a real browser. |
 | Demo mode (`housekeeparr demo`) | done | Real engine over scripted fakes and a simulated clock; state marked `demo`, refused as live state; persistent banner in UI and CLI. |
-| Integration harness against disposable released instances | remaining | Blocked: running downloaded release binaries was not permitted in the development environment. |
+| Integration harness against disposable released instances (`scripts/it/run.sh`) | unverified | Written: pinned, checksum-verified qBittorrent 5.3.0 / 4.6.7 and Sonarr 4.0.20 releases on loopback with locally generated torrents (closed-port tracker, DHT/PeX/LSD off); Go assertions in `internal/integration` (build tag `integration`). **Never executed**: running downloaded release binaries was not permitted in the development environment. |
 | Packaging (container image, user-level systemd unit) | remaining | |
 
 ## Remaining v1 scope (not started unless noted)
@@ -54,7 +54,7 @@ implemented.
 
 ## Compatibility
 
-No application version is currently claimed as tested. Every adapter's
+No application version is currently claimed as tested. The first harness run is expected to confirm or correct, in particular: qBittorrent state names and `private`/`has_metadata` fields per version, the claim that qBittorrent availability counts the client's own pieces, and whether Sonarr 4 reports torrents of unknown series in the queue with the infohash as `downloadId`. Every adapter's
 `TestedVersions` list is empty, so probes report `untested`. Fixtures under
 `internal/adapter/*/testdata` are synthetic; their READMEs record the released
 source they were derived from.

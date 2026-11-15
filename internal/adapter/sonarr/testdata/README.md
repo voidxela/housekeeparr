@@ -9,4 +9,5 @@
 `outputPath` values and an `apikey=` query string are included deliberately so
 contract tests prove they are not retained. These fixtures are not captures
 from a running instance; released-version compatibility has not been
-established (see `docs/STATUS.md`).
+established. `scripts/it/run.sh` exists but has not yet been executed (see
+`docs/STATUS.md`).
