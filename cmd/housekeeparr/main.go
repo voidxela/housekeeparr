@@ -314,7 +314,7 @@ func cmdStatus(args []string, out, errOut io.Writer) int {
 		fmt.Fprintln(errOut, err)
 		return exitFailure
 	}
-	healthy := ov.Worker.State == app.WorkerRunning || (ov.Worker.State == app.WorkerStopped && ov.Worker.Run != nil && ov.Worker.Run.Kind == "once")
+	healthy := ov.Worker.Healthy()
 	if o.json {
 		writeJSON(out, ov)
 	} else {

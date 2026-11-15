@@ -176,7 +176,7 @@ func TestEndToEndOneShotReadOnlySlice(t *testing.T) {
 	if strings.Contains(out, "0123456789abcdef0123456789abcdef") || strings.Contains(out, "/downloads/") {
 		t.Fatal("tracker passkey or path leaked into state")
 	}
-	if code, out, _ := runCLI(t, "status", "--config", cfg); code != exitOK || !strings.Contains(out, "one-shot") {
+	if code, out, _ := runCLI(t, "status", "--config", cfg); code != exitOK || !strings.Contains(out, "scheduled") {
 		t.Fatalf("status after one-shot: %d\n%s", code, out)
 	}
 	if writes.Load() != 0 {

@@ -234,7 +234,7 @@ func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": err.Error()})
 		return
 	}
-	if wk.State != app.WorkerRunning {
+	if !wk.Healthy() {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}
 	_ = json.NewEncoder(w).Encode(map[string]any{"status": wk.State, "explanation": wk.Explanation, "origin": s.svc.Origin()})

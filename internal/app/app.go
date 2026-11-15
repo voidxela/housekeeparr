@@ -81,7 +81,13 @@ const (
 	WorkerStale   WorkerState = "stale"   // no heartbeat recently; process may be hung or killed
 	WorkerStopped WorkerState = "stopped" // stopped cleanly
 	WorkerNever   WorkerState = "never"   // never ran
+	// WorkerScheduled means one-shot runs (from an external scheduler) are
+	// completing recently enough for evidence to stay fresh.
+	WorkerScheduled WorkerState = "scheduled"
 )
+
+// Healthy reports whether evidence is being refreshed.
+func (w Worker) Healthy() bool { return w.State == WorkerRunning || w.State == WorkerScheduled }
 
 // Worker describes the worker process.
 type Worker struct {
@@ -180,6 +186,16 @@ func (s *Service) Worker(ctx context.Context) (*Worker, error) {
 	switch {
 	case run == nil:
 		w.State, w.Explanation = WorkerNever, "Housekeeparr has not run yet."
+	case run.Kind == "once" && run.LastCycleFinishedAt != nil:
+		age := s.now().Sub(*run.LastCycleFinishedAt)
+		w.HeartbeatAge = policy.HumanDuration(age) + " ago"
+		if age > s.staleAfter() {
+			w.State = WorkerStale
+			w.Explanation = fmt.Sprintf("The last one-shot run finished %s ago; is the external scheduler still running?", policy.HumanDuration(age))
+		} else {
+			w.State = WorkerScheduled
+			w.Explanation = fmt.Sprintf("One-shot runs are current (last finished %s ago).", policy.HumanDuration(age))
+		}
 	case run.StoppedAt != nil:
 		w.State = WorkerStopped
 		w.Explanation = fmt.Sprintf("Stopped %s ago (%s). Evidence is not being refreshed.", policy.HumanDuration(s.now().Sub(*run.StoppedAt)), run.StopReason)
@@ -189,11 +205,7 @@ func (s *Service) Worker(ctx context.Context) (*Worker, error) {
 		if age < 30*time.Second {
 			w.HeartbeatAge = "just now"
 		}
-		if run.Kind == "once" {
-			// One-shot runs record no heartbeat between invocations.
-			w.State = WorkerStopped
-			w.Explanation = "Last run was a one-shot invocation."
-		} else if age > 2*time.Minute+s.cfg.Polling.RequestTimeout.Duration*3 {
+		if age > 2*time.Minute+s.cfg.Polling.RequestTimeout.Duration*3 {
 			w.State = WorkerStale
 			w.Explanation = fmt.Sprintf("No worker heartbeat for %s; the process may have stopped or hung.", w.HeartbeatAge)
 		} else {
@@ -374,7 +386,8 @@ func (s *Service) Downloads(ctx context.Context, includeComplete bool) (*Downloa
 	for _, t := range trs {
 		k := t.ClientID + "|" + t.NativeID
 		v := DownloadView{Transfer: t, Queue: byMatch[k], Findings: byTransfer[k], Freshness: s.freshness(lastOK[t.ClientID])}
-		v.Age = policy.HumanDuration(s.now().Sub(t.LastSeen))
+		v.Transfer.LastSeen = seenAt(t, lastOK[t.ClientID])
+		v.Age = policy.HumanDuration(s.now().Sub(v.Transfer.LastSeen))
 		if p, ok := t.Latest.Progress(); ok {
 			v.Progress = &p
 		}
@@ -433,6 +446,7 @@ func (s *Service) Download(ctx context.Context, clientID, nativeID string) (*Dow
 			lastOK = c.LastSuccessAt
 		}
 	}
+	t.LastSeen = seenAt(*t, lastOK)
 	d := &DownloadDetail{DownloadView: DownloadView{Transfer: *t, Queue: queue, Freshness: s.freshness(lastOK),
 		Age: policy.HumanDuration(s.now().Sub(t.LastSeen))}}
 	for _, f := range fs {
@@ -533,4 +547,14 @@ func (s *Service) Reopen(ctx context.Context, id int64, actor Actor) (*domain.Fi
 	return s.mutate(ctx, actor, func(tx *store.Tx, now time.Time) (*domain.Finding, error) {
 		return findings.Reopen(tx, id, string(actor), now)
 	})
+}
+
+// seenAt is when a present transfer was last confirmed. Unchanged complete
+// transfers are not rewritten each cycle, so their presence is confirmed by
+// the client's last successful (complete) listing instead.
+func seenAt(t store.TransferRecord, lastOK *time.Time) time.Time {
+	if t.Present && t.StateClass == domain.StateComplete && lastOK != nil && lastOK.After(t.LastSeen) {
+		return *lastOK
+	}
+	return t.LastSeen
 }
