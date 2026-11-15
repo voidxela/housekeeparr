@@ -98,6 +98,9 @@ func TestQBittorrentReleasedBehaviour(t *testing.T) {
 			}
 		}
 		if len(byHash) >= len(m) && settled || time.Now().After(deadline) {
+			if !snap.Complete {
+				t.Fatalf("real torrent listing reported incomplete: %v", snap.Limitations)
+			}
 			b, _ := json.Marshal(snap)
 			if strings.Contains(string(b), fakePasskey) || strings.Contains(string(b), "127.0.0.1:9") {
 				t.Fatal("normalized snapshot contains tracker data")
@@ -254,6 +257,9 @@ func TestSonarrReleasedBehaviour(t *testing.T) {
 			break
 		}
 		time.Sleep(5 * time.Second)
+	}
+	if !q.Complete || q.TotalRecords != len(q.Items) {
+		t.Errorf("real queue listing incomplete or inconsistent: complete=%v total=%d rows=%d %v", q.Complete, q.TotalRecords, len(q.Items), q.Limitations)
 	}
 	matched := 0
 	for _, it := range q.Items {

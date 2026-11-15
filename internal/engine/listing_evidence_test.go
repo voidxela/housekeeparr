@@ -19,19 +19,30 @@ import (
 type swappable struct {
 	mu     sync.Mutex
 	bodies map[string]string
+	hits   map[string]int
 }
 
 func (s *swappable) set(path, body string) { s.mu.Lock(); s.bodies[path] = body; s.mu.Unlock() }
 func (s *swappable) get(path string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.hits[path]++
 	return s.bodies[path]
+}
+
+// served returns how often path was requested since the last call.
+func (s *swappable) served(path string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := s.hits[path]
+	s.hits[path] = 0
+	return n
 }
 
 // Synthetic Transmission and Sonarr responses, served to the real adapters.
 func realAdapterHarness(t *testing.T) (*harness, *swappable, *swappable) {
-	tr := &swappable{bodies: map[string]string{}}
-	son := &swappable{bodies: map[string]string{}}
+	tr := &swappable{bodies: map[string]string{}, hits: map[string]int{}}
+	son := &swappable{bodies: map[string]string{}, hits: map[string]int{}}
 	tr.set("session-get", `{"result":"success","arguments":{"version":"4.0.6 (38c164933e)","rpc-version":17,"rpc-version-semver":"5.3.0"}}`)
 	tr.set("torrent-get", torrentList(true))
 	son.set("/api/v3/system/status", `{"appName":"Sonarr","version":"4.0.20.3014"}`)
@@ -131,7 +142,11 @@ func TestMalformedListingsCannotRemoveEntitiesOrResolveFindings(t *testing.T) {
 	}
 	for _, body := range torrentCases {
 		tr.set("torrent-get", body)
+		tr.served("torrent-get")
 		h.run(30, 10)
+		if tr.served("torrent-get") == 0 {
+			t.Fatalf("%s was never requested; the case is vacuous", body)
+		}
 		if !h.transfer().Present {
 			t.Fatalf("transfer marked gone after %s", body)
 		}
@@ -146,7 +161,11 @@ func TestMalformedListingsCannotRemoveEntitiesOrResolveFindings(t *testing.T) {
 	h.run(10, 10)
 	for _, body := range queueCases {
 		son.set("/api/v3/queue", body)
+		son.served("/api/v3/queue")
 		h.run(30, 10)
+		if son.served("/api/v3/queue") == 0 {
+			t.Fatalf("queue %s was never requested; the case is vacuous", body)
+		}
 		qs, _ := h.st.QueueItems(ctx, store.QueueFilter{})
 		for _, q := range qs {
 			if q.DownloadID == hash && !q.Present {
