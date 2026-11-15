@@ -58,3 +58,12 @@ deb:python3-typing-extensions 4.13.2-1 aarch64 b67662f211c35c17c74a0725bc7c8ffc3
 deb:python3-xdg 0.28-2 aarch64 31e90a2b22802fa884fe6f73d70946e7a15c9bd65d7e98098cbe13d2d22f9f20 apt:python3-xdg=0.28-2 debian-trixie-archive
 deb:python3-zipp 3.21.0-1 aarch64 6cd0f768a5e5c574c7ae4b9d56603f8399b31de732167007e42fc17decc5cc6a apt:python3-zipp=3.21.0-1 debian-trixie-archive
 deb:python3-zope.interface 7.2-1+b1 aarch64 68597be85ee5f10fed3a6a4cfda29c003247da0c575e47d66f2a6f00add90361 apt:python3-zope.interface=7.2-1+b1 debian-trixie-archive
+# Build tools for scripts/it/build-transmission.sh when the host lacks them.
+deb:cmake-data 3.31.6-2 aarch64 d9060145be892f43cd1888024114ceab019c81479d4b0a3383fe14cebe2295cb apt:cmake-data=3.31.6-2 debian-trixie-archive
+deb:cmake 3.31.6-2 aarch64 983aa00debd072f7bfae69f93b1b9e4628da0a914c3745b9022e4cd60215493b apt:cmake=3.31.6-2 debian-trixie-archive
+deb:libarchive13t64 3.7.4-4+deb13u1 aarch64 9dc7897bc1c83b03a69c581018010fbd9723ce199b99433639343d8b3a5bcf81 apt:libarchive13t64=3.7.4-4+deb13u1 debian-trixie-archive
+deb:libcurl4-openssl-dev 8.14.1-2+deb13u5 aarch64 df32deabd874f03b0690a75217fa44042fdf84650b98011ad38aed59266c03c5 apt:libcurl4-openssl-dev=8.14.1-2+deb13u5 debian-trixie-archive
+deb:libjsoncpp26 1.9.6-3 aarch64 346da1614a66ae07549243f2abf1dc5fdcc590a4ccb408458b5ea7ef7997477d apt:libjsoncpp26=1.9.6-3 debian-trixie-archive
+deb:librhash1 1.4.5-1 aarch64 3bee5b995ee3219779d0f50b2622b0fbc05bb89c69fa833c83d685a3c88aa73d apt:librhash1=1.4.5-1 debian-trixie-archive
+deb:libuv1t64 1.50.0-2 aarch64 a9be0f24d7686ba94a6ef4f3c638079c6b39c4263306860d51046c4125d065f4 apt:libuv1t64=1.50.0-2 debian-trixie-archive
+deb:ninja-build 1.12.1-1+b1 aarch64 4afc3194ca4d4f051893f169daa48ba9eac769d76f3f13839e5ad0a9688b5fe6 apt:ninja-build=1.12.1-1+b1 debian-trixie-archive

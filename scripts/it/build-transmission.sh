@@ -22,7 +22,21 @@ if [ ! -f "$TARBALL" ] || ! echo "$sum  $TARBALL" | sha256sum -c --status; then
 fi
 echo "$sum  $TARBALL" | sha256sum -c --status || { echo "checksum mismatch for $TARBALL" >&2; exit 3; }
 
+# Build tools: use the host's cmake, ninja, and libcurl headers when present;
+# otherwise extract pinned Debian packages (never installed) into a private
+# sysroot. A C/C++ compiler and OpenSSL headers must come from the host.
+ARCH=$(uname -m)
+case "$ARCH" in arm64) ARCH=aarch64 ;; amd64) ARCH=x86_64 ;; esac
+# shellcheck source=scripts/it/lib.sh
+. "$HERE/lib.sh"
+for tool in cc c++ tar xz sha256sum; do command -v "$tool" >/dev/null || { echo "$tool is required to build Transmission" >&2; exit 2; }; done
+[ -f /usr/include/openssl/ssl.h ] || { echo "OpenSSL headers (libssl-dev) are required to build Transmission" >&2; exit 2; }
 SYSROOT="$CACHE/sysroot"
+if ! command -v cmake >/dev/null || ! command -v ninja >/dev/null || ! command -v curl-config >/dev/null; then
+	if [ ! -x "$SYSROOT/usr/bin/cmake" ] || [ ! -x "$SYSROOT/usr/bin/ninja" ]; then
+		fetch_debs "$SYSROOT" cmake cmake-data ninja-build libcurl4-openssl-dev libjsoncpp26 librhash1 libuv1t64 libarchive13t64
+	fi
+fi
 if [ -d "$SYSROOT/usr/bin" ]; then
 	export PATH="$SYSROOT/usr/bin:$PATH"
 	export LD_LIBRARY_PATH="$SYSROOT/usr/lib/$(uname -m)-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
