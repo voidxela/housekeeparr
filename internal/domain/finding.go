@@ -54,6 +54,7 @@ type Subject struct {
 	NativeID     string   `json:"native_id,omitempty"`
 	TransferName string   `json:"transfer_name,omitempty"`
 	ManagerID    string   `json:"manager_id,omitempty"`
+	DownloadID   string   `json:"download_id,omitempty"`
 	Content      []string `json:"content,omitempty"` // human labels, e.g. "Show S01E02"
 	Source       string   `json:"source,omitempty"`  // health check source, etc.
 }

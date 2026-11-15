@@ -311,3 +311,10 @@ func (t *Tx) TransfersByHash(id string) ([]TransferRef, error) {
 	}
 	return out, rows.Err()
 }
+
+// ClearCompleteAssessments removes stale assessments from transfers that
+// have completed; no progress diagnosis applies to them.
+func (t *Tx) ClearCompleteAssessments(clientID string) error {
+	_, err := t.exec("UPDATE transfers SET assessment_json=NULL, assessed_at=NULL WHERE client_id=? AND state_class='complete' AND assessment_json IS NOT NULL", clientID)
+	return err
+}

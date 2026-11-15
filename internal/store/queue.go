@@ -38,6 +38,7 @@ type QueueRecord struct {
 	MatchClientID  string           `json:"match_client_id,omitempty"`
 	MatchNativeID  string           `json:"match_native_id,omitempty"`
 	MatchNote      string           `json:"match_note,omitempty"`
+	MatchSince     *time.Time       `json:"match_since,omitempty"`
 	AttentionState string           `json:"attention_state,omitempty"`
 	AttentionSince *time.Time       `json:"attention_since,omitempty"`
 }
@@ -99,11 +100,24 @@ func (t *Tx) SaveQueueSnapshot(snap domain.QueueSnapshot) (gone []QueueRecord, e
 	return gone, nil
 }
 
-// SetQueueMatch records correlation evidence for a queue row.
-func (t *Tx) SetQueueMatch(managerID, key, status, clientID, nativeID, note string) error {
-	_, err := t.exec(`UPDATE queue_items SET match_status=?, match_client_id=?, match_native_id=?, match_note=?
-		WHERE manager_id=? AND item_key=?`, status, nullStr(clientID), nullStr(nativeID), nullStr(note), managerID, key)
-	return err
+// SetQueueMatch records correlation evidence for a queue row and returns
+// when the current status was first observed.
+func (t *Tx) SetQueueMatch(managerID, key, status, clientID, nativeID, note string, at time.Time) (time.Time, error) {
+	_, err := t.exec(`UPDATE queue_items SET
+			match_since = CASE WHEN match_status = ? AND match_since IS NOT NULL THEN match_since ELSE ? END,
+			match_status=?, match_client_id=?, match_native_id=?, match_note=?
+		WHERE manager_id=? AND item_key=?`, status, ms(at), status, nullStr(clientID), nullStr(nativeID), nullStr(note), managerID, key)
+	if err != nil {
+		return at, err
+	}
+	var since sql.NullInt64
+	if err := t.queryRow("SELECT match_since FROM queue_items WHERE manager_id=? AND item_key=?", managerID, key).Scan(&since); err != nil {
+		return at, err
+	}
+	if !since.Valid {
+		return at, nil
+	}
+	return fromMS(since.Int64), nil
 }
 
 // SetAttention records when a row entered its current attention state.
@@ -122,7 +136,7 @@ type QueueFilter struct {
 }
 
 const queueCols = `manager_id, item_key, queue_id, download_id, first_seen, last_seen, present, gone_at, latest_json,
-	match_status, match_client_id, match_native_id, match_note, attention_state, attention_since`
+	match_status, match_client_id, match_native_id, match_note, match_since, attention_state, attention_since`
 
 func listQueue(ctx context.Context, q querier, f QueueFilter) ([]QueueRecord, error) {
 	query := "SELECT " + queueCols + " FROM queue_items WHERE 1=1"
@@ -148,14 +162,14 @@ func listQueue(ctx context.Context, q querier, f QueueFilter) ([]QueueRecord, er
 	for rows.Next() {
 		var r QueueRecord
 		var fs, ls int64
-		var qid, gone, since sql.NullInt64
+		var qid, gone, since, msince sql.NullInt64
 		var dl, mc, mn, note, astate sql.NullString
 		var latest string
 		if err := rows.Scan(&r.ManagerID, &r.ItemKey, &qid, &dl, &fs, &ls, &r.Present, &gone, &latest,
-			&r.MatchStatus, &mc, &mn, &note, &astate, &since); err != nil {
+			&r.MatchStatus, &mc, &mn, &note, &msince, &astate, &since); err != nil {
 			return nil, err
 		}
-		r.QueueID, r.DownloadID = qid.Int64, dl.String
+		r.QueueID, r.DownloadID, r.MatchSince = qid.Int64, dl.String, ptrMS(msince)
 		r.FirstSeen, r.LastSeen, r.GoneAt, r.AttentionSince = fromMS(fs), fromMS(ls), ptrMS(gone), ptrMS(since)
 		r.MatchClientID, r.MatchNativeID, r.MatchNote, r.AttentionState = mc.String, mn.String, note.String, astate.String
 		if err := json.Unmarshal([]byte(latest), &r.Latest); err != nil {

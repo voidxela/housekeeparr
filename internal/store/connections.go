@@ -200,3 +200,10 @@ func (s *Store) ConnectionChecks(ctx context.Context, id string, limit int) ([]C
 	}
 	return out, rows.Err()
 }
+
+// ResetBackoff clears scheduled retry delays, e.g. after a configuration
+// change that may have fixed the cause.
+func (t *Tx) ResetBackoff() error {
+	_, err := t.exec("UPDATE connections SET next_attempt_at=NULL")
+	return err
+}
