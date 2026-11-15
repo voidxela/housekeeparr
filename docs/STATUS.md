@@ -21,8 +21,8 @@ implemented.
 | Versioned forward migrations with pre-migration backup | done | v1 → v2 tested against a real v1 database. |
 | Bounded retention (observations, checks, resolved findings, audit) | done | Unresolved findings and transfers they reference are never pruned. |
 | Adapter contract: capabilities, classified errors, bounded HTTP transport, redaction | done | No adapter exposes an operational write method. |
-| qBittorrent read adapter (WebUI API v2) | unverified | Contract-tested against fixtures derived from released source at `release-4.6.7` and `release-5.3.0`; never run against a live instance. |
-| Sonarr read adapter (API v3; queue, health, status) | unverified | Contract-tested against fixtures derived from released source at `v4.0.20.3014`; never run against a live instance. |
+| qBittorrent read adapter (WebUI API v2) | done | Observation validated against real qBittorrent 5.3.0 and 4.6.7 instances on 2026-11-15 (scope in [compatibility.md](compatibility.md)); captured, sanitized responses are contract fixtures. Other versions: contract-tested only. |
+| Sonarr read adapter (API v3; queue, health, status) | done | Observation validated against a real Sonarr 4.0.20.3014 instance on 2026-11-15 (unknown-series queue items only; scope in [compatibility.md](compatibility.md)). |
 | Radarr read adapter (API v3; queue, health, status) sharing the *arr v3 client with Sonarr | unverified | Contract-tested against fixtures derived from released source at `v6.4.4.10685`; never run against a live instance; the harness does not start Radarr yet. |
 | Transmission read adapter (legacy RPC with session handshake) | unverified | Contract-tested against fixtures derived from `docs/rpc-spec.md` and `transmission.h` at `4.0.6`; verified progress is `sizeWhenDone − leftUntilDone`; availability is wanted-only (`desiredAvailable`). Uses the legacy protocol that Transmission 4.1 documents as deprecated — JSON-RPC 2.0 support is *remaining*. Swarm counts are not collected (they are only available alongside tracker URLs). Never run against a live instance. |
 | Deluge read adapter (deluge-web JSON API; daemon protocol deliberately not supported) | unverified | Contract-tested against fixtures derived from `deluge/core/torrent.py` and `deluge/ui/web/json_api.py` at `deluge-2.1.1`. deluge-web must already be connected to a daemon. `distributed_copies` = 0 and `private` without metadata are treated as unknown because Deluge reports ambiguous values there. Never run against a live instance. |
@@ -34,7 +34,7 @@ implemented.
 | CLI: `run` (daemon / `--once` / `--headless`), `status`, `findings`, `finding`, `downloads`, `connections`, `policy`, `activity`, `ack`, `snooze`, `reopen`, `check`, `config validate`, `demo`, `--json` | done | End-to-end test runs the real adapters against fixture-backed HTTP servers (`cmd/housekeeparr/main_test.go`). Local mutations take the writer lock or refuse with exit code 3; routing them through a running headless worker is *remaining*. |
 | Web interface: overview, needs attention, finding detail with ack/snooze/reopen, downloads, download detail, activity, connections & policy, JSON API, `/healthz` | done | Loopback only; Host allowlist, strict CSP, same-origin + CSRF checks on mutations. Exercised in tests and manually via `curl`; not yet reviewed in a real browser. |
 | Demo mode (`housekeeparr demo`) | done | Real engine over scripted fakes and a simulated clock; state marked `demo`, refused as live state; persistent banner in UI and CLI. |
-| Integration harness against disposable released instances (`scripts/it/run.sh`) | unverified | Written: pinned, checksum-verified qBittorrent 5.3.0 / 4.6.7 and Sonarr 4.0.20 releases on loopback with locally generated torrents (closed-port tracker, DHT/PeX/LSD off); Go assertions in `internal/integration` (build tag `integration`). **Never executed**: running downloaded release binaries was not permitted in the development environment. |
+| Integration harness against disposable released instances (`scripts/it/run.sh`) | done | Pinned, checksum-verified qBittorrent 5.3.0 / 4.6.7 and Sonarr 4.0.20 releases on loopback with locally generated torrents (closed-port tracker, DHT/PeX/LSD off). Executed and passing on 2026-11-15 (aarch64). Radarr, Transmission, Deluge, and rTorrent are not in the harness yet. |
 | Packaging: `Dockerfile` (distroless, non-root, headless by default), user-level systemd unit | unverified | Written but never built or run here (no container runtime or user systemd session). The web interface cannot be exposed from a container until authentication exists. See `packaging/README.md`. |
 
 ## Remaining v1 scope (not started unless noted)
@@ -60,10 +60,11 @@ implemented.
 
 ## Compatibility
 
-No application version is currently claimed as tested. The first harness run is expected to confirm or correct, in particular: qBittorrent state names and `private`/`has_metadata` fields per version, the claim that qBittorrent availability counts the client's own pieces, and whether Sonarr 4 reports torrents of unknown series in the queue with the infohash as `downloadId`. Every adapter's
-`TestedVersions` list is empty, so probes report `untested`. Fixtures under
-`internal/adapter/*/testdata` are synthetic; their READMEs record the released
-source they were derived from.
+Observation is validated for qBittorrent 5.3.0 and 4.6.7 and Sonarr
+4.0.20.3014 (see [compatibility.md](compatibility.md) for exactly what was
+exercised). Radarr, Transmission, Deluge, and rTorrent are contract-tested
+against source-derived fixtures only. No write workflow exists for any
+application.
 
 ## Performance measurements
 
