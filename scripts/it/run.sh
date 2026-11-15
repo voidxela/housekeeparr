@@ -15,6 +15,7 @@
 #               require qbittorrent in --clients.
 #   --capture   write sanitized raw responses to testdata/captured/ for review
 #   --keep      keep the work directory for debugging
+#   --no-netns  do not isolate the run in a loopback-only network namespace
 #
 # Every selected application's tests must report PASS; a skipped test fails
 # the run, so a missing environment variable can never be recorded as a pass.
@@ -31,6 +32,8 @@ CLIENTS=qbittorrent
 MANAGERS=sonarr
 CAPTURE=0
 KEEP=0
+NETNS=1
+ORIG_ARGS=("$@")
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--clients) CLIENTS="$2"; shift 2 ;;
@@ -39,6 +42,7 @@ while [ $# -gt 0 ]; do
 	--tr) TR_VERSION="$2"; shift 2 ;;
 	--capture) CAPTURE=1; shift ;;
 	--keep) KEEP=1; shift ;;
+	--no-netns) NETNS=0; shift ;;
 	*) echo "unknown argument: $1" >&2; exit 2 ;;
 	esac
 done
@@ -57,15 +61,6 @@ HERE="$ROOT/scripts/it"
 CACHE=${HOUSEKEEPARR_IT_CACHE:-$HOME/.cache/housekeeparr-it}
 ARCH=$(uname -m)
 case "$ARCH" in arm64) ARCH=aarch64 ;; amd64) ARCH=x86_64 ;; esac
-WORK=$(mktemp -d "${TMPDIR:-/tmp}/housekeeparr-it.XXXXXX")
-PIDS=()
-LOGS=()
-cleanup() {
-	for p in "${PIDS[@]:-}"; do [ -n "$p" ] && kill "$p" 2>/dev/null || true; done
-	wait 2>/dev/null || true
-	if [ "$KEEP" = 1 ]; then echo "kept $WORK"; else rm -rf "$WORK"; fi
-}
-trap cleanup EXIT
 mkdir -p "$CACHE"
 
 fetch() { # name version -> path of verified artifact
@@ -100,7 +95,7 @@ fetch_debs() {
 			f=$(ls "$CACHE/debs/${n}_"*.deb | head -1)
 		fi
 		echo "$sum  $f" | sha256sum -c --status || { echo "checksum mismatch for $f (Debian may have updated $n $ver; re-pin deliberately)" >&2; exit 3; }
-		dpkg-deb -x "$f" "$root"
+		dpkg-deb --fsys-tarfile "$f" | tar -x --no-same-owner -C "$root"
 	done
 }
 
@@ -115,6 +110,65 @@ waitfor() { # url seconds
 # Each client gets its own copy of the payload directory so no two clients
 # ever share files.
 payload() { mkdir -p "$WORK/$1"; cp -a "$WORK/downloads/." "$WORK/$1/"; echo "$WORK/$1"; }
+
+DELUGE_PKGS="deluge-common deluge-web deluged libboost-python1.83.0 libtorrent-rasterbar2.0t64 python3-attr python3-autocommand
+python3-automat python3-bcrypt python3-cffi-backend python3-chardet python3-constantly python3-cryptography python3-hamcrest
+python3-hyperlink python3-idna python3-importlib-metadata python3-importlib-resources python3-incremental python3-inflect
+python3-jaraco.context python3-jaraco.functools python3-jaraco.text python3-legacy-cgi python3-libtorrent python3-mako
+python3-markupsafe python3-more-itertools python3-openssl python3-pkg-resources python3-pyasn1 python3-pyasn1-modules
+python3-rencode python3-service-identity python3-setuptools python3-tomli python3-twisted python3-typeguard
+python3-typing-extensions python3-xdg python3-zipp python3-zope.interface"
+
+# --- network isolation ------------------------------------------------------
+# By default every artifact is fetched first, then the suite re-runs itself
+# in an unprivileged user + network namespace (unshare -rn) whose only
+# interface is loopback. No started application can reach any other network:
+# not a swarm, a DHT bootstrap node, a LAN gateway (UPnP/NAT-PMP), or an
+# update service. This matters because some clients (e.g. Deluge 2.2.0)
+# create their libtorrent session with defaults before applying their own
+# configuration.
+prefetch() {
+	local scratch; scratch=$(mktemp -d "${TMPDIR:-/tmp}/housekeeparr-prefetch.XXXXXX")
+	local c m
+	for c in ${CLIENTS//,/ }; do
+		case "$c" in
+		qbittorrent) fetch qbittorrent "$QBT_VERSION" >/dev/null ;;
+		transmission) "$HERE/build-transmission.sh" "$TR_VERSION" >/dev/null ;;
+		rtorrent) fetch_debs "$scratch" rtorrent libtorrent21t64 libxmlrpc-core-c3t64 libxmlrpc-util4 lighttpd ;;
+		# shellcheck disable=SC2086
+		deluge) fetch_debs "$scratch" $DELUGE_PKGS ;;
+		esac
+	done
+	for m in ${MANAGERS//,/ }; do
+		case "$m" in
+		sonarr) fetch sonarr "$SONARR_VERSION" >/dev/null ;;
+		radarr) fetch radarr "$RADARR_VERSION" >/dev/null ;;
+		esac
+	done
+	rm -rf "$scratch"
+}
+if [ "$NETNS" = 1 ] && [ -z "${HK_IT_IN_NETNS:-}" ]; then
+	command -v unshare >/dev/null && command -v ip >/dev/null || { echo "unshare and ip are required for network isolation (or pass --no-netns)" >&2; exit 2; }
+	prefetch
+	exec unshare -rn env HK_IT_IN_NETNS=1 bash -c 'ip link set lo up && exec "$@"' _ "$0" "${ORIG_ARGS[@]}"
+fi
+if [ -n "${HK_IT_IN_NETNS:-}" ]; then
+	python3 -c 'import socket,sys; s=socket.socket(); s.settimeout(2); sys.exit(0 if s.connect_ex(("192.0.2.1", 80)) != 0 else 1)' ||
+		{ echo "network namespace is not isolated" >&2; exit 2; }
+	echo "running in an isolated loopback-only network namespace" >&2
+	# Go must not reach the network either.
+	export GOFLAGS="${GOFLAGS:+$GOFLAGS }-mod=readonly" GOPROXY=off GOTOOLCHAIN=local
+fi
+
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/housekeeparr-it.XXXXXX")
+PIDS=()
+LOGS=()
+cleanup() {
+	for p in "${PIDS[@]:-}"; do [ -n "$p" ] && kill "$p" 2>/dev/null || true; done
+	wait 2>/dev/null || true
+	if [ "$KEEP" = 1 ]; then echo "kept $WORK"; else rm -rf "$WORK"; fi
+}
+trap cleanup EXIT
 
 TESTS=()
 export HK_IT_MANIFEST="$WORK/torrents/manifest.json" HK_IT_WORK="$WORK"
@@ -143,7 +197,11 @@ Session\\DefaultSavePath=$save
 Session\\QueueingSystemEnabled=false
 Session\\AddTorrentStopped=false
 
+[Network]
+PortForwardingEnabled=false
+
 [Preferences]
+Connection\\ResolvePeerCountries=false
 WebUI\\Address=127.0.0.1
 WebUI\\Port=$QBT_PORT
 WebUI\\Username=admin
@@ -261,6 +319,38 @@ EOF
 	TESTS+=(TestRTorrentReleasedBehaviour)
 }
 
+# --- Deluge (Debian 2.2.0 daemon + deluge-web, extracted; host python3) -------
+start_deluge() {
+	local root="$WORK/deluge-root"
+	# shellcheck disable=SC2086
+	fetch_debs "$root" $DELUGE_PKGS
+	local daemon bt web dpass wpass save cfg salt
+	daemon=$(freeport); bt=$(freeport); web=$(freeport); dpass=$(secret); wpass=$(secret); save=$(payload deluge-downloads)
+	cfg="$WORK/deluge-config"; mkdir -p "$cfg"
+	# localclient is the account deluge-web's default host list reads.
+	printf 'localclient:%s:10\nadmin:%s:10\n' "$(secret)" "$dpass" > "$cfg/auth"
+	# Deluge config files are a format header followed by the settings;
+	# missing keys take Deluge's defaults. Queue limits are lifted so no
+	# torrent waits for a slot, and every discovery mechanism is off.
+	printf '{"file": 1, "format": 1}{"dht": false, "upnp": false, "natpmp": false, "lsd": false, "utpex": false,
+ "random_port": false, "listen_ports": [%s, %s], "listen_interface": "127.0.0.1", "download_location": "%s",
+ "move_completed": false, "new_release_check": false, "max_active_limit": -1, "max_active_downloading": -1,
+ "max_active_seeding": -1, "allow_remote": false}' "$bt" "$bt" "$save" > "$cfg/core.conf"
+	salt=$(python3 -c 'import secrets; print(secrets.token_hex(16))')
+	printf '{"file": 1, "format": 1}{"pwd_salt": "%s", "pwd_sha1": "%s", "first_login": false, "default_daemon": "", "https": false, "interface": "127.0.0.1", "port": %s}' \
+		"$salt" "$(printf '%s%s' "$salt" "$wpass" | sha1sum | cut -d' ' -f1)" "$web" > "$cfg/web.conf"
+	local env=(PYTHONPATH="$root/usr/lib/python3/dist-packages" LD_LIBRARY_PATH="$root/usr/lib/$(uname -m)-linux-gnu" HOME="$WORK")
+	env "${env[@]}" python3 "$root/usr/bin/deluged" -d -c "$cfg" -u 127.0.0.1 -p "$daemon" -i 127.0.0.1 -L info -l "$WORK/deluged.log" > "$WORK/deluged.out" 2>&1 &
+	PIDS+=($!); LOGS+=("$WORK/deluged.log" "$WORK/deluged.out")
+	for _ in $(seq 1 60); do python3 -c "import socket; socket.create_connection(('127.0.0.1', $daemon), 1)" 2>/dev/null && break; sleep 1; done
+	env "${env[@]}" python3 "$root/usr/bin/deluge-web" -d -c "$cfg" -i 127.0.0.1 -p "$web" -L info -l "$WORK/deluge-web.log" > "$WORK/deluge-web.out" 2>&1 &
+	PIDS+=($!); LOGS+=("$WORK/deluge-web.log" "$WORK/deluge-web.out")
+	waitfor "http://127.0.0.1:$web/" 60
+	python3 -I "$HERE/setup_clients.py" deluge "http://127.0.0.1:$web" "$wpass" "$daemon" admin "$dpass" "$WORK/torrents/manifest.json" "$WORK/torrents" "$save"
+	export HK_IT_DELUGE_URL="http://127.0.0.1:$web" HK_IT_DELUGE_PASS="$wpass" HK_IT_DELUGE_VERSION=2.2.0
+	TESTS+=(TestDelugeReleasedBehaviour)
+}
+
 # --- *arr managers ------------------------------------------------------------
 start_arr() { # app version port-var key-var
 	local app=$1 version=$2 tgz port key title branch=main
@@ -268,7 +358,7 @@ start_arr() { # app version port-var key-var
 	[ "$app" = radarr ] && branch=master
 	tgz=$(fetch "$app" "$version")
 	mkdir -p "$WORK/$app-app" "$WORK/$app-data"
-	tar -xzf "$tgz" -C "$WORK/$app-app"
+	tar -xzf "$tgz" --no-same-owner -C "$WORK/$app-app"
 	port=$(freeport); key=$(python3 -c 'import secrets; print(secrets.token_hex(16))')
 	cat > "$WORK/$app-data/config.xml" <<EOF
 <Config>
@@ -321,6 +411,7 @@ for c in ${CLIENTS//,/ }; do
 	qbittorrent) start_qbittorrent ;;
 	transmission) start_transmission ;;
 	rtorrent) start_rtorrent ;;
+	deluge) start_deluge ;;
 	*) echo "client $c is not in the harness yet" >&2; exit 2 ;;
 	esac
 done

@@ -35,7 +35,7 @@ if [ -f "$SYSROOT/usr/include/$(uname -m)-linux-gnu/curl/curl.h" ]; then
 fi
 SRC=$(mktemp -d "${TMPDIR:-/tmp}/hk-tr-build.XXXXXX")
 trap 'rm -rf "$SRC"' EXIT
-tar -xJf "$TARBALL" -C "$SRC"
+tar -xJf "$TARBALL" --no-same-owner -C "$SRC"
 # The 4.0.6 release tarball ships an empty third-party/miniupnpc while the
 # same sources are included under third-party/miniupnp/miniupnpc. UPnP is
 # not on the RPC path; using the bundled copy keeps the build self-contained.
