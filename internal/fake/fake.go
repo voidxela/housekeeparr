@@ -250,6 +250,7 @@ func Transfer(id, name string, class domain.StateClass, verified, wanted int64, 
 		t.WantedBytes = domain.UnknownValue[int64]("no metadata")
 		t.VerifiedBytes = domain.UnknownValue[int64]("no metadata")
 		t.AllFilesWanted = domain.UnknownValue[bool]("no metadata")
+		t.Private = domain.UnknownValue[bool]("privacy unknown until metadata is acquired")
 	}
 	return t
 }
