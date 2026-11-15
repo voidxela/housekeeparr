@@ -177,3 +177,32 @@ func TestNonIntegerColumnIsMalformed(t *testing.T) {
 		t.Fatalf("explicit empty array: %v %+v", err, snap)
 	}
 }
+
+// A download rTorrent stopped itself, with a local (non-tracker) message, is
+// a client error rather than a user pause; a tracker message on a stopped
+// download is not.
+func TestStoppedWithLocalMessageIsError(t *testing.T) {
+	row := func(state int64, msg string) []any {
+		c := make([]any, len(fields))
+		for _, i := range numericColumns {
+			c[i] = int64(0)
+		}
+		c[0], c[1], c[19], c[20] = strings.Repeat("a", 40), "x", msg, ""
+		c[2], c[3], c[7], c[10], c[12], c[13] = state, int64(0), int64(1<<20), int64(4), int64(4), int64(1<<18)
+		return c
+	}
+	for _, tc := range []struct {
+		state int64
+		msg   string
+		want  domain.StateClass
+	}{
+		{0, "Download registered as completed, but hash check returned unfinished chunks.", domain.StateError},
+		{0, `Tracker: [Failure reason "unregistered torrent"]`, domain.StatePaused},
+		{0, "", domain.StatePaused},
+	} {
+		tr, err := normalize("rt", row(tc.state, tc.msg))
+		if err != nil || tr.StateClass != tc.want {
+			t.Errorf("%q: %s %v, want %s", tc.msg, tr.StateClass, err, tc.want)
+		}
+	}
+}

@@ -155,7 +155,7 @@ func (c *Client) Probe(ctx context.Context) (adapter.Probe, error) {
 	}
 	p.Write = adapter.ReadOnlyWrites(adapter.CapStopTransfer, adapter.CapTransferLabel)
 	p.Limitations = []string{
-		"rTorrent has no structured error state; error and tracker messages are shown as text only, and storage errors are not classified.",
+		"rTorrent has no structured error state; a download rTorrent stopped with a non-tracker message is reported as a client error, and other error and tracker messages are shown as text only.",
 		"Piece availability is not collected, so stalls are never attributed to unavailable pieces.",
 		"The added time is rTorrent's load time, which can reset on client restart (grace can only lengthen).",
 	}
@@ -239,6 +239,13 @@ func normalize(clientID string, c []any) (domain.Transfer, error) {
 		t.StateClass, t.NativeState = domain.StateChecking, "hashing"
 	case complete == 1:
 		t.StateClass, t.NativeState = domain.StateComplete, map[bool]string{true: "seeding", false: "complete-stopped"}[state == 1 && active == 1]
+	case state == 0 && str(19) != "" && !strings.HasPrefix(str(19), "Tracker:"):
+		// rTorrent stops a download itself on local problems and records
+		// why in d.message (observed on 0.9.8 after payload deletion: "Download
+		// registered as completed, but hash check returned unfinished
+		// chunks."). That is not a user pause. Tracker messages persist
+		// across user stops and are prefixed "Tracker:".
+		t.StateClass, t.NativeState = domain.StateError, "stopped-with-message"
 	case state == 0:
 		t.StateClass, t.NativeState = domain.StatePaused, "stopped"
 	case active == 0:
