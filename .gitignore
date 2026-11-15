@@ -1,0 +1,17 @@
+# Build output
+/bin/
+/dist/
+/housekeeparr
+
+# Local state and configuration (may contain secret references or data)
+/state/
+/data/
+*.db
+*.db-wal
+*.db-shm
+/housekeeparr.toml
+.env
+*.secret
+
+# Integration harness work directories
+/.it/
