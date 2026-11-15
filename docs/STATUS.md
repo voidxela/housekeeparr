@@ -57,7 +57,7 @@ testing decisions and implementation sequence.
 | qBittorrent read adapter (WebUI API v2) | done | Observation validated against real qBittorrent 5.3.0 and 4.6.7 instances on 2026-11-15 (scope in [compatibility.md](compatibility.md)); captured, sanitized responses are contract fixtures. Other versions: contract-tested only. |
 | Sonarr read adapter (API v3; queue, health, status) | done | Observation validated against a real Sonarr 4.0.20.3014 instance on 2026-11-15 (unknown-series queue items only; scope in [compatibility.md](compatibility.md)). |
 | Radarr read adapter (API v3; queue, health, status) sharing the *arr v3 client with Sonarr | done | Observation validated against a real Radarr 6.4.4.10685 instance on 2026-11-15 (unknown-movie queue items only; scope in [compatibility.md](compatibility.md)); fixtures derived from released source at `v6.4.4.10685`. |
-| Transmission read adapter (legacy RPC with session handshake) | done | Observation validated against real 4.0.6 and 4.1.4 daemons (built from release tarballs) on 2026-11-15; captured responses are contract fixtures. The legacy protocol, deprecated but retained throughout Transmission 4, returned every requested field on both, so no second protocol is implemented; this is revisited only if a later release removes it. Verified progress is `sizeWhenDone − leftUntilDone`; availability is wanted-only (`desiredAvailable`). Swarm counts are not collected (they are only available alongside tracker URLs). |
+| Transmission read adapter (legacy RPC with session handshake) | done | Observation validated against real 4.0.6 and 4.1.4 daemons (built from release tarballs) on 2026-11-15; captured responses are contract fixtures. For observation, the legacy protocol (deprecated but retained throughout Transmission 4) returned every requested field on both, so no second protocol is implemented. That is established for observation only; each later write workflow must be validated on both branches before the same conclusion holds for it. Harness-side setup already used `torrent-add`, `torrent-set`, `torrent-verify`, `torrent-stop`, and `torrent-start` over the legacy protocol on 4.0.6 and 4.1.4 (harness evidence, not a Housekeeparr workflow). Verified progress is `sizeWhenDone − leftUntilDone`; availability is wanted-only (`desiredAvailable`). Swarm counts are not collected (they are only available alongside tracker URLs). |
 | Deluge read adapter (deluge-web JSON API; daemon protocol deliberately not supported) | done | Observation validated against real Deluge 2.2.0 on 2026-11-15; that run found and fixed two adapter bugs the source-derived fixtures had hidden (`daemon.info` does not exist in 2.x; empty params must be `[]`). deluge-web must already be connected to a daemon. `distributed_copies` = 0 and `private` without metadata are treated as unknown. 2.0.x and 2.1.x are contract-tested only. |
 | rTorrent read adapter (XML-RPC over an HTTP SCGI gateway) | done | Observation validated against real rTorrent 0.9.8 behind lighttpd 1.4.79 `mod_scgi` with basic auth on 2026-11-15. Fixtures derived from `src/command_download.cc` at `v0.9.8` and `v0.16.28`; later versions contract-tested only. No availability or structured error state: a download rTorrent stops itself with a non-tracker `d.message` is reported as a client error (observed after payload loss). |
 | Pure no-progress / metadata diagnosis policy | done | Deterministic tests cover grace, windows, observation counts, gaps, clock anomalies, pauses, rechecks, file selection, near-complete windows, and piece availability. |
@@ -92,6 +92,20 @@ testing decisions and implementation sequence.
 - Web authentication for remote exposure (currently loopback only).
 - Container packaging, user-level systemd unit, release validation,
   performance budgets, security review.
+
+## Design-constraining findings (real instances, 2026-11-15)
+
+- **Queue removal of rows without grab history is accepted but not durable.**
+  Sonarr 4.0.20 and Radarr 6.4.4 return HTTP 200 to `DELETE /api/v3/queue/{id}`
+  (ignore and blocklist paths, every flag explicit), but the row is tracked
+  again after the next refresh and nothing is blocklisted. Recovery must verify
+  the outcome after a refresh, and such rows are ineligible.
+- **"Complete" does not prove the data exists on qBittorrent or Deluge.** After
+  the payload of a verified torrent was deleted, both kept reporting it
+  complete/seeding; Transmission and rTorrent reported errors. Preserved-data
+  handling cannot rely on client state alone for libtorrent clients.
+- **`removeFromClient` defaults to true** in both managers' released
+  `QueueController`, so every consequential flag must be sent explicitly.
 
 ## Compatibility
 

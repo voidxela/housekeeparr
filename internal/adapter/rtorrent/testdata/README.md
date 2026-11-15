@@ -6,5 +6,5 @@
 | `fault.xml` | **Synthetic** XML-RPC fault for an undefined method. |
 
 One tracker message embeds a fake passkey so tests prove it is redacted.
-Released-version compatibility has not been established, and the integration
-harness does not start rTorrent yet.
+Observation is validated against a real rTorrent 0.9.8 behind a lighttpd SCGI
+gateway; see `docs/compatibility.md`. These files remain source-derived.

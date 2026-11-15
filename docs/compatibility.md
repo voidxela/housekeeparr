@@ -72,10 +72,14 @@ Observed corrections applied: qBittorrent reports availability 0 (not −1) for
 stopped torrents and torrents without metadata, so the adapter now treats
 availability as unknown outside active downloading.
 
-Not exercised: client error states (`error`, `missingFiles`), queueing,
-checking, real peers or swarm counts, v2/hybrid torrents, authentication
-bypass, reverse-proxy base paths, TLS, large libraries, Sonarr series that
-exist in the library, import completion, and every other application.
+Not exercised: qBittorrent `error`/`missingFiles` and Deluge `Error` states
+(never observed: payload deletion without a restart left both complete; see
+below), missing files after a client restart or forced recheck, queueing,
+checking states as stable observations, real peers or swarm counts, v2/hybrid
+torrents, authentication bypass, reverse-proxy base paths, TLS, large
+libraries, series/movies that exist in the manager library, grab history,
+import completion, and manager correlation with any client other than
+qBittorrent.
 
 ## Missing-data (client error) semantics
 
@@ -135,7 +139,7 @@ workflow.
 | Privacy | 5.0+ (`private`); unsupported on 4.x | `isPrivate` | `private` (unknown without metadata) | `d.is_private` |
 | Metadata state | `metaDL` / `forcedMetaDL` | `metadataPercentComplete` | `num_pieces = 0` | `d.is_meta` |
 | Swarm counts | tracker-reported | not collected (only with tracker URLs) | tracker-reported | not collected |
-| Client error state | `error`, `missingFiles` | `error = 3` (local) | `Error` | none structured (message text only) |
+| Client error state | `error`, `missingFiles` (mapping not yet observed on a real instance) | `error = 3` (local; observed) | `Error` (mapping not yet observed) | none structured; a download stopped by rTorrent with a non-tracker `d.message` is a client error (observed) |
 | Added time | `added_on` | `addedDate` | `time_added` | `d.load_date` (may reset on restart) |
 
 
