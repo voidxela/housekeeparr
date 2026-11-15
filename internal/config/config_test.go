@@ -75,7 +75,7 @@ func TestRejectsLiteralSecrets(t *testing.T) {
 
 func TestRejectsUnknownKeysAndPlannedSections(t *testing.T) {
 	expectProblem(t, minimal+"\n[polling]\nintervall = \"5m\"\n", "polling.intervall", "unknown")
-	expectProblem(t, minimal+"\n[[deluge]]\nid = \"dl\"\n", "deluge", "not implemented")
+	expectProblem(t, minimal+"\n[[rtorrent]]\nid = \"rt\"\n", "rtorrent", "not implemented")
 }
 
 func TestRejectsAutomaticMode(t *testing.T) {
@@ -256,4 +256,14 @@ func TestTransmissionSection(t *testing.T) {
 	}
 	expectProblem(t, strings.Replace(src, `id = "tr"`, "id = \"tr\"\nrpc_path = \"rpc\"", 1), "transmission.tr.rpc_path", "must start")
 	expectProblem(t, strings.Replace(minimal, `username = "admin"`, "username = \"admin\"\nrpc_path = \"/x\"", 1), "qbittorrent.qbit.rpc_path", "only applies")
+}
+
+func TestDelugeSection(t *testing.T) {
+	src := minimal + "\n[[deluge]]\nid = \"dl\"\nurl = \"http://127.0.0.1:8112\"\npassword = \"env:DL_PW\"\n"
+	cfg := mustParse(t, src)
+	if len(cfg.Clients()) != 2 || cfg.Clients()[1].Section != "deluge" {
+		t.Fatalf("%+v", cfg.Clients())
+	}
+	expectProblem(t, strings.Replace(src, `id = "dl"`, "id = \"dl\"\nusername = \"x\"", 1), "deluge.dl.username", "password only")
+	expectProblem(t, strings.Replace(src, `password = "env:DL_PW"`, "", 1), "deluge.dl.password", "required")
 }

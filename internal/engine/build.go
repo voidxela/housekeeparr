@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/voidxela/housekeeparr/internal/adapter"
+	"github.com/voidxela/housekeeparr/internal/adapter/deluge"
 	"github.com/voidxela/housekeeparr/internal/adapter/qbittorrent"
 	"github.com/voidxela/housekeeparr/internal/adapter/radarr"
 	"github.com/voidxela/housekeeparr/internal/adapter/sonarr"
@@ -72,8 +73,11 @@ func Build(cfg *config.Config, secrets map[string]string) (*Connections, error) 
 	for _, ce := range cfg.Clients() {
 		q := ce.Config
 		kind := adapter.KindQBittorrent
-		if ce.Section == "transmission" {
+		switch ce.Section {
+		case "transmission":
 			kind = adapter.KindTransmission
+		case "deluge":
+			kind = adapter.KindDeluge
 		}
 		meta := ConnMeta{ID: q.ID, Name: q.DisplayName(), BaseURL: redact.URL(q.URL), Kind: kind,
 			Enabled: q.IsEnabled(), SecretRef: q.Password.Display()}
@@ -94,6 +98,8 @@ func Build(cfg *config.Config, secrets map[string]string) (*Connections, error) 
 			err error
 		)
 		switch kind {
+		case adapter.KindDeluge:
+			c, err = deluge.New(deluge.Options{ID: q.ID, BaseURL: q.URL, Password: pw, Timeout: timeout, CAFile: q.CAFile})
 		case adapter.KindTransmission:
 			c, err = transmission.New(transmission.Options{ID: q.ID, BaseURL: q.URL, RPCPath: q.RPCPath, Username: q.Username, Password: pw, Timeout: timeout, CAFile: q.CAFile})
 		default:

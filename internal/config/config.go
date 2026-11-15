@@ -65,12 +65,12 @@ type Config struct {
 	Radarr       []ManagerConfig `toml:"radarr"`
 	QBittorrent  []ClientConfig  `toml:"qbittorrent"`
 	Transmission []ClientConfig  `toml:"transmission"`
+	Deluge       []ClientConfig  `toml:"deluge"`
 
 	// Planned integrations: recognised so that configuring them produces a
 	// clear "not yet implemented" error instead of an unknown-key error or
 	// silent ignorance.
 	RTorrent []toml.Primitive `toml:"rtorrent"`
-	Deluge   []toml.Primitive `toml:"deluge"`
 
 	// Path is the file this configuration was loaded from.
 	Path string `toml:"-"`
@@ -257,13 +257,13 @@ func Parse(raw []byte, path string) (*Config, []Problem, error) {
 		for _, k := range undec {
 			key := k.String()
 			// Planned sections are reported once below, not per key.
-			if top := strings.SplitN(key, ".", 2)[0]; top == "rtorrent" || top == "deluge" {
+			if top := strings.SplitN(key, ".", 2)[0]; top == "rtorrent" {
 				continue
 			}
 			add("error", key, "unknown configuration key")
 		}
 	}
-	for name, n := range map[string]int{"rtorrent": len(cfg.RTorrent), "deluge": len(cfg.Deluge)} {
+	for name, n := range map[string]int{"rtorrent": len(cfg.RTorrent)} {
 		if n > 0 {
 			add("error", name, "%s is planned for v1 but not implemented in this build; remove the [[%s]] section for now", name, name)
 		}
@@ -451,6 +451,16 @@ func validate(cfg *Config, md toml.MetaData) []Problem {
 			if c.RPCPath != "" {
 				errf(field+".rpc_path", "only applies to Transmission")
 			}
+		case "deluge":
+			if c.Username != "" {
+				errf(field+".username", "deluge-web authenticates with a password only")
+			}
+			if c.Password == "" {
+				errf(field+".password", "required (the deluge-web password)")
+			}
+			if c.RPCPath != "" {
+				errf(field+".rpc_path", "only applies to Transmission")
+			}
 		case "transmission":
 			if c.RPCPath != "" && !strings.HasPrefix(c.RPCPath, "/") {
 				errf(field+".rpc_path", "must start with /")
@@ -605,7 +615,7 @@ func apply(s *policy.Settings, src map[string]string, o PolicyOverrides, from st
 func (c *Config) computeRevision() string {
 	cp := *c
 	cp.Path, cp.Revision = "", ""
-	cp.RTorrent, cp.Deluge = nil, nil
+	cp.RTorrent = nil
 	b, _ := json.Marshal(cp)
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])[:12]
@@ -674,6 +684,9 @@ func (c *Config) Clients() []ClientEntry {
 	}
 	for i := range c.Transmission {
 		out = append(out, ClientEntry{"transmission", &c.Transmission[i]})
+	}
+	for i := range c.Deluge {
+		out = append(out, ClientEntry{"deluge", &c.Deluge[i]})
 	}
 	return out
 }

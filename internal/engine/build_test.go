@@ -25,6 +25,10 @@ id = "t"
 url = "http://127.0.0.1:9091"
 username = "u"
 password = "env:T"
+[[deluge]]
+id = "d"
+url = "http://127.0.0.1:8112"
+password = "env:D"
 [[transmission]]
 id = "off"
 url = "http://127.0.0.1:9092"
@@ -33,7 +37,7 @@ enabled = false
 	if err != nil {
 		t.Fatal(err)
 	}
-	conns, err := Build(cfg, map[string]string{"sonarr.s.api_key": "a", "radarr.r.api_key": "b", "transmission.t.password": "c"})
+	conns, err := Build(cfg, map[string]string{"sonarr.s.api_key": "a", "radarr.r.api_key": "b", "transmission.t.password": "c", "deluge.d.password": "d"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +48,7 @@ enabled = false
 	for _, m := range conns.Managers {
 		kinds[m.ID()] = m.Kind()
 	}
-	want := map[string]adapter.Kind{"s": adapter.KindSonarr, "r": adapter.KindRadarr, "q": adapter.KindQBittorrent, "t": adapter.KindTransmission}
+	want := map[string]adapter.Kind{"s": adapter.KindSonarr, "r": adapter.KindRadarr, "q": adapter.KindQBittorrent, "t": adapter.KindTransmission, "d": adapter.KindDeluge}
 	if len(kinds) != len(want) {
 		t.Fatalf("built %v", kinds)
 	}
