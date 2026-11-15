@@ -12,13 +12,36 @@ implemented.
 
 ## Independent review — 2026-11-15
 
-[Review findings and verification](reviews/2026-11-15.md) confirm the read-only
-foundation and both existing integration combinations, but identify four
-remaining evidence/lifecycle defects (R1–R4). These must be fixed before
-closing this milestone or enabling writes. The native race detector failure
-was reproduced and diagnosed as a 39-bit address-space limitation; a
-supported runner is still required. [Next-session prompt](CLAUDE_NEXT_SESSION.md)
-records the user-approved testing decisions and implementation sequence.
+[Review findings and verification](reviews/2026-11-15.md) confirmed the
+read-only foundation and both existing integration combinations, and
+identified four evidence/lifecycle defects. All four are fixed with regression
+tests that fail on the reviewed code:
+
+- **R1** (malformed listings as authoritative absence): Sonarr/Radarr queue
+  pages require `totalRecords` and `records`; record counts must account for
+  the reported total or the snapshot is incomplete; queue rows need an `id`;
+  health must be a list. Transmission requires `arguments.torrents`;
+  qBittorrent and Deluge reject null listings; rTorrent rejects non-integer
+  numeric columns. `internal/engine/listing_evidence_test.go` drives the real
+  Transmission and Sonarr adapters through the engine to show malformed
+  responses cannot remove transfers or queue rows or resolve findings, while
+  explicit empty listings still do.
+- **R2** (recheck counters as progress): stall resolution needs a fresh
+  downloading observation; a check marks the baseline pending, and the first
+  downloading observation afterwards becomes the new baseline. Limitation: a
+  check that starts and finishes entirely between two polls is
+  indistinguishable from download progress unless counters fall.
+- **R3** (unknown states as error recovery): only recognised non-error states
+  on two consecutive, fresh, gap-free observations resolve a client-error
+  finding.
+- **R4** (absent Transmission metadata): absent, null, or out-of-range
+  `metadataPercentComplete` makes sizes, completion, privacy, and
+  availability unknown; a non-numeric value rejects the listing.
+
+The native race detector failure was reproduced and diagnosed as a 39-bit
+address-space limitation; a supported runner is still required.
+[Next-session prompt](CLAUDE_NEXT_SESSION.md) records the user-approved
+testing decisions and implementation sequence.
 
 ## Milestone 1 — read-only foundation (in progress)
 
@@ -34,7 +57,7 @@ records the user-approved testing decisions and implementation sequence.
 | qBittorrent read adapter (WebUI API v2) | done | Observation validated against real qBittorrent 5.3.0 and 4.6.7 instances on 2026-11-15 (scope in [compatibility.md](compatibility.md)); captured, sanitized responses are contract fixtures. Other versions: contract-tested only. |
 | Sonarr read adapter (API v3; queue, health, status) | done | Observation validated against a real Sonarr 4.0.20.3014 instance on 2026-11-15 (unknown-series queue items only; scope in [compatibility.md](compatibility.md)). |
 | Radarr read adapter (API v3; queue, health, status) sharing the *arr v3 client with Sonarr | unverified | Contract-tested against fixtures derived from released source at `v6.4.4.10685`; never run against a live instance; the harness does not start Radarr yet. |
-| Transmission read adapter (legacy RPC with session handshake) | unverified | Contract-tested against fixtures derived from `docs/rpc-spec.md` and `transmission.h` at `4.0.6`; verified progress is `sizeWhenDone − leftUntilDone`; availability is wanted-only (`desiredAvailable`). Uses the legacy protocol that Transmission 4.1 documents as deprecated — JSON-RPC 2.0 support is *remaining*. Swarm counts are not collected (they are only available alongside tracker URLs). Never run against a live instance. |
+| Transmission read adapter (legacy RPC with session handshake) | unverified | Contract-tested against fixtures derived from `docs/rpc-spec.md` and `transmission.h` at `4.0.6`; verified progress is `sizeWhenDone − leftUntilDone`; availability is wanted-only (`desiredAvailable`). Uses the legacy protocol, which released 4.1.4 documentation deprecates but retains throughout Transmission 4. Both 4.0.x and 4.1.x are required targets; a second (JSON-RPC 2.0) protocol is added only if pinned-release validation shows the legacy protocol is insufficient. Swarm counts are not collected (they are only available alongside tracker URLs). Never run against a live instance. |
 | Deluge read adapter (deluge-web JSON API; daemon protocol deliberately not supported) | unverified | Contract-tested against fixtures derived from `deluge/core/torrent.py` and `deluge/ui/web/json_api.py` at `deluge-2.1.1`. deluge-web must already be connected to a daemon. `distributed_copies` = 0 and `private` without metadata are treated as unknown because Deluge reports ambiguous values there. Never run against a live instance. |
 | rTorrent read adapter (XML-RPC over an HTTP SCGI gateway) | unverified | Contract-tested against fixtures derived from `src/command_download.cc` at `v0.9.8` and `v0.16.28` (every multicall command exists at the 0.9.8 floor). No availability or structured error state. Never run against a live instance. |
 | Pure no-progress / metadata diagnosis policy | done | Deterministic tests cover grace, windows, observation counts, gaps, clock anomalies, pauses, rechecks, file selection, near-complete windows, and piece availability. |
@@ -49,9 +72,10 @@ records the user-approved testing decisions and implementation sequence.
 
 ## Remaining v1 scope (not started unless noted)
 
-- Radarr, Transmission, Deluge, and rTorrent in the integration harness;
-  Transmission JSON-RPC 2.0. All four clients and both managers have read
-  adapters; none is validated against a real instance (see
+- Radarr, Transmission (4.0.x and 4.1.x), Deluge, and rTorrent in the
+  integration harness. All four clients and both managers have read
+  adapters; qBittorrent and Sonarr observation is validated against real
+  instances, the other four only against source-derived fixtures (see
   [compatibility.md](compatibility.md)).
 - Exclusions, snooze/exclude from the interfaces, scoped rules and item
   overrides, effective-policy and action previews.

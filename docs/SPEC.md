@@ -1,6 +1,6 @@
 # Housekeeparr specification
 
-Status: approved product direction; implementation specification. Housekeeparr is not yet implemented. Proposed defaults below must be validated against representative deployments before release. Supported versions and action capabilities must be established by integration tests, not inferred from API names.
+Status: approved product direction; implementation specification. Housekeeparr is partially implemented: a read-only observation foundation exists and no operational write workflow is complete; see `docs/STATUS.md` for exactly what is done, tested, and remaining. Proposed defaults below must be validated against representative deployments before release. Supported versions and action capabilities must be established by integration tests, not inferred from API names.
 
 ## 1. Purpose and goals
 

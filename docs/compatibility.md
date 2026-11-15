@@ -3,7 +3,7 @@
 Status values: **contract-tested** = adapter tests pass against fixtures
 derived from the cited released source, but no real instance has been
 exercised · **tested** = a disposable-instance integration run of that exact
-released version passed (none yet) · **not implemented** = Housekeeparr has
+released version passed (see *Integration runs* below) · **not implemented** = Housekeeparr has
 no code for this workflow · **unsupported** = refused by design.
 
 Probes report `tested` only for exact versions listed in an adapter's
