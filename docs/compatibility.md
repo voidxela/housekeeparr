@@ -8,8 +8,9 @@ no code for this workflow · **unsupported** = refused by design.
 
 Probes report `tested` only for exact versions listed in an adapter's
 `TestedVersions`; every other version reports `untested` and is still
-observed. **Tested means the observation workflow only** — no write workflow
-exists yet.
+observed. **Tested means the observation workflow only**, except where the
+workflow table and *Recovery workflow runs* below record a tested write
+workflow.
 
 ## Integration runs
 
@@ -31,6 +32,8 @@ exists yet.
 | 2026-11-15 (isolated, with the `errored` fixture: verified, stopped, payload deleted, started) | Linux aarch64, Go 1.27.4 | full matrix as above | all assertions passed; error-state semantics below |
 | 2026-11-15 (isolated, with the metadata/indexer stand-in and managed-row probes) | Linux aarch64, Go 1.27.4 | qBittorrent 5.3.0 + Transmission 4.0.6 + Deluge 2.2.0 + rTorrent 0.9.8 + Sonarr 4.0.20.3014 + Radarr 6.4.4.10685 (one run) | all observation tests, both unknown-row probes, and all four managed-row variants on each manager passed (managers' download client: qBittorrent 5.3.0) |
 | 2026-11-15 (same) | Linux aarch64, Go 1.27.4 | qBittorrent 4.6.7 + Transmission 4.1.4 + Sonarr 4.0.20.3014 + Radarr 6.4.4.10685 | all passed, including the managed-row variants with qBittorrent 4.6.7 as the managers' download client |
+| 2026-11-15 (with the recovery workflow tests) | Linux aarch64, Go 1.27.4 | qBittorrent 5.3.0 + Sonarr 4.0.20.3014 + Radarr 6.4.4.10685 | all passed, including both complete recovery workflows (see *Recovery workflow runs*) |
+| 2026-11-15 (same) | Linux aarch64, Go 1.27.4 | qBittorrent 4.6.7 + Sonarr 4.0.20.3014 + Radarr 6.4.4.10685 | all passed; recovery refused for unknown privacy as required |
 
 What the suite exercised (`scripts/it/run.sh`, `internal/integration`):
 session login; version probe; listing of complete, half-complete (after
@@ -164,13 +167,47 @@ itself reports as failed (the `removeFailedDownloads` path the managers use
 for automatic failed-download handling); completed and imported releases;
 season packs.
 
+## Recovery workflow runs
+
+`internal/integration/recovery_test.go` runs the complete no-progress
+recovery workflow through Housekeeparr's own planner (`action.Plan`),
+coordinator (`internal/action`), executor (`internal/workflow`), and
+adapters, on a fresh managed grab, with every flag explicit:
+
+1. `manager.queue.fail`: `DELETE /api/v3/queue/{id}?removeFromClient=false&blocklist=true&skipRedownload=false&changeCategory=false`,
+   verified by observation (queue row absent, a matching blocklist entry, a `downloadFailed` history event);
+2. `client.stop` retaining data, verified by listing (still registered, stopped).
+
+The test then verifies independently: the row stays absent after two
+`RefreshMonitoredDownloads`; exactly one new `downloadFailed` and no new
+grab; the torrent still registered, stopped, same category, payload
+byte-identical; the manager queued its own replacement search
+(`skipRedownload=false`, so Housekeeparr does not search); no lock left and
+a cooldown recorded. The stall diagnosis is supplied by the test (the
+90-minute window is covered by deterministic policy tests); everything else
+in the proposal comes from live reads.
+
+| Date | Versions | Result |
+| --- | --- | --- |
+| 2026-11-15 (first attempt) | Sonarr 4.0.20.3014, Radarr 6.4.4.10685, qBittorrent 5.3.0 | failed safely: the executor could not confirm the blocklist entry because released `BlocklistResource` (both managers) exposes **no infohash**; it reported a partial effect, the coordinator held the action as *uncertain* with its locks, and nothing was re-sent. Fixed by matching blocklist entries by exact source title, content (series/episode or movie), and time since dispatch, which is evidence rather than hash identity |
+| 2026-11-15 | Sonarr 4.0.20.3014 + qBittorrent 5.3.0; Radarr 6.4.4.10685 + qBittorrent 5.3.0 (isolated) | **passed**: every step verified, every independent check above held |
+| 2026-11-15 | Sonarr 4.0.20.3014 + qBittorrent 4.6.7; Radarr 6.4.4.10685 + qBittorrent 4.6.7 (isolated) | passed as a refusal: privacy unknown, the only blocker is "public transfer", nothing sent |
+
+These two combinations are registered in `action.Tested`; no other
+combination is eligible. qBittorrent 4.x does not report privacy, so
+recovery is refused there by the "public transfer" prerequisite (the test
+asserts this refusal). Not covered: engine-initiated (automatic) dispatch,
+which is not implemented; tracking of the replacement's search result, grab,
+and progress after the workflow; retained-data and capacity limits; other
+clients.
+
 ## Workflows by application
 
 | Application | Floor | Source evidence | Transport | Observation | No-progress recovery | Metadata recovery | Preserved-data failure handling | Partial-pack handling |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Sonarr | 4.0 | `v4.0.20.3014` | HTTP API v3, API key header | **tested: 4.0.20.3014**; others contract-tested | not implemented | not implemented | not implemented | not implemented |
-| Radarr | 5.0 | `v6.4.4.10685` | HTTP API v3, API key header | **tested: 6.4.4.10685** (unknown-movie queue items only); others contract-tested | not implemented | not implemented | not implemented | n/a (Sonarr-specific in v1) |
-| qBittorrent | 4.1 (WebUI API v2) | `release-4.6.7`, `release-5.3.0` | WebUI API v2, session cookie | **tested: 5.3.0, 4.6.7**; others contract-tested | not implemented | not implemented | not implemented | — |
+| Sonarr | 4.0 | `v4.0.20.3014` | HTTP API v3, API key header | **tested: 4.0.20.3014**; others contract-tested | **tested: 4.0.20.3014 with qBittorrent 5.3.0** (manual dispatch) | not implemented | not implemented | not implemented |
+| Radarr | 5.0 | `v6.4.4.10685` | HTTP API v3, API key header | **tested: 6.4.4.10685**; others contract-tested | **tested: 6.4.4.10685 with qBittorrent 5.3.0** (manual dispatch) | not implemented | not implemented | n/a (Sonarr-specific in v1) |
+| qBittorrent | 4.1 (WebUI API v2) | `release-4.6.7`, `release-5.3.0` | WebUI API v2, session cookie | **tested: 5.3.0, 4.6.7**; others contract-tested | **tested: 5.3.0** with Sonarr/Radarr above; 4.x refused (privacy unknown) | not implemented | not implemented | — |
 | Transmission | 2.80 (RPC 15) | `4.0.6`, `4.1.4` | legacy RPC (deprecated in 4.1, still supported throughout 4.x), session-id handshake, optional basic auth | **tested: 4.0.6, 4.1.4**; others contract-tested | not implemented | not implemented | not implemented | — |
 | Deluge | 2.0 | `deluge-2.0.0`, `deluge-2.1.1`, `deluge-2.2.0` | deluge-web JSON API (`/json`); daemon protocol unsupported | **tested: 2.2.0**; others contract-tested | not implemented | not implemented | not implemented | — |
 | rTorrent | 0.9.8 | `v0.9.8`, `v0.16.28` | XML-RPC over an HTTP(S) SCGI gateway (tested: lighttpd `mod_scgi`); raw SCGI unsupported | **tested: 0.9.8**; others contract-tested | not implemented | not implemented | not implemented | — |

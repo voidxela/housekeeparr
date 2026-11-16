@@ -72,9 +72,8 @@ testing decisions and implementation sequence.
 
 ## Milestone 2 — policy and durable action foundation (in progress)
 
-No adapter has a write method, and the registry of tested write workflows
-(`action.Tested`) is empty, so no operational write can happen. Everything
-below is exercised with fakes.
+The first write workflow exists (see milestone 3). Everything in this
+table is exercised with fakes, plus the real-instance recovery runs.
 
 | Area | Status | Notes |
 | --- | --- | --- |
@@ -85,8 +84,21 @@ below is exercised with fakes.
 | Action coordinator (`internal/action`) | done | Gate and prerequisites, preview expiry, pre-write re-fetch compared with the preview fingerprint, journaled dispatch, postcondition verification by observation, conservative error classification (only unauthorized/unsupported/rate-limited/4xx count as refused; a timeout or malformed 2xx response is uncertain), no blind retry, partial-workflow holds, graceful stop that persists the current step, startup `Reconcile` that observes but never re-sends, and operator `Review`. Fault tests: accepted-then-timed-out, timeout reconciled by observation, accepted-but-not-effective, partial failure, crash between network and commit, crash before dispatch, stop between steps, unwritable store, restored database, budget across restart, duplicate execution. |
 | Recovery planner (`action.Plan`) | done (fixture-tested) | Proposal for stalled, metadata-timeout, and client-error findings with every prerequisite stated: tested workflow for the exact versions, finding active, fresh evidence, qualified diagnosis, applicable state (never paused/queued/checking), known-public privacy, exactly one matched manager association, no lock, no cooldown, policy. Operations carry every flag explicitly, using the managed-row semantics recorded in compatibility.md (`removeFromClient=false&blocklist=true&skipRedownload=false&changeCategory=false`: the manager owns the replacement search), then a client stop that retains data. Budget limits (20/day global, 3/week per content item) are hard-coded proposals; making them configuration is *remaining*. |
 | Shared previews and manual actions | done | `housekeeparr preview <id> [--automatic] [--json]`, `act <id> --confirm`, `actions`, `review <id> --as … --note …`, `restore-ack --confirm`; web finding page shows the same preview, with an action form (confirmation required) only when eligible; `GET /api/v1/findings/{id}/preview`; Activity lists journaled actions and restore holds. `run` reports holds and actions that need review at start-up. Not yet reviewed in a real browser. |
-| Retention of terminal intents | remaining | Intents are never pruned yet (bounded only by how few can exist); add retention for succeeded/failed/cancelled intents beyond the audit window, never for uncertain or active ones. |
+| Retention of terminal intents | done | Succeeded/failed/cancelled intents, expired cooldowns, and old budget windows are pruned after the audit-event retention; uncertain and active intents and their locks never are, and pruning never lowers the restore high-water mark. |
 | Routing CLI mutations through a running worker | remaining | `act`, `review`, and `restore-ack` need the writer lock (exit 3 while the worker runs), like `ack`. |
+
+## Milestone 3 — recovery (in progress)
+
+| Area | Status | Notes |
+| --- | --- | --- |
+| Adapter writes: `RemoveQueueItem` (Sonarr/Radarr, all four flags always sent; timeout = uncertain), `Blocklisted`, `HistoryEvents`; qBittorrent `Stop` (`torrents/stop` on 5.x, `torrents/pause` on 4.x) | done | Contract tests plus real-instance runs. Released `BlocklistResource` has no infohash, so a blocklist entry is matched by exact source title, content id, and time since dispatch: evidence, not identity (two releases sharing a title in the same window would be indistinguishable). |
+| Recovery executor (`internal/workflow`) | done | Refuses implicit or destructive flags (`removeFromClient=true`, missing flags, a stop without explicit data retention) before any request; verifies each step by fresh reads with a bounded settle time. |
+| Complete no-progress recovery on real instances | **real-instance-tested** for Sonarr 4.0.20.3014 + qBittorrent 5.3.0 and Radarr 6.4.4.10685 + qBittorrent 5.3.0 | `internal/integration/recovery_test.go`; registered in `action.Tested`. Manual dispatch only (`act --confirm` or the web form), and only outside observe mode. The diagnosis is supplied in the test. qBittorrent 4.x is refused (privacy unknown), and the test asserts that. |
+| Automatic dispatch from the engine | remaining | Nothing invokes the coordinator automatically yet, even in `automatic` mode. |
+| Replacement outcome tracking (search accepted, grab, progress as separate outcomes) | remaining | The workflow verifies its own steps and that the manager queued a search; what follows is not tracked yet. |
+| Metadata recovery, preserved-data failure handling | remaining | Planner proposals exist; no tested workflow. Missing data on qBittorrent/Deluge is not visible in client state. |
+| Transmission, Deluge, rTorrent recovery | remaining | Needs each client's `Stop` and the managed-row probes with that client as the managers' download client (delegated harness work in progress). |
+| Retained-data and capacity limits | remaining | Recovery retains the stopped transfer; its size is not yet tracked against ceilings. |
 
 ## Remaining v1 scope (not started unless noted)
 
@@ -101,8 +113,9 @@ below is exercised with fakes.
 - Exclude from the interfaces (exclusions are configuration-only so far);
   configurable budgets; automatic dispatch from the engine (the coordinator
   exists; nothing invokes it automatically yet).
-- Stalled-grab recovery, metadata recovery, preserved-data failure handling —
-  each requires version-tested manager/client semantics first.
+- Stalled-grab recovery beyond the tested qBittorrent 5.3.0 combinations,
+  automatic dispatch, and outcome tracking; metadata recovery and
+  preserved-data failure handling (see milestone 3).
 - Sonarr partial season-pack handling (import history, coverage evidence,
   association clearing, targeted searches).
 - Bounded proactive missing searches, budgets, and search-coverage findings.
@@ -140,7 +153,7 @@ below is exercised with fakes.
 Observation is validated for qBittorrent 5.3.0 and 4.6.7, Transmission 4.0.6
 and 4.1.4, rTorrent 0.9.8 (lighttpd SCGI gateway), Deluge 2.2.0 (deluge-web), Sonarr
 4.0.20.3014, and Radarr 6.4.4.10685 (see [compatibility.md](compatibility.md)
-for exactly what was exercised). No write workflow exists for any application.
+for exactly what was exercised). No-progress recovery is tested only for Sonarr 4.0.20.3014 and Radarr 6.4.4.10685 with qBittorrent 5.3.0.
 
 ## Performance measurements
 
