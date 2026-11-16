@@ -41,6 +41,7 @@ workflow.
 | 2026-11-16 (after the R5 live-check rewrite, `ee3d164`) | Linux aarch64, Go 1.27.4 | qBittorrent 5.3.0 + Sonarr 4.0.20.3014 + Radarr 6.4.4.10685 (isolated) | observation and probe tests passed; both recovery workflows **refused safely** before any request: the new manager-health check treated `IndexerRssCheck` (error: "No indexers available with RSS sync enabled") as blocking. RSS is irrelevant to a search-based replacement; fixed in `2984479` |
 | 2026-11-16 (`2984479`) | Linux aarch64, Go 1.27.4 | same | all passed, including both recovery workflows with live per-write checks |
 | 2026-11-16 (`05b2afb`: content identity, attempt ledger, baseline verification) | Linux aarch64, Go 1.27.4 | same | all passed, including both recovery workflows |
+| 2026-11-16 (`d1d10f3`: retained records, outcome tracking, automatic dispatcher in the commit path) | Linux aarch64, Go 1.27.4 | same | all passed, including both recovery workflows |
 
 What the suite exercised (`scripts/it/run.sh`, `internal/integration`):
 session login; version probe; listing of complete, half-complete (after

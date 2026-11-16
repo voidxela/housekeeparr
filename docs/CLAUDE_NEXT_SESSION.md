@@ -6,12 +6,16 @@ Continue implementing Housekeeparr through the complete approved v1 scope in
 behavior. The earlier review `docs/reviews/2026-11-15.md` supplies background;
 its R1–R4 are fixed. Implement and verify concrete increments, not just plans.
 
-Checkpoint reviewed: `73d37d5` on `dev`, initially clean and locally committed.
-The new review/handoff and documentation corrections may be uncommitted: check
-status and preserve them. The policy/action foundation largely exists; one
-manual no-progress execution sequence passes recorded real-instance tests for
-Sonarr 4.0.20.3014 and Radarr 6.4.4.10685 with qBittorrent 5.3.0. This does not
-complete recovery across clients or SPEC §13.4's full acceptance scenario.
+Checkpoint: see `git log` on `dev` (session of 2026-11-16, after `73d37d5`).
+Review R5–R7 are fixed and recorded in `docs/STATUS.md` ("R5–R7 closure");
+the qBittorrent 5.3.0 + Sonarr/Radarr recovery runs pass on the changed
+executor. Since then the session added retained-transfer records and
+ceilings, replacement outcome tracking, data-preserving `Stop` for the other
+three clients (adapter + fixtures only), the generalised recovery integration
+test, and automatic dispatch with circuit breakers (simulated-application
+acceptance tests only). Read STATUS for exactly what is real-instance-tested,
+fixture-tested, and remaining. This still does not complete recovery across
+clients or SPEC §13.4 scenario 1 on real instances.
 
 ## Existing user authorization and constraints
 
@@ -62,57 +66,27 @@ do not turn a choice of defaults into a prolonged blocker for other work.
 
 ## Immediate work, in priority order
 
-1. **Fix review R5: live checks before each consequential step.** Current
-   Refetch ignores privacy/content changes and does not read monitoring or
-   relevant health; the coordinator calls it only before the first write.
-   Add fresh applicable safety checks, all affected ownership/scope checks,
-   monitoring/content and health/circuit-breaker evidence, policy/mode/stop
-   checks and decision-relevant version/capability checks. Check again before
-   each write. Step-aware checks must allow the expected effects of preceding
-   steps (e.g. intentional queue removal); simply repeating the initial
-   fingerprint would reject a valid second step. If progress/completion,
-   recheck, user pause or a conflicting association appears between fail and
-   stop, hold the partial workflow visibly rather than stopping blindly.
-   Start with failing deterministic regressions; see review reproduction.
-2. **Fix R6: real content identity.** QueueItemKey includes download ID and is
-   wrongly reused for content locks/budgets/overrides/exclusions. Replacement
-   releases for one episode/movie must share a stable manager+content key,
-   distinct from release attempt and physical transfer identity. Check all
-   content locks/cooldowns in preview and execution, including multi-item
-   scope. Preserve attempt history; add a forward migration/upgrade test if
-   durable schema/data changes are needed.
-3. **Close R7 and retry/verification gaps before automatic dispatch.** Make
-   budgets/cooldowns configurable, preview their actual remaining allowance,
-   explain exhaustion and next steps, persist attempts across replacements and
-   restarts, and distinguish pacing from per-item intervention. Define safe
-   reservation release for provably unsent requests. Verify current-action
-   blocklist/history evidence against a baseline, not old matching entries.
-   Audit accepted-but-not-yet-effective → failed → reusable idempotency key:
-   an observation timeout cannot establish that an accepted acquisition had
-   no effect. Keep partial, delayed and ambiguous outcomes held for review.
-4. **Extend no-progress recovery through the other clients.** Their
-   manager-client managed-row probes already passed: do not rebuild that
-   prerequisite from scratch. Implement/test data-preserving Stop and live
-   safety verification for Transmission (`torrent-stop`, both branches),
-   Deluge (`core.pause_torrent`), rTorrent (probe `d.stop`/`d.close` before
-   choosing). Extend `recovery_test.go` and the harness's required-test list:
-   it currently runs full recovery only for qBittorrent. Add registry entries
-   only with a passing recorded full workflow run; probing removal alone
-   does not establish recovery compatibility. Correct rTorrent stale-message
-   diagnosis before relying on it for preserved-data recovery; user pause
-   must never be mistaken for permission to act.
-5. **Complete a vertical automatic-recovery slice.** Add engine scheduling
-   through the shared planner/coordinator, bounded conflicting work and fair
-   selection, scoped circuit breakers, retained transfer records/capacity
-   gates, and post-action search/grab/progress outcomes. Gate dispatch on
-   these prerequisites. Use an injected clock for sustained engine diagnosis
-   through dispatch; do not wait 90 real minutes. Then prove the automatic
-   path with disposable instances without overstating supplied diagnosis.
+1. **Real-instance runs of the other clients' recovery.** The recovery
+   integration test now runs through `--manager-client` and is required. Run,
+   one at a time, `scripts/it/run.sh --clients deluge --manager-client deluge
+   --managers sonarr,radarr`, then rTorrent, then Transmission 4.0.6 and
+   4.1.4. Inspect each failure before changing code. Probe rTorrent `d.stop`
+   versus `d.close` (registration, files, state mapping, stale `d.message`)
+   before relying on it; user pause must never be mistaken for permission.
+   Add `action.Tested` entries only for recorded passing runs, and record
+   every run in compatibility.md.
+2. **Real-instance automatic path.** Drive `DispatchAutomatic` against
+   disposable instances (diagnosis may be supplied by writing a qualified
+   assessment, stated as such); do not overstate a supplied diagnosis.
+3. **Recovery remainder:** search acceptance from manager command history as
+   its own outcome; metadata recovery and preserved-data failure workflows;
+   a web view and reset control for attempts (CLI exists; retained transfers are on Activity); a separate
+   per-workflow pause control; status/notification of deferrals.
+4. Then continue the remaining v1 scope below (partial packs, searches and
+   coverage, notifications, remote web/auth, packaging/security/performance).
 
-Delegate independent adapter implementations or bounded regression/config
-work while retaining ownership of shared coordinator/identity changes. Avoid
-multiple delegates editing the same core files. Integrate small completed
-slices and review each diff; don't wait for a large combined rewrite.
+Numeric limits remain proposals (`[automation.limits]`); see the budget
+concern section. Exhausted attempts need `housekeeparr attempts reset`.
 
 ## Review recommendations on Claude's five decisions
 
