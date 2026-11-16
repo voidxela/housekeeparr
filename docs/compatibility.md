@@ -141,8 +141,11 @@ possibly stale.
 
 ### rTorrent hash-check race
 
-The `b8d3313` failure of `errored-recheck` was reproduced and explained with
-standalone disposable rTorrent 0.9.8 instances (loopback-only namespace):
+The `b8d3313` failure of `errored-recheck` was not re-triggered: every
+standalone, harness-shaped attempt (disposable rTorrent 0.9.8, loopback-only
+namespace, with and without CPU contention) reported the expected error. A
+mechanism with exactly the failure signature was demonstrated instead, on a
+256 MiB synthetic payload whose hash check is slow enough to interleave with:
 rTorrent opens a download's files only while it hashes them (none are open
 while the check is merely queued). A payload deleted **during** a running
 hash check is still read through the open descriptor, the check passes, and
@@ -156,9 +159,9 @@ The fixture now waits (bounded, early exit) until every download is loaded
 and idle before saving and before deleting, and requires the forced check
 to fail, so a missed window fails the setup loudly instead of producing a
 misleading adapter result. Product consequence: on rTorrent too,
-"complete" can briefly coexist with deleted data (until the descriptor is
-closed), so the preserved-data limitation below applies to all four clients
-in some window.
+"complete" can coexist with deleted data if the deletion races a hash check
+(until the descriptor is closed). This has not been examined for
+Transmission.
 
 libtorrent-based clients do not notice missing payload until they read it,
 so a "complete" state is not evidence that the data still exists.
