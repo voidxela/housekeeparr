@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -42,7 +43,7 @@ func TestForwardMigrationPreservesV1State(t *testing.T) {
 	}
 	defer s.Close()
 	var ver string
-	if err := s.r.QueryRow("SELECT value FROM meta WHERE key='schema_version'").Scan(&ver); err != nil || ver != "2" {
+	if err := s.r.QueryRow("SELECT value FROM meta WHERE key='schema_version'").Scan(&ver); err != nil || ver != strconv.Itoa(SchemaVersion()) {
 		t.Fatalf("schema version %q %v", ver, err)
 	}
 	if s.InstanceID() != "abc123" {
