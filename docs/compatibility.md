@@ -34,6 +34,10 @@ workflow.
 | 2026-11-15 (same) | Linux aarch64, Go 1.27.4 | qBittorrent 4.6.7 + Transmission 4.1.4 + Sonarr 4.0.20.3014 + Radarr 6.4.4.10685 | all passed, including the managed-row variants with qBittorrent 4.6.7 as the managers' download client |
 | 2026-11-15 (with the recovery workflow tests) | Linux aarch64, Go 1.27.4 | qBittorrent 5.3.0 + Sonarr 4.0.20.3014 + Radarr 6.4.4.10685 | all passed, including both complete recovery workflows (see *Recovery workflow runs*) |
 | 2026-11-15 (same) | Linux aarch64, Go 1.27.4 | qBittorrent 4.6.7 + Sonarr 4.0.20.3014 + Radarr 6.4.4.10685 | all passed; recovery refused for unknown privacy as required |
+| 2026-11-15 (with restart/recheck missing-data fixtures, rTorrent `d.message` probe, `--manager-client`; harness extension by a delegated agent, reruns by Claude) | Linux aarch64, Go 1.27.4 | all four clients (qBittorrent 5.3.0, Transmission 4.0.6, Deluge 2.2.0, rTorrent 0.9.8) + Sonarr + Radarr | all passed |
+| 2026-11-15 (same) | Linux aarch64, Go 1.27.4 | qBittorrent 4.6.7 + Transmission 4.1.4 + Sonarr + Radarr | all passed |
+| 2026-11-15 (same) | Linux aarch64, Go 1.27.4 | managers' download client Transmission 4.0.6; Transmission 4.1.4; Deluge 2.2.0 | all passed, including all four managed-row variants on each manager |
+| 2026-11-15 (same) | Linux aarch64, Go 1.27.4 | managers' download client rTorrent 0.9.8 | first run: one failure, Radarr's replacement search for `skipRedownload=false` was not yet queued when checked (test took 510 s against about 82 s normally, host under load); rerun: all passed. The check now polls up to 60 s for the expected search (that change itself not yet exercised by a run) |
 
 What the suite exercised (`scripts/it/run.sh`, `internal/integration`):
 session login; version probe; listing of complete, half-complete (after
@@ -77,9 +81,7 @@ Observed corrections applied: qBittorrent reports availability 0 (not −1) for
 stopped torrents and torrents without metadata, so the adapter now treats
 availability as unknown outside active downloading.
 
-Not exercised: qBittorrent `error`/`missingFiles` and Deluge `Error` states
-(never observed: payload deletion without a restart left both complete; see
-below), missing files after a client restart or forced recheck, queueing,
+Not exercised: the qBittorrent `error` state (distinct from `missingFiles`), queueing,
 checking states as stable observations, real peers or swarm counts, v2/hybrid
 torrents, authentication bypass, reverse-proxy base paths, TLS, large
 libraries, import completion, and manager correlation with any client other
@@ -97,6 +99,34 @@ deleted, and was started again (no peers; no restart of the client):
 | rTorrent 0.9.8 | stopped by rTorrent, `d.message` "Download registered as completed, but hash check returned unfinished chunks.", completed bytes reset to 0 | client error (since this run; previously misread as a user pause) |
 | qBittorrent 5.3.0, 4.6.7 | still `stalledUP` (complete) | complete |
 | Deluge 2.2.0 | still `Seeding` | complete |
+
+Missing data after a client restart, and after a forced recheck (fixtures
+`errored-restart`: verified, client stopped cleanly, payload deleted,
+client restarted; `errored-recheck`: verified, payload deleted while
+running, recheck forced):
+
+| Client | after restart | after forced recheck |
+| --- | --- | --- |
+| qBittorrent 5.3.0, 4.6.7 | `missingFiles` → client error (verified 0) | `stalledDL` → **downloading**, verified 0, no error |
+| Transmission 4.0.6, 4.1.4 | `error = 3` → client error | `error = 3` → client error |
+| Deluge 2.2.0 | `Error` "Missing or invalid torrent data!" → client error | `Downloading`, verified 0, no error |
+| rTorrent 0.9.8 | stopped with local message → client error | stopped with local message → client error |
+
+So on the libtorrent clients, lost data surfaces as an error only after a
+restart; a recheck turns it into what looks like a fresh download from zero.
+Deluge must have persisted its fastresume state (wait for `Seeding` before
+the restart), or the restarted daemon does not notice the loss.
+
+rTorrent `d.message` (fixture `rt-msg-probe`): a user `d.stop`/`d.start` or
+`d.close`/`d.open` does **not** clear a local message rTorrent set when it
+stopped a download itself; only a later tracker announce (active download)
+or a successful recheck overwrites it. A healthy torrent stopped by the user
+keeps an empty message. Consequence for the adapter's mapping (stopped +
+non-tracker message = client error): a user-stopped torrent that still
+carries a stale local message is reported as a client error, and after
+`d.start` with `d.state=1` but inactive it is reported as paused while the
+stale message remains. Diagnosis must treat rTorrent local messages as
+possibly stale.
 
 libtorrent-based clients do not notice missing payload until they read it,
 so a "complete" state is not evidence that the data still exists. Missing
@@ -161,8 +191,16 @@ Interpretation:
 - `skipRedownload` decides which component owns the replacement search.
   Housekeeparr must send `true` whenever it schedules the search itself.
 
-Not exercised yet: these variants with Transmission, Deluge, or rTorrent as
-the managers' download client; `changeCategory=true`; a download the client
+With Transmission 4.0.6/4.1.4, Deluge 2.2.0 (Label plugin enabled for
+categories), and rTorrent 0.9.8 (`d.custom1` label) as the managers'
+download client (`scripts/it/run.sh --manager-client …`), all four variants
+behaved identically: durable removal, the same blocklist and history
+effects, the same `skipRedownload` search ownership, torrent and payload
+preserved. Transmission does not hash pre-existing partial files on
+`torrent-add`, so there the synthetic grabs settled as complete
+(`importPending` in the manager) rather than downloading.
+
+Not exercised yet: `changeCategory=true`; a download the client
 itself reports as failed (the `removeFailedDownloads` path the managers use
 for automatic failed-download handling); completed and imported releases;
 season packs.
@@ -223,7 +261,7 @@ clients.
 | Privacy | 5.0+ (`private`); unsupported on 4.x | `isPrivate` | `private` (unknown without metadata) | `d.is_private` |
 | Metadata state | `metaDL` / `forcedMetaDL` | `metadataPercentComplete` | `num_pieces = 0` | `d.is_meta` |
 | Swarm counts | tracker-reported | not collected (only with tracker URLs) | tracker-reported | not collected |
-| Client error state | `error`, `missingFiles` (mapping not yet observed on a real instance) | `error = 3` (local; observed) | `Error` (mapping not yet observed) | none structured; a download stopped by rTorrent with a non-tracker `d.message` is a client error (observed) |
+| Client error state | `missingFiles` (observed after a restart); `error` not yet observed | `error = 3` (local; observed) | `Error` (observed after a restart) | none structured; a download stopped by rTorrent with a non-tracker `d.message` is a client error (observed) |
 | Added time | `added_on` | `addedDate` | `time_added` | `d.load_date` (may reset on restart) |
 
 

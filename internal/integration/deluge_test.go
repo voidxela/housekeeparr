@@ -81,6 +81,19 @@ func TestDelugeReleasedBehaviour(t *testing.T) {
 			if tr.StateClass != domain.StateComplete {
 				t.Errorf("errored: %s (%s); released behaviour differs from the recorded semantics", tr.StateClass, tr.NativeState)
 			}
+		case "errored-restart":
+			// Verified Seeding torrent whose payload is deleted while deluged is
+			// stopped cleanly: on restart fastresume is rejected and Deluge
+			// reports Error ("Missing or invalid torrent data!").
+			if tr.StateClass != domain.StateError || tr.ClientMessage.Value == "" {
+				t.Errorf("errored-restart: %s (%s) message %q, want StateError", tr.StateClass, tr.NativeState, tr.ClientMessage.Value)
+			}
+		case "errored-recheck":
+			// Forced recheck while running after payload deletion resets progress
+			// to 0 and leaves Deluge in Downloading with no error; do not assert error.
+			if tr.StateClass != domain.StateDownloading || tr.VerifiedBytes.Value != 0 {
+				t.Errorf("errored-recheck: %s (%s) verified=%v, expected Downloading/0", tr.StateClass, tr.NativeState, tr.VerifiedBytes)
+			}
 		case "magnet":
 			if tr.StateClass != domain.StateMetadata || tr.WantedBytes.IsKnown() || tr.Private.IsKnown() {
 				t.Errorf("magnet: %s (%s) wanted %v private %v", tr.StateClass, tr.NativeState, tr.WantedBytes, tr.Private)

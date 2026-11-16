@@ -141,6 +141,14 @@ table is exercised with fakes, plus the real-instance recovery runs.
   (ignore and blocklist paths, every flag explicit), but the row is tracked
   again after the next refresh and nothing is blocklisted. Recovery must verify
   the outcome after a refresh, and such rows are ineligible.
+- **After a forced recheck, lost data looks like a fresh download on
+  qBittorrent and Deluge** (verified bytes 0, no error state); only a client
+  restart produces `missingFiles`/`Error`. Preserved-data handling and the
+  stall diagnosis must not treat a post-recheck reset to zero as an ordinary
+  new download.
+- **rTorrent local messages can be stale**: user stop/start does not clear
+  them, so the stopped-with-local-message → client-error mapping can
+  misreport a user-stopped torrent.
 - **"Complete" does not prove the data exists on qBittorrent or Deluge.** After
   the payload of a verified torrent was deleted, both kept reporting it
   complete/seeding; Transmission and rTorrent reported errors. Preserved-data

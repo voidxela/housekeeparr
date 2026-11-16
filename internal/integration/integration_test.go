@@ -169,6 +169,20 @@ func TestQBittorrentReleasedBehaviour(t *testing.T) {
 			if tr.StateClass != domain.StateComplete {
 				t.Errorf("errored: %s (%s); released behaviour differs from the recorded semantics", tr.StateClass, tr.NativeState)
 			}
+		case "errored-restart":
+			// Payload deleted while qBittorrent was stopped cleanly, then restarted.
+			// Observed on 5.3.0 and 4.6.7: missingFiles -> StateError, verified=0.
+			if tr.StateClass != domain.StateError {
+				t.Errorf("errored-restart: got state %s (%s), want error", tr.StateClass, tr.NativeState)
+			}
+		case "errored-recheck":
+			// Payload deleted while running, then forced recheck (/api/v2/torrents/recheck).
+			// Observed on 5.3.0 and 4.6.7: stalledDL -> StateDownloading with verified=0
+			// (no error exposed); do not assert StateError.
+			if tr.StateClass != domain.StateDownloading || !tr.VerifiedBytes.IsKnown() || tr.VerifiedBytes.Value != 0 {
+				t.Errorf("errored-recheck: got state %s (%s) verified=%v, want downloading with verified=0",
+					tr.StateClass, tr.NativeState, tr.VerifiedBytes)
+			}
 		case "magnet":
 			if tr.StateClass != domain.StateMetadata || tr.WantedBytes.IsKnown() || tr.Availability.IsKnown() {
 				t.Errorf("magnet: %s wanted %v availability %v", tr.StateClass, tr.WantedBytes, tr.Availability)
@@ -286,6 +300,7 @@ func TestSonarrReleasedBehaviour(t *testing.T) {
 func TestEngineCorrelatesRealInstances(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
+	dcMap, clientBlock := managerTOMLConfig(t)
 	cfgSrc := `version = 1
 [polling]
 jitter = "0s"
@@ -293,13 +308,7 @@ jitter = "0s"
 id = "sonarr"
 url = "` + env(t, "HK_IT_SONARR_URL") + `"
 api_key = "env:HK_IT_SONARR_KEY"
-download_clients = { "qBittorrent" = "qbit" }
-[[qbittorrent]]
-id = "qbit"
-url = "` + env(t, "HK_IT_QBT_URL") + `"
-username = "admin"
-password = "env:HK_IT_QBT_PASS"
-`
+` + dcMap + "\n" + clientBlock
 	cfg, _, err := config.Parse([]byte(cfgSrc), filepath.Join(dir, "h.toml"))
 	if err != nil {
 		t.Fatal(err)

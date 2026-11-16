@@ -7,15 +7,14 @@
 # contacted), and runs the Go integration tests against them. Everything is
 # removed on exit.
 #
-# Usage: scripts/it/run.sh [--clients LIST] [--managers LIST] [--qbt 5.3.0|4.6.7]
-#                          [--tr 4.0.6|4.1.4] [--capture] [--keep]
-#   --clients   comma-separated: qbittorrent,transmission,deluge,rtorrent (default qbittorrent)
-#   --managers  comma-separated: sonarr,radarr, or none (default sonarr)
-#               Managers use qBittorrent as their download client, so they
-#               require qbittorrent in --clients.
-#   --capture   write sanitized raw responses to testdata/captured/ for review
-#   --keep      keep the work directory for debugging
-#   --no-netns  do not isolate the run in a loopback-only network namespace
+# Usage: scripts/it/run.sh [--clients LIST] [--managers LIST] [--manager-client CLIENT]
+#                          [--qbt 5.3.0|4.6.7] [--tr 4.0.6|4.1.4] [--capture] [--keep]
+#   --clients         comma-separated: qbittorrent,transmission,deluge,rtorrent (default qbittorrent)
+#   --managers        comma-separated: sonarr,radarr, or none (default sonarr)
+#   --manager-client  qbittorrent|transmission|deluge|rtorrent (default qbittorrent; must be in --clients)
+#   --capture         write sanitized raw responses to testdata/captured/ for review
+#   --keep            keep the work directory for debugging
+#   --no-netns        do not isolate the run in a loopback-only network namespace
 #
 # Every selected application's tests must report PASS; a skipped test fails
 # the run, so a missing environment variable can never be recorded as a pass.
@@ -35,6 +34,7 @@ SONARR_VERSION=4.0.20.3014
 RADARR_VERSION=6.4.4.10685
 CLIENTS=qbittorrent
 MANAGERS=sonarr
+MANAGER_CLIENT=qbittorrent
 CAPTURE=0
 KEEP=0
 NETNS=1
@@ -43,6 +43,7 @@ while [ $# -gt 0 ]; do
 	case "$1" in
 	--clients) CLIENTS="$2"; shift 2 ;;
 	--managers) MANAGERS="$2"; shift 2 ;;
+	--manager-client) MANAGER_CLIENT="$2"; shift 2 ;;
 	--qbt) QBT_VERSION="$2"; shift 2 ;;
 	--tr) TR_VERSION="$2"; shift 2 ;;
 	--capture) CAPTURE=1; shift ;;
@@ -52,9 +53,13 @@ while [ $# -gt 0 ]; do
 	esac
 done
 [ "$MANAGERS" = none ] && MANAGERS=""
+case "$MANAGER_CLIENT" in
+qbittorrent|transmission|deluge|rtorrent) ;;
+*) echo "unknown --manager-client: $MANAGER_CLIENT" >&2; exit 2 ;;
+esac
 has() { case ",$1," in *",$2,"*) return 0 ;; esac; return 1; }
-if [ -n "$MANAGERS" ] && ! has "$CLIENTS" qbittorrent; then
-	echo "managers use qBittorrent as their download client; add qbittorrent to --clients or pass --managers none" >&2; exit 2
+if [ -n "$MANAGERS" ] && ! has "$CLIENTS" "$MANAGER_CLIENT"; then
+	echo "manager client $MANAGER_CLIENT must be included in --clients (or pass --managers none)" >&2; exit 2
 fi
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
@@ -228,7 +233,8 @@ EOF
 	local args=(--profile="$WORK/qbt" --webui-port="$QBT_PORT")
 	case "$QBT_VERSION" in 5.*) args+=(--confirm-legal-notice) ;; esac
 	"$QBT_BIN" "${args[@]}" > "$WORK/qbt.log" 2>&1 &
-	PIDS+=($!); LOGS+=("$WORK/qbt.log")
+	local qbt_pid=$!
+	PIDS+=("$qbt_pid"); LOGS+=("$WORK/qbt.log")
 	QBT="http://127.0.0.1:$QBT_PORT"
 	waitfor "$QBT/api/v2/app/version" 60
 
@@ -236,10 +242,14 @@ EOF
 	local jar="$WORK/qbt.cookies"
 	curl -fsS -c "$jar" -H "Referer: $QBT" --data-urlencode "username=admin" --data-urlencode "password=$QBT_PASS" "$QBT/api/v2/auth/login" >/dev/null
 	python3 -I - "$WORK/torrents/manifest.json" "$WORK/torrents" "$QBT" "$jar" "$save" <<'PY'
-import json, subprocess, sys, time
+import json, os, subprocess, sys, time
 manifest, tdir, qbt, jar, save = sys.argv[1:]
 def curl(*a):
     return subprocess.run(["curl", "-fsS", "-b", jar, "-H", "Referer: " + qbt, *a], check=True, capture_output=True, text=True).stdout
+def act(h, *eps):
+    for ep in eps:  # 5.x renamed pause/resume to stop/start
+        try: curl("--data", "hashes=" + h, qbt + "/api/v2/torrents/" + ep); return
+        except subprocess.CalledProcessError: pass
 for t in json.load(open(manifest)):
     cat = "movies-radarr" if t.get("manager") == "radarr" else "tv-sonarr"
     common = ["-F", "category=" + cat, "-F", "savepath=" + save]
@@ -255,25 +265,55 @@ for t in json.load(open(manifest)):
     if t.get("data", "none") != "none":  # verify any torrent with local data
         curl("--data", "hashes=" + t["hash"], qbt + "/api/v2/torrents/recheck")
     if t["key"] == "stopped":
-        for ep in ("stop", "pause"):  # 5.x renamed pause to stop
-            try: curl("--data", "hashes=" + t["hash"], qbt + "/api/v2/torrents/" + ep); break
-            except subprocess.CalledProcessError: pass
-time.sleep(5)
-import os
+        act(t["hash"], "stop", "pause")
+full_hashes = {t["hash"] for t in json.load(open(manifest)) if t.get("data") == "full"}
+deadline = time.time() + 30
+while time.time() < deadline:
+    rows = json.loads(curl(qbt + "/api/v2/torrents/info"))
+    states = {r["hash"]: r["state"] for r in rows}
+    if all(h in states and not states[h].startswith("checking") for h in full_hashes):
+        break
+    time.sleep(0.5)
+time.sleep(1)
+PY
+	kill -TERM "$qbt_pid" 2>/dev/null || true
+	wait "$qbt_pid" 2>/dev/null || true
+	python3 -I - "$WORK/torrents/manifest.json" "$save" <<'PY'
+import json, os, sys
+manifest, save = sys.argv[1:]
 for t in json.load(open(manifest)):
-    if t["key"] != "errored":
-        continue
-    def act(*eps):
-        for ep in eps:  # 5.x renamed pause/resume to stop/start
-            try: curl("--data", "hashes=" + t["hash"], qbt + "/api/v2/torrents/" + ep); return
-            except subprocess.CalledProcessError: pass
-    act("stop", "pause")
-    time.sleep(1)
-    os.remove(os.path.join(save, t["name"]))
-    act("start", "resume")
+    if t["key"] == "errored-restart":
+        os.remove(os.path.join(save, t["name"]))
+PY
+	"$QBT_BIN" "${args[@]}" >> "$WORK/qbt.log" 2>&1 &
+	PIDS+=($!)
+	waitfor "$QBT/api/v2/app/version" 60
+	curl -fsS -c "$jar" -H "Referer: $QBT" --data-urlencode "username=admin" --data-urlencode "password=$QBT_PASS" "$QBT/api/v2/auth/login" >/dev/null
+	python3 -I - "$WORK/torrents/manifest.json" "$QBT" "$jar" "$save" <<'PY'
+import json, os, subprocess, sys, time
+manifest, qbt, jar, save = sys.argv[1:]
+def curl(*a):
+    return subprocess.run(["curl", "-fsS", "-b", jar, "-H", "Referer: " + qbt, *a], check=True, capture_output=True, text=True).stdout
+def act(h, *eps):
+    for ep in eps:  # 5.x renamed pause/resume to stop/start
+        try: curl("--data", "hashes=" + h, qbt + "/api/v2/torrents/" + ep); return
+        except subprocess.CalledProcessError: pass
+for t in json.load(open(manifest)):
+    if t["key"] == "errored-restart":
+        rows = json.loads(curl(qbt + "/api/v2/torrents/info?hashes=" + t["hash"]))
+        if rows and rows[0].get("state", "").startswith(("stopped", "paused")):
+            act(t["hash"], "start", "resume")
+    elif t["key"] == "errored":
+        act(t["hash"], "stop", "pause")
+        time.sleep(1)
+        os.remove(os.path.join(save, t["name"]))
+        act(t["hash"], "start", "resume")
+    elif t["key"] == "errored-recheck":
+        os.remove(os.path.join(save, t["name"]))
+        curl("--data", "hashes=" + t["hash"], qbt + "/api/v2/torrents/recheck")
 time.sleep(5)
 PY
-	export HK_IT_QBT_URL="$QBT" HK_IT_QBT_USER=admin HK_IT_QBT_PASS="$QBT_PASS" HK_IT_QBT_VERSION="$QBT_VERSION"
+	export HK_IT_QBT_URL="$QBT" HK_IT_QBT_USER=admin HK_IT_QBT_PASS="$QBT_PASS" HK_IT_QBT_VERSION="$QBT_VERSION" HK_IT_QBT_SAVE="$save"
 	TESTS+=(TestQBittorrentReleasedBehaviour)
 }
 
@@ -282,7 +322,9 @@ start_transmission() {
 	local bin; bin=$("$HERE/build-transmission.sh" "$TR_VERSION")
 	local port bt pass save cfg
 	port=$(freeport); bt=$(freeport); pass=$(secret); save=$(payload tr-downloads); cfg="$WORK/tr-config"
-	mkdir -p "$cfg"
+	mkdir -p "$cfg" "$save/tv-sonarr" "$save/movies-radarr"
+	cp -a "$WORK/downloads/." "$save/tv-sonarr/"
+	cp -a "$WORK/downloads/." "$save/movies-radarr/"
 	# Plain rpc-password is hashed by the daemon on first start.
 	cat > "$cfg/settings.json" <<EOF
 {"rpc-enabled": true, "rpc-bind-address": "127.0.0.1", "rpc-port": $port,
@@ -295,11 +337,27 @@ start_transmission() {
  "download-queue-enabled": false, "seed-queue-enabled": false, "message-level": 2}
 EOF
 	"$bin" -f -g "$cfg" > "$WORK/tr.log" 2>&1 &
-	PIDS+=($!); LOGS+=("$WORK/tr.log")
+	local tr_pid=$!
+	PIDS+=("$tr_pid"); LOGS+=("$WORK/tr.log")
 	TR="http://127.0.0.1:$port"
+	TR_PORT="$port"; TR_PASS="$pass"
 	waitfor "$TR/transmission/rpc" 60
 	python3 -I "$HERE/setup_clients.py" transmission "$TR/transmission/rpc" admin "$pass" "$WORK/torrents/manifest.json" "$WORK/torrents" "$save"
-	export HK_IT_TR_URL="$TR" HK_IT_TR_USER=admin HK_IT_TR_PASS="$pass" HK_IT_TR_VERSION="$TR_VERSION"
+	kill -TERM "$tr_pid" 2>/dev/null || true
+	wait "$tr_pid" 2>/dev/null || true
+	python3 -I - "$WORK/torrents/manifest.json" "$save" <<'PY'
+import json, os, sys
+manifest, save = sys.argv[1:]
+for t in json.load(open(manifest)):
+    if t["key"] == "errored-restart":
+        cat = "movies-radarr" if t.get("manager") == "radarr" else "tv-sonarr"
+        os.remove(os.path.join(save, cat, t["name"]))
+PY
+	"$bin" -f -g "$cfg" >> "$WORK/tr.log" 2>&1 &
+	PIDS+=($!)
+	waitfor "$TR/transmission/rpc" 60
+	python3 -I "$HERE/setup_clients.py" transmission-post-restart "$TR/transmission/rpc" admin "$pass" "$WORK/torrents/manifest.json" "$save"
+	export HK_IT_TR_URL="$TR" HK_IT_TR_USER=admin HK_IT_TR_PASS="$pass" HK_IT_TR_VERSION="$TR_VERSION" HK_IT_TR_SAVE="$save"
 	TESTS+=(TestTransmissionReleasedBehaviour)
 }
 
@@ -324,7 +382,8 @@ trackers.use_udp.set = no
 system.daemon.set = true
 EOF
 	HOME="$WORK/rt-home" LD_LIBRARY_PATH="$lib" "$root/usr/bin/rtorrent" -n -o "import=$WORK/rtorrent.rc" > "$WORK/rtorrent.log" 2>&1 &
-	PIDS+=($!); LOGS+=("$WORK/rtorrent.log")
+	local rt_pid=$!
+	PIDS+=("$rt_pid"); LOGS+=("$WORK/rtorrent.log")
 	printf 'admin:%s\n' "$pass" > "$WORK/lighttpd-users"
 	cat > "$WORK/lighttpd.conf" <<EOF
 server.document-root = "$WORK/lighttpd-root"
@@ -342,7 +401,21 @@ EOF
 	for _ in $(seq 1 30); do python3 -c "import socket; socket.create_connection(('127.0.0.1', $scgi), 1)" 2>/dev/null && break; sleep 1; done
 	waitfor "http://127.0.0.1:$http/RPC2" 30
 	python3 -I "$HERE/setup_clients.py" rtorrent "$scgi" "$WORK/torrents/manifest.json" "$WORK/torrents" "$save"
-	export HK_IT_RT_URL="http://127.0.0.1:$http" HK_IT_RT_USER=admin HK_IT_RT_PASS="$pass" HK_IT_RT_VERSION=0.9.8
+	kill -TERM "$rt_pid" 2>/dev/null || true
+	wait "$rt_pid" 2>/dev/null || true
+	python3 -I - "$WORK/torrents/manifest.json" "$save" <<'PY'
+import json, os, sys
+manifest, save = sys.argv[1:]
+for t in json.load(open(manifest)):
+    if t["key"] == "errored-restart":
+        os.remove(os.path.join(save, t["name"]))
+PY
+	HOME="$WORK/rt-home" LD_LIBRARY_PATH="$lib" "$root/usr/bin/rtorrent" -n -o "import=$WORK/rtorrent.rc" >> "$WORK/rtorrent.log" 2>&1 &
+	PIDS+=($!)
+	for _ in $(seq 1 30); do python3 -c "import socket; socket.create_connection(('127.0.0.1', $scgi), 1)" 2>/dev/null && break; sleep 1; done
+	python3 -I "$HERE/setup_clients.py" rtorrent-post-restart "$scgi" "$WORK/torrents/manifest.json" "$save"
+	RT_HTTP_PORT="$http"; RT_PASS="$pass"
+	export HK_IT_RT_URL="http://127.0.0.1:$http" HK_IT_RT_USER=admin HK_IT_RT_PASS="$pass" HK_IT_RT_VERSION=0.9.8 HK_IT_RT_SAVE="$save"
 	TESTS+=(TestRTorrentReleasedBehaviour)
 }
 
@@ -362,19 +435,35 @@ start_deluge() {
 	printf '{"file": 1, "format": 1}{"dht": false, "upnp": false, "natpmp": false, "lsd": false, "utpex": false,
  "random_port": false, "listen_ports": [%s, %s], "listen_interface": "127.0.0.1", "download_location": "%s",
  "move_completed": false, "new_release_check": false, "max_active_limit": -1, "max_active_downloading": -1,
- "max_active_seeding": -1, "allow_remote": false}' "$bt" "$bt" "$save" > "$cfg/core.conf"
+ "max_active_seeding": -1, "allow_remote": false, "enabled_plugins": ["Label"]}' "$bt" "$bt" "$save" > "$cfg/core.conf"
 	salt=$(python3 -c 'import secrets; print(secrets.token_hex(16))')
 	printf '{"file": 1, "format": 1}{"pwd_salt": "%s", "pwd_sha1": "%s", "first_login": false, "default_daemon": "", "https": false, "interface": "127.0.0.1", "port": %s}' \
 		"$salt" "$(printf '%s%s' "$salt" "$wpass" | sha1sum | cut -d' ' -f1)" "$web" > "$cfg/web.conf"
 	local env=(PYTHONPATH="$root/usr/lib/python3/dist-packages" LD_LIBRARY_PATH="$root/usr/lib/$(uname -m)-linux-gnu" HOME="$WORK")
 	env "${env[@]}" python3 "$root/usr/bin/deluged" -d -c "$cfg" -u 127.0.0.1 -p "$daemon" -i 127.0.0.1 -L info -l "$WORK/deluged.log" > "$WORK/deluged.out" 2>&1 &
-	PIDS+=($!); LOGS+=("$WORK/deluged.log" "$WORK/deluged.out")
+	local deluged_pid=$!
+	PIDS+=("$deluged_pid"); LOGS+=("$WORK/deluged.log" "$WORK/deluged.out")
 	for _ in $(seq 1 60); do python3 -c "import socket; socket.create_connection(('127.0.0.1', $daemon), 1)" 2>/dev/null && break; sleep 1; done
 	env "${env[@]}" python3 "$root/usr/bin/deluge-web" -d -c "$cfg" -i 127.0.0.1 -p "$web" -L info -l "$WORK/deluge-web.log" > "$WORK/deluge-web.out" 2>&1 &
 	PIDS+=($!); LOGS+=("$WORK/deluge-web.log" "$WORK/deluge-web.out")
 	waitfor "http://127.0.0.1:$web/" 60
 	python3 -I "$HERE/setup_clients.py" deluge "http://127.0.0.1:$web" "$wpass" "$daemon" admin "$dpass" "$WORK/torrents/manifest.json" "$WORK/torrents" "$save"
-	export HK_IT_DELUGE_URL="http://127.0.0.1:$web" HK_IT_DELUGE_PASS="$wpass" HK_IT_DELUGE_VERSION=2.2.0
+	kill -TERM "$deluged_pid" 2>/dev/null || true
+	wait "$deluged_pid" 2>/dev/null || true
+	python3 -I - "$WORK/torrents/manifest.json" "$save" <<'PY'
+import json, os, sys
+manifest, save = sys.argv[1:]
+for t in json.load(open(manifest)):
+    if t["key"] == "errored-restart":
+        os.remove(os.path.join(save, t["name"]))
+PY
+	env "${env[@]}" python3 "$root/usr/bin/deluged" -d -c "$cfg" -u 127.0.0.1 -p "$daemon" -i 127.0.0.1 -L info -l "$WORK/deluged.log" >> "$WORK/deluged.out" 2>&1 &
+	PIDS+=($!)
+	for _ in $(seq 1 60); do python3 -c "import socket; socket.create_connection(('127.0.0.1', $daemon), 1)" 2>/dev/null && break; sleep 1; done
+	python3 -I "$HERE/setup_clients.py" deluge-post-restart "http://127.0.0.1:$web" "$wpass" "$daemon" admin "$dpass" "$WORK/torrents/manifest.json" "$save"
+	DELUGE_WEB_PORT="$web"; DELUGE_PASS="$wpass"
+	export HK_IT_DELUGE_URL="http://127.0.0.1:$web" HK_IT_DELUGE_PASS="$wpass" HK_IT_DELUGE_VERSION=2.2.0 HK_IT_DELUGE_SAVE="$save"
+	if [ -f "$WORK/deluge-label.ok" ]; then export HK_IT_DELUGE_LABEL=1; fi
 	TESTS+=(TestDelugeReleasedBehaviour)
 }
 
@@ -413,12 +502,50 @@ EOF
 	waitfor "$url/api/v3/system/status?apikey=$key" 180
 	local catfield=tvCategory cat=tv-sonarr
 	if [ "$app" = radarr ]; then catfield=movieCategory; cat=movies-radarr; fi
-	curl -fsS -H "X-Api-Key: $key" -H "Content-Type: application/json" "$url/api/v3/downloadclient?forceSave=true" -d @- >/dev/null <<EOF
+	local dc_payload
+	case "$MANAGER_CLIENT" in
+	qbittorrent)
+		dc_payload=$(cat <<EOF
 {"enable": true, "protocol": "torrent", "priority": 1, "name": "qBittorrent", "implementation": "QBittorrent",
  "configContract": "QBittorrentSettings", "removeCompletedDownloads": false, "removeFailedDownloads": false, "tags": [],
  "fields": [{"name": "host", "value": "127.0.0.1"}, {"name": "port", "value": $QBT_PORT}, {"name": "useSsl", "value": false},
             {"name": "username", "value": "admin"}, {"name": "password", "value": "$QBT_PASS"}, {"name": "$catfield", "value": "$cat"}]}
 EOF
+)
+		;;
+	transmission)
+		dc_payload=$(cat <<EOF
+{"enable": true, "protocol": "torrent", "priority": 1, "name": "Transmission", "implementation": "Transmission",
+ "configContract": "TransmissionSettings", "removeCompletedDownloads": false, "removeFailedDownloads": false, "tags": [],
+ "fields": [{"name": "host", "value": "127.0.0.1"}, {"name": "port", "value": $TR_PORT}, {"name": "useSsl", "value": false},
+            {"name": "urlBase", "value": "/transmission/"}, {"name": "username", "value": "admin"}, {"name": "password", "value": "$TR_PASS"},
+            {"name": "$catfield", "value": "$cat"}]}
+EOF
+)
+		;;
+	deluge)
+		local deluge_cat=""
+		if [ -f "$WORK/deluge-label.ok" ]; then deluge_cat="$cat"; fi
+		dc_payload=$(cat <<EOF
+{"enable": true, "protocol": "torrent", "priority": 1, "name": "Deluge", "implementation": "Deluge",
+ "configContract": "DelugeSettings", "removeCompletedDownloads": false, "removeFailedDownloads": false, "tags": [],
+ "fields": [{"name": "host", "value": "127.0.0.1"}, {"name": "port", "value": $DELUGE_WEB_PORT}, {"name": "useSsl", "value": false},
+            {"name": "urlBase", "value": ""}, {"name": "password", "value": "$DELUGE_PASS"}, {"name": "$catfield", "value": "$deluge_cat"}]}
+EOF
+)
+		;;
+	rtorrent)
+		dc_payload=$(cat <<EOF
+{"enable": true, "protocol": "torrent", "priority": 1, "name": "rTorrent", "implementation": "RTorrent",
+ "configContract": "RTorrentSettings", "removeCompletedDownloads": false, "removeFailedDownloads": false, "tags": [],
+ "fields": [{"name": "host", "value": "127.0.0.1"}, {"name": "port", "value": $RT_HTTP_PORT}, {"name": "useSsl", "value": false},
+            {"name": "urlBase", "value": "RPC2"}, {"name": "username", "value": "admin"}, {"name": "password", "value": "$RT_PASS"},
+            {"name": "$catfield", "value": "$cat"}]}
+EOF
+)
+		;;
+	esac
+	curl -fsS -H "X-Api-Key: $key" -H "Content-Type: application/json" "$url/api/v3/downloadclient?forceSave=true" -d "$dc_payload" >/dev/null
 	curl -fsS -H "X-Api-Key: $key" -H "Content-Type: application/json" "$url/api/v3/command" -d '{"name": "RefreshMonitoredDownloads"}' >/dev/null
 	eval "${3}=\$url"; eval "${4}=\$key"
 }
@@ -428,7 +555,11 @@ start_sonarr() {
 	export HK_IT_SONARR_URL="$SONARR" HK_IT_SONARR_KEY="$SONARR_KEY" HK_IT_SONARR_VERSION="$SONARR_VERSION"
 	TESTS+=(TestSonarrReleasedBehaviour TestEngineCorrelatesRealInstances)
 	PROBES+=(TestSonarrQueueRemovalSemantics)
-	if [ "$STANDIN" = 1 ]; then MANAGED_PROBES+=(TestSonarrManagedRemovalSemantics TestSonarrRecoveryWorkflow); fi
+	if [ "$STANDIN" = 1 ]; then
+		MANAGED_PROBES+=(TestSonarrManagedRemovalSemantics)
+		# The recovery workflow is implemented for qBittorrent only.
+		if [ "$MANAGER_CLIENT" = qbittorrent ]; then MANAGED_PROBES+=(TestSonarrRecoveryWorkflow); fi
+	fi
 }
 
 start_radarr() {
@@ -436,7 +567,11 @@ start_radarr() {
 	export HK_IT_RADARR_URL="$RADARR" HK_IT_RADARR_KEY="$RADARR_KEY" HK_IT_RADARR_VERSION="$RADARR_VERSION"
 	TESTS+=(TestRadarrReleasedBehaviour TestEngineCorrelatesRadarr)
 	PROBES+=(TestRadarrQueueRemovalSemantics)
-	if [ "$STANDIN" = 1 ]; then MANAGED_PROBES+=(TestRadarrManagedRemovalSemantics TestRadarrRecoveryWorkflow); fi
+	if [ "$STANDIN" = 1 ]; then
+		MANAGED_PROBES+=(TestRadarrManagedRemovalSemantics)
+		# The recovery workflow is implemented for qBittorrent only.
+		if [ "$MANAGER_CLIENT" = qbittorrent ]; then MANAGED_PROBES+=(TestRadarrRecoveryWorkflow); fi
+	fi
 }
 
 for c in ${CLIENTS//,/ }; do
@@ -449,6 +584,7 @@ for c in ${CLIENTS//,/ }; do
 	esac
 done
 if [ -n "$MANAGERS" ]; then
+	export HK_IT_MANAGER_CLIENT="$MANAGER_CLIENT"
 	if [ -n "${HK_IT_IN_NETNS:-}" ]; then start_standin; else echo "managed-content probes need the network namespace; skipped with --no-netns" >&2; fi
 fi
 for m in ${MANAGERS//,/ }; do

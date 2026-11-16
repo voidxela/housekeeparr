@@ -67,6 +67,13 @@ def main(out, save):
     # Verified, then stopped, payload deleted, and started again by the
     # harness, so the client reports its native missing-data error.
     add("errored", "Example.Show.S03E01.1080p.WEB.h264-HKIT", [("Example.Show.S03E01.1080p.WEB.h264-HKIT", 2 * MB)], "error", data="full")
+    # Verified, client stopped cleanly, payload deleted, client restarted with
+    # same config/session, and torrent started if stopped.
+    add("errored-restart", "Example.Show.S03E02.1080p.WEB.h264-HKIT", [("Example.Show.S03E02.1080p.WEB.h264-HKIT", 2 * MB)], "error", data="full")
+    # Verified, payload deleted while running, then force-rechecked.
+    add("errored-recheck", "Example.Show.S03E03.1080p.WEB.h264-HKIT", [("Example.Show.S03E03.1080p.WEB.h264-HKIT", 2 * MB)], "error", data="full")
+    # Dedicated fixture for probing rTorrent d.message across stop/start.
+    add("rt-msg-probe", "Example.Show.S03E04.1080p.WEB.h264-HKIT", [("Example.Show.S03E04.1080p.WEB.h264-HKIT", 2 * MB)], "complete", data="full")
     # A movie for Radarr (qBittorrent category movies-radarr); data never arrives.
     add("movie", "Example.Movie.2024.1080p.WEB.h264-HKIT", [("Example.Movie.2024.1080p.WEB.h264-HKIT.mkv", 2 * MB)], "downloading", manager="radarr", data="half")
     add("movie2", "Another.Movie.2023.1080p.WEB.h264-HKIT", [("Another.Movie.2023.1080p.WEB.h264-HKIT.mkv", 2 * MB)], "downloading", manager="radarr", data="half")

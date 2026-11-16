@@ -24,6 +24,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/voidxela/housekeeparr/internal/adapter"
+	"github.com/voidxela/housekeeparr/internal/adapter/deluge"
+	"github.com/voidxela/housekeeparr/internal/adapter/rtorrent"
+	"github.com/voidxela/housekeeparr/internal/adapter/transmission"
 	"github.com/voidxela/housekeeparr/internal/domain"
 )
 
@@ -156,11 +160,120 @@ func (a arrAPI) history(hash string) []string {
 	return out
 }
 
-// payloadDigest hashes every payload file of a torrent in the qBittorrent
-// save directory; a missing file is recorded as such.
+func managerClientKind() string {
+	if k := os.Getenv("HK_IT_MANAGER_CLIENT"); k != "" {
+		return k
+	}
+	return "qbittorrent"
+}
+
+func expectedManagerClientName() string {
+	switch managerClientKind() {
+	case "transmission":
+		return "Transmission"
+	case "deluge":
+		return "Deluge"
+	case "rtorrent":
+		return "rTorrent"
+	default:
+		return "qBittorrent"
+	}
+}
+
+func managerClient(t *testing.T) adapter.DownloadClient {
+	t.Helper()
+	switch managerClientKind() {
+	case "qbittorrent":
+		return qbit(t)
+	case "transmission":
+		c, err := transmission.New(transmission.Options{ID: "tr", BaseURL: env(t, "HK_IT_TR_URL"), Username: env(t, "HK_IT_TR_USER"), Password: env(t, "HK_IT_TR_PASS"), Timeout: 10 * time.Second})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	case "deluge":
+		c, err := deluge.New(deluge.Options{ID: "deluge", BaseURL: env(t, "HK_IT_DELUGE_URL"), Password: env(t, "HK_IT_DELUGE_PASS"), Timeout: 10 * time.Second})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	case "rtorrent":
+		c, err := rtorrent.New(rtorrent.Options{ID: "rt", BaseURL: env(t, "HK_IT_RT_URL"), Username: env(t, "HK_IT_RT_USER"), Password: env(t, "HK_IT_RT_PASS"), Timeout: 10 * time.Second})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	default:
+		t.Fatalf("unsupported HK_IT_MANAGER_CLIENT %q", managerClientKind())
+		return nil
+	}
+}
+
+func managerTOMLConfig(t *testing.T) (string, string) {
+	t.Helper()
+	switch managerClientKind() {
+	case "qbittorrent":
+		return `download_clients = { "qBittorrent" = "qbit" }`, `[[qbittorrent]]
+id = "qbit"
+url = "` + env(t, "HK_IT_QBT_URL") + `"
+username = "admin"
+password = "env:HK_IT_QBT_PASS"
+`
+	case "transmission":
+		return `download_clients = { "Transmission" = "tr" }`, `[[transmission]]
+id = "tr"
+url = "` + env(t, "HK_IT_TR_URL") + `"
+username = "admin"
+password = "env:HK_IT_TR_PASS"
+`
+	case "deluge":
+		return `download_clients = { "Deluge" = "deluge" }`, `[[deluge]]
+id = "deluge"
+url = "` + env(t, "HK_IT_DELUGE_URL") + `"
+password = "env:HK_IT_DELUGE_PASS"
+`
+	case "rtorrent":
+		return `download_clients = { "rTorrent" = "rt" }`, `[[rtorrent]]
+id = "rt"
+url = "` + env(t, "HK_IT_RT_URL") + `"
+username = "admin"
+password = "env:HK_IT_RT_PASS"
+`
+	default:
+		t.Fatalf("unsupported HK_IT_MANAGER_CLIENT %q", managerClientKind())
+		return "", ""
+	}
+}
+
+func managerPayloadDir(t *testing.T, e entry) string {
+	t.Helper()
+	switch managerClientKind() {
+	case "qbittorrent":
+		if d := os.Getenv("HK_IT_QBT_SAVE"); d != "" {
+			return d
+		}
+		return filepath.Join(env(t, "HK_IT_WORK"), "qbt-downloads")
+	case "transmission":
+		cat := "tv-sonarr"
+		if e.Manager == "radarr" {
+			cat = "movies-radarr"
+		}
+		return filepath.Join(env(t, "HK_IT_TR_SAVE"), cat)
+	case "deluge":
+		return env(t, "HK_IT_DELUGE_SAVE")
+	case "rtorrent":
+		return env(t, "HK_IT_RT_SAVE")
+	default:
+		t.Fatalf("unsupported HK_IT_MANAGER_CLIENT %q", managerClientKind())
+		return ""
+	}
+}
+
+// payloadDigest hashes every payload file of a torrent in the configured
+// manager download client's save directory; a missing file is recorded as such.
 func payloadDigest(t *testing.T, e entry) string {
 	t.Helper()
-	dir := filepath.Join(env(t, "HK_IT_WORK"), "qbt-downloads")
+	dir := managerPayloadDir(t, e)
 	var parts []string
 	paths := []string{filepath.Join(dir, e.Name)}
 	if len(e.Files) > 0 && !(len(e.Files) == 1 && e.Files[0] == e.Name) {
@@ -184,9 +297,10 @@ func payloadDigest(t *testing.T, e entry) string {
 
 func clientState(t *testing.T, hash string) (domain.Transfer, bool) {
 	t.Helper()
-	snap, err := qbit(t).ListTransfers(context.Background())
+	c := managerClient(t)
+	snap, err := c.ListTransfers(context.Background())
 	if err != nil || !snap.Complete {
-		t.Fatalf("qBittorrent listing: %v", err)
+		t.Fatalf("%s listing: %v", expectedManagerClientName(), err)
 	}
 	for _, tr := range snap.Transfers {
 		if tr.NativeID == hash {

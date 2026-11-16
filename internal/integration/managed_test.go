@@ -53,7 +53,11 @@ func managedManifest(t *testing.T) map[string]managedEntry {
 }
 
 func (e managedEntry) asEntry() entry {
-	return entry{Key: e.Key, Name: e.Name, Hash: e.Hash, Files: e.Files}
+	mgr := ""
+	if e.Managed.Kind == "movie" {
+		mgr = "radarr"
+	}
+	return entry{Key: e.Key, Name: e.Name, Hash: e.Hash, Manager: mgr, Files: e.Files}
 }
 
 func (a arrAPI) mustJSON(method, path string, q url.Values, body, out any) {
@@ -417,6 +421,15 @@ func probeManagedRemoval(t *testing.T, a arrAPI, me managedEntry, v managedVaria
 	bl := a.blocklist()
 	hist := a.history(e.Hash)
 	searches := a.searchesSince(start)
+	// The manager queues its replacement search asynchronously after the
+	// failure event; on a loaded host that can take longer than the two
+	// refreshes above (observed once with Radarr 6.4.4 + rTorrent 0.9.8).
+	if v.flags.Get("skipRedownload") == "false" {
+		for deadline := time.Now().Add(60 * time.Second); len(searches) == 0 && time.Now().Before(deadline); {
+			time.Sleep(2 * time.Second)
+			searches = a.searchesSince(start)
+		}
+	}
 	t.Logf("%s: row gone immediately=%v; after RefreshMonitoredDownloads %v row ever present=%v; blocklist %v → %v; history %v → %v; searches queued %+v",
 		e.Key, gone, refreshes, present, blBefore, bl, histBefore, hist, searches)
 	t.Logf("%s: client before %s/%s cat=%q, after present=%v %s/%s cat=%q; payload %s", e.Key, before.NativeState, before.VerifiedBytes,

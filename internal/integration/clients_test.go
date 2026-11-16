@@ -128,11 +128,12 @@ func TestTransmissionReleasedBehaviour(t *testing.T) {
 			if tr.StateClass != domain.StatePaused || tr.Availability.IsKnown() {
 				t.Errorf("stopped: %s (%s) availability %v", tr.StateClass, tr.NativeState, tr.Availability)
 			}
-		case "errored":
-			// Payload deleted after verification, then started: Transmission
-			// reports a local error (error = 3) with an explanation.
+		case "errored", "errored-restart", "errored-recheck":
+			// Payload deleted after verification (then started, client
+			// restarted, or force-rechecked): Transmission reports a local
+			// error (error = 3) with an explanation.
 			if tr.StateClass != domain.StateError || tr.ClientMessage.Value == "" {
-				t.Errorf("errored: %s (%s) message %q, want a local error", tr.StateClass, tr.NativeState, tr.ClientMessage.Value)
+				t.Errorf("%s: %s (%s) message %q, want a local error", key, tr.StateClass, tr.NativeState, tr.ClientMessage.Value)
 			}
 		case "magnet":
 			if tr.StateClass != domain.StateMetadata || tr.WantedBytes.IsKnown() || tr.Private.IsKnown() || tr.Availability.IsKnown() {

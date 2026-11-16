@@ -20,7 +20,7 @@ Continue implementing Housekeeparr through the complete approved v1 scope in `do
 
 ## Next
 
-1. Review and merge the `agy/harness` worktree if present (managers with Transmission/Deluge/rTorrent as download client, missing data after restart/recheck, rTorrent `d.message` on stop/start). Check `git -C ../hk-agy-harness diff` and its final report in the session scratchpad; rerun the combinations yourself before committing; then remove the worktree.
+1. ~~Merge the delegated harness extension~~ done: `--manager-client`, restart/recheck missing-data fixtures, rTorrent `d.message` probe (findings in compatibility.md and STATUS). Run the `--manager-client rtorrent` combination once more to exercise the new 60 s search poll.
 2. Extend the recovery workflow to the other clients: each needs a `Stop` that retains data and its own probe-backed semantics (Transmission `torrent-stop`, Deluge `core.pause_torrent`, rTorrent `d.stop`/`d.close`), and the managed-row probes with that client as the managers' download client. Register `action.Tested` entries only with a passing recorded run.
 3. Automatic dispatch from the engine (plan → coordinator for `OriginAutomatic`, at most one in flight, honouring budgets), post-action outcome tracking (search accepted, grab, progress as separate outcomes), configurable budgets, retention of terminal intents, metadata recovery and preserved-data workflows (qBittorrent/Deluge cannot rely on client state for missing data).
 

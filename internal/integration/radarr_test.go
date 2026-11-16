@@ -6,6 +6,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -69,13 +70,17 @@ func TestRadarrReleasedBehaviour(t *testing.T) {
 			it.QueueID, it.DownloadID, it.TrackedState, it.TrackedStatus, it.DownloadClient, it.ContentKind, it.Title, it.StatusMessages)
 		if it.DownloadID == movie.Hash {
 			matched++
-			if it.DownloadClient != "qBittorrent" || it.Protocol != "torrent" {
-				t.Errorf("movie row: client %q protocol %q", it.DownloadClient, it.Protocol)
+			if it.DownloadClient != expectedManagerClientName() || it.Protocol != "torrent" {
+				t.Errorf("movie row: client %q (want %q) protocol %q", it.DownloadClient, expectedManagerClientName(), it.Protocol)
 			}
 		}
 		for k, e := range m {
 			if e.Manager != "radarr" && it.DownloadID == e.Hash {
-				t.Errorf("Radarr lists %s from the Sonarr category", k)
+				if managerClientKind() == "deluge" && os.Getenv("HK_IT_DELUGE_LABEL") == "" {
+					t.Logf("Radarr lists %s (expected when Deluge Label plugin is unavailable and category is empty)", k)
+				} else {
+					t.Errorf("Radarr lists %s from the Sonarr category", k)
+				}
 			}
 		}
 	}
@@ -87,6 +92,7 @@ func TestRadarrReleasedBehaviour(t *testing.T) {
 func TestEngineCorrelatesRadarr(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
+	dcMap, clientBlock := managerTOMLConfig(t)
 	cfgSrc := `version = 1
 [polling]
 jitter = "0s"
@@ -94,13 +100,7 @@ jitter = "0s"
 id = "radarr"
 url = "` + env(t, "HK_IT_RADARR_URL") + `"
 api_key = "env:HK_IT_RADARR_KEY"
-download_clients = { "qBittorrent" = "qbit" }
-[[qbittorrent]]
-id = "qbit"
-url = "` + env(t, "HK_IT_QBT_URL") + `"
-username = "admin"
-password = "env:HK_IT_QBT_PASS"
-`
+` + dcMap + "\n" + clientBlock
 	cfg, _, err := config.Parse([]byte(cfgSrc), filepath.Join(dir, "h.toml"))
 	if err != nil {
 		t.Fatal(err)
