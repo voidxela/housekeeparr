@@ -482,7 +482,10 @@ func (s *Service) Download(ctx context.Context, clientID, nativeID string) (*Dow
 	if d.Observations, err = s.st.Observations(ctx, clientID, nativeID, s.now().Add(-48*time.Hour), 300); err != nil {
 		return nil, err
 	}
-	if eff, err := s.cfg.EffectivePolicy(clientID); err == nil {
+	// The transfer's own effective policy (rules and overrides included),
+	// exactly what its diagnosis and any action use.
+	latest := t.Latest
+	if eff, _, err := s.cfg.ResolveTransfer(policy.TransferSubject(clientID, nativeID, &latest, presentAssociations(queue))); err == nil {
 		d.Policy = eff
 	} else {
 		d.Policy, _ = s.cfg.EffectivePolicy("")

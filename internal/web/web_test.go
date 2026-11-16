@@ -16,6 +16,7 @@ import (
 	"github.com/voidxela/housekeeparr/internal/app"
 	"github.com/voidxela/housekeeparr/internal/demo"
 	"github.com/voidxela/housekeeparr/internal/domain"
+	"github.com/voidxela/housekeeparr/internal/store"
 )
 
 type env struct {
@@ -245,5 +246,46 @@ func TestFindingPageShowsActionPreviewAndActRefuses(t *testing.T) {
 	var pv app.ActionPreview
 	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &pv) != nil || pv.Proposal == nil || pv.Proposal.Origin != "automatic" || pv.Proposal.Eligible() {
 		t.Fatalf("preview API: %d %s", w.Code, w.Body.String())
+	}
+}
+
+// Activity shows the replacement search and the replacement grab of a
+// recovery as separate outcomes, with their notes.
+func TestActivityShowsSearchAndGrabOutcomesSeparately(t *testing.T) {
+	e := setup(t)
+	now := e.d.Clock.Now()
+	var id int64
+	if err := e.d.Store.Write(context.Background(), func(tx *store.Tx) error {
+		var err error
+		id, err = tx.CreateIntent(store.Intent{Key: "web-outcome", Workflow: "no_progress_recovery", Origin: "automatic",
+			Explanation: "recovery for the render test"}, now)
+		if err != nil {
+			return err
+		}
+		if err := tx.SetIntentState(id, store.IntentExecuting, "", now); err != nil {
+			return err
+		}
+		if err := tx.SetIntentState(id, store.IntentSucceeded, "every step verified", now); err != nil {
+			return err
+		}
+		if err := tx.CreateOutcome(store.RecoveryOutcome{IntentID: id, ManagerID: "sonarr", Content: []string{"episode:1"}, OldDownloadID: "aa",
+			StartedAt: now, Search: store.SearchOutcome{Since: &now}}); err != nil {
+			return err
+		}
+		cmd := int64(45)
+		return tx.SaveSearchOutcome(id, store.SearchOutcome{State: store.SearchCompleted, Since: &now, CommandID: &cmd, Name: "EpisodeSearch",
+			Note: "the manager's EpisodeSearch (command 45) for this content completed. A completed search is not a grab"})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	w := e.get(t, "/activity")
+	body := w.Body.String()
+	if w.Code != 200 || strings.Contains(body, "<no value>") {
+		t.Fatalf("status %d\n%s", w.Code, body)
+	}
+	for _, want := range []string{"Replacement search:", "completed", "command 45", "A completed search is not a grab", "Replacement grab:", "awaiting_grab"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("activity page lacks %q", want)
+		}
 	}
 }
