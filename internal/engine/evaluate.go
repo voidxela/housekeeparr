@@ -28,11 +28,10 @@ func maxDuration(ds ...time.Duration) time.Duration {
 func TransferScope(clientID string) string { return "transfer:" + clientID + "|" }
 
 func (e *Engine) evaluateClient(tx *store.Tx, snap domain.TransferSnapshot, gone []store.GoneTransfer, now time.Time) (findings.Result, error) {
-	eff, err := e.cfg.EffectivePolicy(snap.ClientID)
+	clientEff, err := e.cfg.EffectivePolicy(snap.ClientID)
 	if err != nil {
 		return findings.Result{}, err
 	}
-	s := eff.Settings
 	meta := e.conns.Meta[snap.ClientID]
 	// Only incomplete transfers are evaluated, so only they are loaded.
 	recs, err := tx.Transfers(store.TransferFilter{ClientID: snap.ClientID, PresentOnly: true})
@@ -43,12 +42,12 @@ func (e *Engine) evaluateClient(tx *store.Tx, snap domain.TransferSnapshot, gone
 	for _, r := range recs {
 		byID[r.NativeID] = r
 	}
-	lookback := 2*maxDuration(s.NoProgressWindow, s.NearCompleteWindow, s.MetadataTimeout) + s.NewDownloadGrace + s.MaxObservationGap
+	scoped := e.cfg.ScopedSettings()
 	scope := TransferScope(snap.ClientID)
 	ev := findings.Evaluation{Scope: scope, Keep: map[string]bool{}}
 	reasons := map[string]string{} // dedup key → verified resolution reason
 	listed := map[string]bool{}
-	next := now.Add(s.PollInterval)
+	next := now.Add(clientEff.Settings.PollInterval)
 	// Load active findings and correlated queue rows once, not per transfer.
 	activeList, err := tx.ActiveFindingsWithPrefix(scope)
 	if err != nil {
@@ -79,6 +78,23 @@ func (e *Engine) evaluateClient(tx *store.Tx, snap domain.TransferSnapshot, gone
 			continue
 		}
 		rec := byID[t.NativeID]
+		queue := queueByTransfer[t.NativeID]
+		// Diagnosis uses the transfer's own effective policy: scoped rules
+		// and item overrides (a longer window for a rare release, say) apply
+		// to the diagnosis exactly as they do to the action planner.
+		eff, s := clientEff, clientEff.Settings
+		if scoped {
+			var assoc []policy.Association
+			for _, q := range queue {
+				assoc = append(assoc, policy.Association{ManagerID: q.ManagerID, Item: q.Latest})
+			}
+			t := t
+			if eff, _, err = e.cfg.ResolveTransfer(policy.TransferSubject(snap.ClientID, t.NativeID, &t, assoc)); err != nil {
+				return findings.Result{}, err
+			}
+			s = eff.Settings
+		}
+		lookback := 2*maxDuration(s.NoProgressWindow, s.NearCompleteWindow, s.MetadataTimeout) + s.NewDownloadGrace + s.MaxObservationGap
 		obs, err := tx.Observations(snap.ClientID, t.NativeID, now.Add(-lookback), 5000)
 		if err != nil {
 			return findings.Result{}, err
@@ -96,7 +112,6 @@ func (e *Engine) evaluateClient(tx *store.Tx, snap domain.TransferSnapshot, gone
 		if err := tx.SetAssessment(snap.ClientID, t.NativeID, a, now); err != nil {
 			return findings.Result{}, err
 		}
-		queue := queueByTransfer[t.NativeID]
 		active := func(kind string) (*domain.Finding, error) { return activeByKey[base+kind], nil }
 		carry := func(f *domain.Finding, o transferOutcome) {
 			d := carryDraft(*f, o, a.EvidenceAt, &next)

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+
+	"github.com/voidxela/housekeeparr/internal/domain"
 )
 
 // Workflow names an individually-permissioned automation workflow.
@@ -53,6 +55,41 @@ type Subject struct {
 	ManagerID  string `json:"manager_id,omitempty"`
 	ContentKey string `json:"content_key,omitempty"`
 	Privacy    string `json:"privacy,omitempty"` // public, private, unknown, or ""
+}
+
+// Association is one present manager queue row related to a transfer.
+type Association struct {
+	ManagerID string
+	Item      domain.QueueItem
+}
+
+// TransferSubject is the policy subject of a transfer: its client and
+// native ID, category and privacy when known (privacy "unknown" otherwise),
+// and, when exactly one manager association is present, that manager's
+// content identity (not the release, so overrides and exclusions follow the
+// episode or movie across replacement attempts). Diagnosis and action
+// planning both resolve this subject, so scoped rules and item overrides
+// apply identically to the diagnosis windows and to the action.
+func TransferSubject(clientID, nativeID string, t *domain.Transfer, present []Association) Subject {
+	sub := Subject{ClientID: clientID, NativeID: nativeID}
+	if t != nil {
+		if c, ok := t.Category.Get(); ok {
+			sub.Category = c
+		}
+		switch p, ok := t.Private.Get(); {
+		case !ok:
+			sub.Privacy = "unknown"
+		case p:
+			sub.Privacy = "private"
+		default:
+			sub.Privacy = "public"
+		}
+	}
+	if len(present) == 1 {
+		sub.ManagerID = present[0].ManagerID
+		sub.ContentKey, _ = present[0].Item.ContentKey()
+	}
+	return sub
 }
 
 // WorkflowPermission records whether automation is enabled for one workflow

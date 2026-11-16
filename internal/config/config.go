@@ -1098,6 +1098,39 @@ func (c *Config) Resolve(sub policy.Subject) (policy.Effective, error) {
 	return eff, nil
 }
 
+// ResolveTransfer resolves the effective policy for a transfer subject
+// (see policy.TransferSubject), dropping references to connections that are
+// no longer configured: a removed manager resolves without its content
+// scope, a removed client without any scope. It returns the subject that was
+// resolved, for the action gate to re-resolve before every write.
+func (c *Config) ResolveTransfer(sub policy.Subject) (policy.Effective, policy.Subject, error) {
+	if sub.ManagerID != "" && !c.HasManager(sub.ManagerID) {
+		sub.ManagerID, sub.ContentKey = "", ""
+	}
+	if sub.ClientID != "" && !c.HasClient(sub.ClientID) {
+		sub = policy.Subject{}
+	}
+	eff, err := c.Resolve(sub)
+	return eff, sub, err
+}
+
+// ScopedSettings reports whether any rule or item override changes
+// diagnosis settings, so that diagnosis must resolve each transfer's own
+// subject rather than its client's policy.
+func (c *Config) ScopedSettings() bool {
+	for _, r := range c.Rules {
+		if r.Policy != (PolicyOverrides{}) {
+			return true
+		}
+	}
+	for _, o := range c.Overrides {
+		if o.Policy != (PolicyOverrides{}) {
+			return true
+		}
+	}
+	return false
+}
+
 // HasManager reports whether a manager connection with id is configured.
 func (c *Config) HasManager(id string) bool { return c.hasManager(id) }
 

@@ -76,7 +76,6 @@ func (s *Service) Preview(ctx context.Context, findingID int64, origin action.Or
 	}
 	in := action.PlanInput{Finding: *f, Origin: origin, PollInterval: s.cfg.Polling.Interval.Duration,
 		ConfigRevision: s.cfg.Revision, Tested: action.Tested, Now: s.now(), Limits: s.cfg.Limits()}
-	sub := policy.Subject{ClientID: f.Subject.ClientID, NativeID: f.Subject.NativeID}
 	if f.Subject.ClientID != "" && f.Subject.NativeID != "" {
 		if in.Transfer, err = s.st.Transfer(ctx, f.Subject.ClientID, f.Subject.NativeID); err != nil {
 			return nil, err
@@ -85,34 +84,14 @@ func (s *Service) Preview(ctx context.Context, findingID int64, origin action.Or
 			return nil, err
 		}
 	}
+	var latest *domain.Transfer
 	if in.Transfer != nil {
-		if c, ok := in.Transfer.Latest.Category.Get(); ok {
-			sub.Category = c
-		}
-		switch p, ok := in.Transfer.Latest.Private.Get(); {
-		case !ok:
-			sub.Privacy = "unknown"
-		case p:
-			sub.Privacy = "private"
-		default:
-			sub.Privacy = "public"
-		}
+		latest = &in.Transfer.Latest
 	}
+	sub := policy.TransferSubject(f.Subject.ClientID, f.Subject.NativeID, latest, presentAssociations(in.Queue))
 	conns, err := s.st.Connections(ctx)
 	if err != nil {
 		return nil, err
-	}
-	var present []store.QueueRecord
-	for _, q := range in.Queue {
-		if q.Present {
-			present = append(present, q)
-		}
-	}
-	if len(present) == 1 {
-		// Content identity, not the release: overrides and exclusions
-		// follow the episode or movie across replacement attempts.
-		sub.ManagerID = present[0].ManagerID
-		sub.ContentKey, _ = present[0].Latest.ContentKey()
 	}
 	for _, c := range conns {
 		c := c
@@ -123,17 +102,9 @@ func (s *Service) Preview(ctx context.Context, findingID int64, origin action.Or
 			in.ManagerKind, in.ManagerProbe = adapter.Kind(c.Kind), c.Probe
 		}
 	}
-	if sub.ManagerID != "" && !s.cfg.HasManager(sub.ManagerID) {
-		// A manager removed from configuration: resolve without it.
-		sub.ManagerID, sub.ContentKey = "", ""
-	}
-	if sub.ClientID != "" && !s.cfg.HasClient(sub.ClientID) {
-		sub = policy.Subject{}
-	}
-	if in.Policy, err = s.cfg.Resolve(sub); err != nil {
+	if in.Policy, in.Scope, err = s.cfg.ResolveTransfer(sub); err != nil {
 		return nil, err
 	}
-	in.Scope = sub
 	out.Policy = in.Policy
 	in.Owners = s.cfg.ManagersFor(f.Subject.ClientID)
 	if in.Retained, err = s.st.RetainedUsage(ctx); err != nil {
@@ -316,3 +287,14 @@ func (s *Service) Retained(ctx context.Context, all bool) ([]store.RetainedTrans
 
 // Limits returns the effective acquisition and retention limits.
 func (s *Service) Limits() policy.Limits { return s.cfg.Limits() }
+
+// presentAssociations returns the present queue rows as policy associations.
+func presentAssociations(rows []store.QueueRecord) []policy.Association {
+	var out []policy.Association
+	for _, q := range rows {
+		if q.Present {
+			out = append(out, policy.Association{ManagerID: q.ManagerID, Item: q.Latest})
+		}
+	}
+	return out
+}
