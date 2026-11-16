@@ -19,7 +19,7 @@ func planInput() PlanInput {
 		Latest:     domain.Transfer{NativeState: "stalledDL", Private: domain.KnownValue(false), VerifiedBytes: domain.KnownValue[int64](10)},
 		Assessment: &policy.Assessment{Status: policy.StatusQualified, Diagnosis: policy.DiagnosisNoProgress, Headline: "no verified progress for 2h"}}
 	q := store.QueueRecord{ManagerID: "sonarr", ItemKey: "aa|episode:1", QueueID: 7, DownloadID: "aa", Present: true, MatchStatus: store.MatchMatched,
-		Latest: domain.QueueItem{Title: "Show.S01E01"}}
+		Latest: domain.QueueItem{ManagerID: "sonarr", Title: "Show.S01E01", DownloadID: "aa", ContentKind: "episode", SeriesID: 3, EpisodeID: 1}}
 	eff := policy.Effective{Mode: "automatic", Revision: "rev", Automation: []policy.WorkflowPermission{{Workflow: policy.WorkflowNoProgressRecovery, Enabled: true, From: "test"}}}
 	return PlanInput{
 		Finding:  domain.Finding{ID: 3, Type: domain.FindingTransferStalled, State: domain.FindingOpen},
@@ -82,17 +82,29 @@ func TestPlanRefusals(t *testing.T) {
 		mutate func(*PlanInput)
 		want   string
 	}{
-		"private":          {func(in *PlanInput) { in.Transfer.Latest.Private = domain.KnownValue(true) }, "public transfer"},
-		"unknown privacy":  {func(in *PlanInput) { in.Transfer.Latest.Private = domain.UnknownValue[bool]("4.x") }, "public transfer"},
-		"user paused":      {func(in *PlanInput) { in.Transfer.StateClass = domain.StatePaused }, "applicable transfer state"},
-		"checking":         {func(in *PlanInput) { in.Transfer.StateClass = domain.StateChecking }, "applicable transfer state"},
-		"queued":           {func(in *PlanInput) { in.Transfer.StateClass = domain.StateQueued }, "applicable transfer state"},
-		"stale evidence":   {func(in *PlanInput) { in.Transfer.LastSeen = t0.Add(-time.Hour) }, "fresh evidence"},
-		"not qualified":    {func(in *PlanInput) { in.Transfer.Assessment.Status = policy.StatusObserving }, "diagnosis qualified"},
-		"no association":   {func(in *PlanInput) { in.Queue = nil }, "one manager association"},
-		"ambiguous":        {func(in *PlanInput) { in.Queue = append(in.Queue, in.Queue[0]) }, "one manager association"},
-		"locked":           {func(in *PlanInput) { in.LockHolder = 4 }, "no conflicting action"},
-		"cooldown":         {func(in *PlanInput) { u := t0.Add(time.Hour); in.CooldownUntil = &u }, "not in cooldown"},
+		"private":         {func(in *PlanInput) { in.Transfer.Latest.Private = domain.KnownValue(true) }, "public transfer"},
+		"unknown privacy": {func(in *PlanInput) { in.Transfer.Latest.Private = domain.UnknownValue[bool]("4.x") }, "public transfer"},
+		"user paused":     {func(in *PlanInput) { in.Transfer.StateClass = domain.StatePaused }, "applicable transfer state"},
+		"checking":        {func(in *PlanInput) { in.Transfer.StateClass = domain.StateChecking }, "applicable transfer state"},
+		"queued":          {func(in *PlanInput) { in.Transfer.StateClass = domain.StateQueued }, "applicable transfer state"},
+		"stale evidence":  {func(in *PlanInput) { in.Transfer.LastSeen = t0.Add(-time.Hour) }, "fresh evidence"},
+		"not qualified":   {func(in *PlanInput) { in.Transfer.Assessment.Status = policy.StatusObserving }, "diagnosis qualified"},
+		"no association":  {func(in *PlanInput) { in.Queue = nil }, "one manager association"},
+		"ambiguous":       {func(in *PlanInput) { in.Queue = append(in.Queue, in.Queue[0]) }, "one manager association"},
+		"transfer locked": {func(in *PlanInput) { in.Locks = map[string]int64{"transfer:qbit|aa": 4} }, "no conflicting action"},
+		"content locked":  {func(in *PlanInput) { in.Locks = map[string]int64{"content:sonarr|episode:1": 4} }, "no conflicting action"},
+		"cooldown": {func(in *PlanInput) {
+			in.Cooldowns = map[string]store.CooldownRecord{"transfer:qbit|aa": {Until: t0.Add(time.Hour)}}
+		}, "not in cooldown"},
+		"content cooldown": {func(in *PlanInput) {
+			in.Cooldowns = map[string]store.CooldownRecord{"content:sonarr|episode:1": {Until: t0.Add(time.Hour), Reason: "action #2"}}
+		}, "not in cooldown"},
+		"no content id": {func(in *PlanInput) { in.Queue[0].Latest.EpisodeID = 0 }, "content identity known"},
+		"pack": {func(in *PlanInput) {
+			second := in.Queue[0]
+			second.QueueID, second.Latest.EpisodeID = 8, 2
+			in.Queue = append(in.Queue, second)
+		}, "one manager association"},
 		"snoozed (auto)":   {func(in *PlanInput) { in.Finding.State = domain.FindingSnoozed }, "finding is active"},
 		"resolved":         {func(in *PlanInput) { in.Finding.State = domain.FindingResolved }, "finding is active"},
 		"observe mode":     {func(in *PlanInput) { in.Policy.Mode = "observe" }, "automation permitted by policy"},
@@ -138,5 +150,44 @@ func TestPlanNoWorkflow(t *testing.T) {
 	in.Finding.Type = domain.FindingManagerHealth
 	if p, np := Plan(in); p != nil || np == nil {
 		t.Fatal("health finding produced a plan")
+	}
+}
+
+// Review R6 (2026-11-16): replacement releases for one episode share its
+// content lock, cooldown subject, and attempt allowance.
+func TestContentIdentitySurvivesReplacement(t *testing.T) {
+	a := planInput()
+	b := planInput()
+	b.Transfer.NativeID = "bb"
+	b.Queue[0].DownloadID, b.Queue[0].Latest.DownloadID, b.Queue[0].QueueID = "bb", "bb", 8
+	b.Queue[0].ItemKey = store.QueueItemKey(b.Queue[0].Latest)
+	pa, _ := Plan(a)
+	pb, _ := Plan(b)
+	if pa.Locks[1] != "content:sonarr|episode:1" || pa.Locks[1] != pb.Locks[1] {
+		t.Fatalf("content locks %v vs %v", pa.Locks, pb.Locks)
+	}
+	if pa.Budgets[1].Scope != pb.Budgets[1].Scope {
+		t.Fatalf("budgets %s vs %s", pa.Budgets[1].Scope, pb.Budgets[1].Scope)
+	}
+	if pa.Locks[0] == pb.Locks[0] {
+		t.Fatal("distinct transfers share a transfer lock")
+	}
+	// A content lock held by the other release's action blocks this one.
+	b.Locks = map[string]int64{pa.Locks[1]: 1}
+	if p, _ := Plan(b); p.Eligible() || !strings.Contains(strings.Join(blockerNames(p), ","), "no conflicting action") {
+		t.Fatalf("blockers %v", blockerNames(p))
+	}
+}
+
+func TestParseContentKey(t *testing.T) {
+	for _, k := range []string{"episode:1", "movie:42"} {
+		if _, _, ok := domain.ParseContentKey(k); !ok {
+			t.Errorf("%s rejected", k)
+		}
+	}
+	for _, k := range []string{"", "episode:", "episode:0", "episode:01", "series:3", "aa|episode:1", "movie:-1", "movie:1x"} {
+		if _, _, ok := domain.ParseContentKey(k); ok {
+			t.Errorf("%s accepted", k)
+		}
 	}
 }

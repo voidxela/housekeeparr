@@ -55,15 +55,17 @@ type PlanInput struct {
 	Policy   policy.Effective
 	// Scope is the policy subject Policy was resolved for; the gate
 	// re-resolves it before every write.
-	Scope          policy.Subject
-	Origin         Origin
-	ClientKind     adapter.Kind
-	ClientProbe    *adapter.Probe
-	ManagerKind    adapter.Kind
-	ManagerProbe   *adapter.Probe
-	LockHolder     int64
-	CooldownUntil  *time.Time
-	CooldownReason string
+	Scope        policy.Subject
+	Origin       Origin
+	ClientKind   adapter.Kind
+	ClientProbe  *adapter.Probe
+	ManagerKind  adapter.Kind
+	ManagerProbe *adapter.Probe
+	// Locks maps every currently held lock subject to its intent, and
+	// Cooldowns every recorded cooldown; the planner checks each subject
+	// the proposal would lock (the transfer and every affected content).
+	Locks          map[string]int64
+	Cooldowns      map[string]store.CooldownRecord
 	PollInterval   time.Duration
 	ConfigRevision string
 	Tested         []TestedWorkflow
@@ -99,7 +101,7 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 	}
 	p := &Proposal{
 		Workflow: string(wf), Origin: in.Origin, Subject: raw(map[string]string{"client_id": t.ClientID, "native_id": t.NativeID}),
-		Locks:          []string{"transfer:" + t.ClientID + "|" + t.NativeID},
+		Locks:          []string{TransferLock(t.ClientID, t.NativeID)},
 		PolicyRevision: in.Policy.Revision, ConfigRevision: in.ConfigRevision, Scope: in.Scope, LiveChecks: LiveChecks,
 		CreatedAt: in.Now, ExpiresAt: in.Now.Add(ttl), Cooldown: 24 * time.Hour,
 	}
@@ -117,15 +119,29 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 		}
 	}
 	var row *store.QueueRecord
+	var unknownContent []string
+	for _, q := range present {
+		if key, ok := q.Latest.ContentKey(); ok {
+			p.Locks = appendUnique(p.Locks, ContentLock(q.ManagerID, key))
+		} else {
+			unknownContent = append(unknownContent, fmt.Sprintf("%s queue item %d", q.ManagerID, q.QueueID))
+		}
+	}
 	switch {
 	case len(present) == 1 && present[0].MatchStatus == store.MatchMatched:
 		row = &present[0]
 		add("one manager association", true, true, fmt.Sprintf("%s queue item %q is correlated with this transfer", row.ManagerID, row.Latest.Title))
-		p.Locks = append(p.Locks, "content:"+row.ManagerID+"|"+row.ItemKey)
 	case len(present) == 0:
 		add("one manager association", false, true, "no manager queue item is correlated with this transfer, so there is no grab to fail")
+	case isPack(present):
+		add("one manager association", false, true, fmt.Sprintf("this release covers %d %s items (a multi-episode pack); failing it affects every one of them, "+
+			"and pack recovery has not been tested, so it stays observation-only", len(present), present[0].ManagerID))
 	default:
 		add("one manager association", false, true, fmt.Sprintf("%d queue items relate to this transfer or the correlation is not exact; ownership is ambiguous", len(present)))
+	}
+	if len(unknownContent) > 0 {
+		add("content identity known", false, true, strings.Join(unknownContent, ", ")+
+			" did not report an episode or movie ID, so attempts, locks, and exclusions cannot be tied to the content")
 	}
 
 	// --- tested workflow ----------------------------------------------------
@@ -185,12 +201,17 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 	}
 
 	// --- exclusivity --------------------------------------------------------
-	add("no conflicting action", in.LockHolder == 0, true, lockDetail(in.LockHolder))
-	if in.CooldownUntil != nil && in.Now.Before(*in.CooldownUntil) {
-		add("not in cooldown", false, true, fmt.Sprintf("cooldown until %s (%s)", in.CooldownUntil.UTC().Format(time.RFC3339), in.CooldownReason))
-	} else {
-		add("not in cooldown", true, true, "no cooldown")
+	var held, cooling []string
+	for _, l := range p.Locks {
+		if h := in.Locks[l]; h != 0 {
+			held = append(held, fmt.Sprintf("action #%d holds %s; it must finish or be reviewed first", h, l))
+		}
+		if c, ok := in.Cooldowns[l]; ok && in.Now.Before(c.Until) {
+			cooling = append(cooling, fmt.Sprintf("%s until %s (%s)", l, c.Until.UTC().Format(time.RFC3339), c.Reason))
+		}
 	}
+	add("no conflicting action", len(held) == 0, true, nonEmpty(strings.Join(held, "; "), "no other action holds "+strings.Join(p.Locks, " or ")))
+	add("not in cooldown", len(cooling) == 0, true, nonEmpty(strings.Join(cooling, "; "), "no cooldown on "+strings.Join(p.Locks, " or ")))
 
 	// --- policy -------------------------------------------------------------
 	p.Prerequisites = append(p.Prerequisites, PolicyCheck(in.Policy, wf, in.Origin))
@@ -227,9 +248,10 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 		"no file is deleted, moved, or renamed; the retained transfer counts toward retained-data tracking",
 		"a later search result, grab, and download progress are verified separately; a search that finds nothing is reported, not retried")
 	if row != nil {
+		key, _ := row.Latest.ContentKey()
 		p.Budgets = []BudgetClaim{
 			{Scope: "global:acquisition", Window: 24 * time.Hour, Limit: 20, Units: 1},
-			{Scope: "content:" + row.ManagerID + "|" + row.ItemKey, Window: 7 * 24 * time.Hour, Limit: 3, Units: 1},
+			{Scope: ContentLock(row.ManagerID, key), Window: 7 * 24 * time.Hour, Limit: 3, Units: 1},
 		}
 	}
 	p.Evidence = raw(map[string]any{"finding": in.Finding.ID, "finding_type": in.Finding.Type, "assessment": t.Assessment,
@@ -285,11 +307,34 @@ func probeVersion(p *adapter.Probe) string {
 	return strings.TrimPrefix(p.Version, "v")
 }
 
-func lockDetail(holder int64) string {
-	if holder == 0 {
-		return "no other action holds this transfer"
+// TransferLock is the lock subject for a physical transfer.
+func TransferLock(clientID, nativeID string) string { return "transfer:" + clientID + "|" + nativeID }
+
+// ContentLock is the lock and cooldown subject for manager content. It is
+// independent of the release, so every replacement attempt for the same
+// episode or movie shares it.
+func ContentLock(managerID, contentKey string) string {
+	return "content:" + managerID + "|" + contentKey
+}
+
+func appendUnique(xs []string, x string) []string {
+	for _, y := range xs {
+		if y == x {
+			return xs
+		}
 	}
-	return fmt.Sprintf("action #%d holds this transfer; it must finish or be reviewed first", holder)
+	return append(xs, x)
+}
+
+// isPack reports whether every row is the same manager's row for the same
+// download: one release covering several episodes.
+func isPack(rows []store.QueueRecord) bool {
+	for _, r := range rows[1:] {
+		if r.ManagerID != rows[0].ManagerID || !strings.EqualFold(r.DownloadID, rows[0].DownloadID) || r.DownloadID == "" {
+			return false
+		}
+	}
+	return len(rows) > 1
 }
 
 func nonEmpty(s, def string) string {

@@ -89,6 +89,9 @@ func printPreview(out io.Writer, pv *app.ActionPreview) {
 		}
 		fmt.Fprintf(out, "  [%s] %-34s (%s) %s\n", mark, c.Name, kind, c.Detail)
 	}
+	for _, c := range p.Planned.Content {
+		fmt.Fprintf(out, "\nAffected content (for overrides and exclusions): %s|%s\n", p.Planned.ManagerID, c)
+	}
 	if len(p.LiveChecks) > 0 {
 		fmt.Fprintln(out, "\nRe-read from the applications immediately before each write (any change holds the action):")
 		for _, c := range p.LiveChecks {

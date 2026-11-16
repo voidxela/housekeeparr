@@ -40,7 +40,7 @@
   <h2 id="h-mgr">Manager relationships</h2>
   {{if .Queue}}
   <table class="table"><thead><tr><th scope="col">Manager</th><th scope="col">Content</th><th scope="col">Tracked state</th><th scope="col">Correlation</th></tr></thead><tbody>
-  {{range .Queue}}<tr><td>{{.ManagerID}}</td><td>{{.Latest.ContentLabel}}</td><td>{{.Latest.TrackedState}} / {{.Latest.TrackedStatus}}{{range .Latest.StatusMessages}}{{range .Messages}}<div class="muted small">{{.}}</div>{{end}}{{end}}</td><td>{{matchLabel .MatchStatus}}<div class="muted small">{{.MatchNote}}</div></td></tr>{{end}}
+  {{range .Queue}}<tr><td>{{.ManagerID}}</td><td>{{.Latest.ContentLabel}}{{$m := .ManagerID}}{{with .Latest.ContentRef}}<div class="muted small">content <code>{{$m}}|{{.}}</code></div>{{end}}</td><td>{{.Latest.TrackedState}} / {{.Latest.TrackedStatus}}{{range .Latest.StatusMessages}}{{range .Messages}}<div class="muted small">{{.}}</div>{{end}}{{end}}</td><td>{{matchLabel .MatchStatus}}<div class="muted small">{{.MatchNote}}</div></td></tr>{{end}}
   </tbody></table>
   {{else}}<p class="muted">No manager queue row is correlated with this transfer.</p>{{end}}
 </section>

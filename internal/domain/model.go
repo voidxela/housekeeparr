@@ -222,6 +222,12 @@ func (q QueueItem) ContentKey() (string, bool) {
 	return "", false
 }
 
+// ContentRef is ContentKey for display, or "" when unknown.
+func (q QueueItem) ContentRef() string {
+	k, _ := q.ContentKey()
+	return k
+}
+
 // ParseContentKey splits a content key into its kind and manager ID.
 func ParseContentKey(key string) (kind string, id int64, ok bool) {
 	kind, num, found := strings.Cut(key, ":")

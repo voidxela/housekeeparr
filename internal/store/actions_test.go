@@ -313,3 +313,63 @@ func TestFailedOrCancelledIntentDoesNotBlockRetry(t *testing.T) {
 		t.Fatalf("active intent did not block: %v", err)
 	}
 }
+
+// TestForwardMigrationV3ContentIdentity builds a schema-3 database with a
+// held release-specific content lock and cooldown, then opens it: the
+// release-independent subjects exist and block replacement releases.
+func TestForwardMigrationV3ContentIdentity(t *testing.T) {
+	dir := t.TempDir()
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(dir, dbFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"0001_init.sql", "0002_queue_match_since.sql", "0003_action_journal.sql"} {
+		body, err := migrationFS.ReadFile("migrations/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(string(body)); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+	target := `{"manager_id":"sonarr","queue_id":7,"download_id":"aa","title":"Show.S01E01","series_id":3,"episode_id":9,"movie_id":0}`
+	movie := `{"manager_id":"radarr","queue_id":2,"download_id":"bb","title":"Film","series_id":0,"episode_id":0,"movie_id":4}`
+	for _, q := range []string{
+		"INSERT INTO meta(key, value) VALUES('schema_version','3'),('data_origin','live'),('instance_id','v3inst'),('created_at','0')",
+		`INSERT INTO action_intents(id, idem_key, workflow, origin, subject_json, state, policy_revision, config_revision, instance_id, fingerprint,
+		  evidence_json, plan_json, review_required, created_at, updated_at) VALUES
+		 (1,'k1','no_progress_recovery','manual','{}','uncertain','p','c','v3inst','f','{}','{}',1,1,1),
+		 (2,'k2','no_progress_recovery','manual','{}','succeeded','p','c','v3inst','f','{}','{}',0,1,1)`,
+		`INSERT INTO action_steps(intent_id, seq, op, target_json, request_json, expect_json, state) VALUES
+		 (1,1,'manager.queue.fail','` + target + `','{}','{}','uncertain'), (2,1,'manager.queue.fail','` + movie + `','{}','{}','succeeded')`,
+		`INSERT INTO action_locks(subject, intent_id, acquired_at) VALUES('transfer:qbit|aa',1,1),('content:sonarr|aa|episode:9',1,1)`,
+		`INSERT INTO action_cooldowns(subject, until, reason) VALUES('content:radarr|bb|movie:4',9999999999999,'action #2 (no_progress_recovery)')`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatalf("build v3 database: %v", err)
+		}
+	}
+	db.Close()
+	s, err := Open(ctx, dir, Options{})
+	if err != nil {
+		t.Fatalf("open v3 database: %v", err)
+	}
+	defer s.Close()
+	if h, _ := s.LockHolder(ctx, "content:sonarr|episode:9"); h != 1 {
+		t.Fatalf("content lock not carried over: holder %d", h)
+	}
+	if h, _ := s.LockHolder(ctx, "transfer:qbit|aa"); h != 1 {
+		t.Fatal("transfer lock lost")
+	}
+	if until, reason, ok, _ := s.Cooldown(ctx, "content:radarr|movie:4"); !ok || until.Before(time.Now()) || reason == "" {
+		t.Fatalf("content cooldown not carried over: %v %v", until, ok)
+	}
+	// Reviewing the held intent releases every subject, old and new.
+	err = s.Write(ctx, func(tx *Tx) error { return tx.SetIntentState(1, IntentFailed, "reviewed", time.Now()) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if locks, _ := s.HeldLocks(ctx); len(locks) != 0 {
+		t.Fatalf("locks after review %v", locks)
+	}
+}

@@ -298,6 +298,51 @@ func (s *Store) Cooldown(ctx context.Context, subject string) (time.Time, string
 	return fromMS(until), reason, err == nil, err
 }
 
+// CooldownRecord is a recorded cooldown.
+type CooldownRecord struct {
+	Until  time.Time `json:"until"`
+	Reason string    `json:"reason"`
+}
+
+// HeldLocks returns every held lock subject with its intent. The table is
+// bounded by the number of unfinished intents.
+func (s *Store) HeldLocks(ctx context.Context) (map[string]int64, error) {
+	rows, err := s.r.QueryContext(ctx, "SELECT subject, intent_id FROM action_locks")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int64{}
+	for rows.Next() {
+		var sub string
+		var id int64
+		if err := rows.Scan(&sub, &id); err != nil {
+			return nil, err
+		}
+		out[sub] = id
+	}
+	return out, rows.Err()
+}
+
+// ActiveCooldowns returns every cooldown that has not expired at now.
+func (s *Store) ActiveCooldowns(ctx context.Context, now time.Time) (map[string]CooldownRecord, error) {
+	rows, err := s.r.QueryContext(ctx, "SELECT subject, until, reason FROM action_cooldowns WHERE until > ?", ms(now))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]CooldownRecord{}
+	for rows.Next() {
+		var sub, reason string
+		var until int64
+		if err := rows.Scan(&sub, &until, &reason); err != nil {
+			return nil, err
+		}
+		out[sub] = CooldownRecord{Until: fromMS(until), Reason: reason}
+	}
+	return out, rows.Err()
+}
+
 // LockHolder returns the intent holding subject, or 0.
 func (s *Store) LockHolder(ctx context.Context, subject string) (int64, error) {
 	var id int64

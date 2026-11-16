@@ -108,7 +108,10 @@ func (s *Service) Preview(ctx context.Context, findingID int64, origin action.Or
 		}
 	}
 	if len(present) == 1 {
-		sub.ManagerID, sub.ContentKey = present[0].ManagerID, present[0].ItemKey
+		// Content identity, not the release: overrides and exclusions
+		// follow the episode or movie across replacement attempts.
+		sub.ManagerID = present[0].ManagerID
+		sub.ContentKey, _ = present[0].Latest.ContentKey()
 	}
 	for _, c := range conns {
 		c := c
@@ -131,17 +134,11 @@ func (s *Service) Preview(ctx context.Context, findingID int64, origin action.Or
 	}
 	in.Scope = sub
 	out.Policy = in.Policy
-	for _, l := range []string{"transfer:" + f.Subject.ClientID + "|" + f.Subject.NativeID} {
-		if in.LockHolder, err = s.st.LockHolder(ctx, l); err != nil {
-			return nil, err
-		}
-		until, reason, ok, err := s.st.Cooldown(ctx, l)
-		if err != nil {
-			return nil, err
-		}
-		if ok {
-			in.CooldownUntil, in.CooldownReason = &until, reason
-		}
+	if in.Locks, err = s.st.HeldLocks(ctx); err != nil {
+		return nil, err
+	}
+	if in.Cooldowns, err = s.st.ActiveCooldowns(ctx, in.Now); err != nil {
+		return nil, err
 	}
 	p, np := action.Plan(in)
 	if np != nil {

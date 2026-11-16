@@ -484,6 +484,18 @@ no_progress_recovery = false
 			contains: []string{"duplicate"},
 		},
 		{
+			name:     "legacy release-specific content key",
+			extra:    "\n[[override]]\ncontent = \"sonarr|0123abcd|episode:12\"\nreason = \"old\"\n",
+			field:    "override[0].content",
+			contains: []string{"episode:<id>", "no longer accepted"},
+		},
+		{
+			name:     "legacy exclusion content key",
+			extra:    "\n[[exclude]]\ncontent = \"sonarr|0123abcd|episode:12\"\nreason = \"old\"\n",
+			field:    "exclude[0].content",
+			contains: []string{"no longer accepted"},
+		},
+		{
 			name:     "duplicate content override",
 			extra:    "\n[[override]]\ncontent = \"sonarr|episode:12\"\nreason = \"one\"\n[[override]]\ncontent = \"sonarr|episode:12\"\nreason = \"two\"\n",
 			field:    "override[1].content",

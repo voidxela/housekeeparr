@@ -116,8 +116,10 @@ password = "file:/run/secrets/qbittorrent_password"
 # no_progress_recovery = false
 
 # Item-level overrides apply after all matching rules. Set either transfer
-# ("<client-id>|<native-id>") or content ("<manager-id>|<content-key>"),
-# plus a required reason.
+# ("<client-id>|<native-id>") or content ("<manager-id>|episode:<id>" or
+# "<manager-id>|movie:<id>", using the manager's episode or movie ID as shown
+# on the finding page), plus a required reason. A content override or
+# exclusion follows the episode or movie across replacement releases.
 # [[override]]
 # transfer = "qbittorrent|0123456789abcdef0123456789abcdef01234567"
 # reason = "rare release, wait longer before failing"

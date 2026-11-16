@@ -20,6 +20,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 
+	"github.com/voidxela/housekeeparr/internal/domain"
 	"github.com/voidxela/housekeeparr/internal/policy"
 )
 
@@ -580,6 +581,25 @@ func parseScopedRef(s string) (id, key string, ok bool) {
 	return id, key, true
 }
 
+// contentRefHelp explains the content reference format. Release-specific
+// keys accepted by earlier builds are rejected rather than ignored: they
+// would silently stop matching, and an exclusion that matches nothing is
+// a safety regression.
+const contentRefHelp = `must be "<manager-id>|episode:<id>" or "<manager-id>|movie:<id>" (the manager's episode or movie ID, ` +
+	`shown on the finding page); release-specific keys containing a download ID are no longer accepted`
+
+// parseContentRef parses "<manager-id>|episode:<id>" or "<manager-id>|movie:<id>".
+func parseContentRef(s string) (id, key string, ok bool) {
+	id, key, ok = parseScopedRef(s)
+	if !ok {
+		return "", "", false
+	}
+	if _, _, valid := domain.ParseContentKey(key); !valid {
+		return "", "", false
+	}
+	return id, key, true
+}
+
 func isValidPrivacy(p string) bool {
 	return p == "public" || p == "private" || p == "unknown"
 }
@@ -731,9 +751,9 @@ func validateOverrides(errf errFunc, cfg *Config, clientIDs, managerIDs map[stri
 				}
 			}
 		case o.Content != "":
-			mid, ckey, ok := parseScopedRef(o.Content)
+			mid, ckey, ok := parseContentRef(o.Content)
 			if !ok {
-				errf(field+".content", "must be \"<manager-id>|<content-key>\" with non-empty parts")
+				errf(field+".content", contentRefHelp)
 			} else {
 				if !managerIDs[mid] {
 					errf(field+".content", "unknown manager connection %q", mid)
@@ -794,9 +814,9 @@ func validateExclusions(errf errFunc, cfg *Config, clientIDs, managerIDs map[str
 			}
 		}
 		if ex.Content != "" {
-			mid, _, ok := parseScopedRef(ex.Content)
+			mid, _, ok := parseContentRef(ex.Content)
 			if !ok {
-				errf(field+".content", "must be \"<manager-id>|<content-key>\" with non-empty parts")
+				errf(field+".content", contentRefHelp)
 			} else if !managerIDs[mid] {
 				errf(field+".content", "unknown manager connection %q", mid)
 			}
