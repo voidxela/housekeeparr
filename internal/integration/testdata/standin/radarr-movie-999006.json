@@ -1,0 +1,35 @@
+{
+ "tmdbId": 999006,
+ "imdbId": "tt9990006",
+ "title": "Housekeeparr Fifth Fixture Film",
+ "originalTitle": "Housekeeparr Fifth Fixture Film",
+ "titleSlug": "999006",
+ "overview": "Fictional film served by the Housekeeparr integration stand-in.",
+ "year": 2017,
+ "inCinema": "2017-03-01T00:00:00Z",
+ "physicalRelease": "2017-06-01T00:00:00Z",
+ "digitalRelease": "2017-05-15T00:00:00Z",
+ "runtime": 100,
+ "originalLanguage": "en",
+ "status": "Released",
+ "studio": "Fixture Studio",
+ "movieRatings": {
+  "tmdb": {
+   "count": 1,
+   "value": 7.0,
+   "type": "user"
+  }
+ },
+ "ratings": [],
+ "genres": [],
+ "keywords": [],
+ "alternativeTitles": [],
+ "translations": [],
+ "certifications": [],
+ "images": [],
+ "credits": {
+  "cast": [],
+  "crew": []
+ },
+ "recommendations": []
+}

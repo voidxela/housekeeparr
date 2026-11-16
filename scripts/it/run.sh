@@ -428,7 +428,7 @@ start_sonarr() {
 	export HK_IT_SONARR_URL="$SONARR" HK_IT_SONARR_KEY="$SONARR_KEY" HK_IT_SONARR_VERSION="$SONARR_VERSION"
 	TESTS+=(TestSonarrReleasedBehaviour TestEngineCorrelatesRealInstances)
 	PROBES+=(TestSonarrQueueRemovalSemantics)
-	if [ "$STANDIN" = 1 ]; then MANAGED_PROBES+=(TestSonarrManagedRemovalSemantics); fi
+	if [ "$STANDIN" = 1 ]; then MANAGED_PROBES+=(TestSonarrManagedRemovalSemantics TestSonarrRecoveryWorkflow); fi
 }
 
 start_radarr() {
@@ -436,7 +436,7 @@ start_radarr() {
 	export HK_IT_RADARR_URL="$RADARR" HK_IT_RADARR_KEY="$RADARR_KEY" HK_IT_RADARR_VERSION="$RADARR_VERSION"
 	TESTS+=(TestRadarrReleasedBehaviour TestEngineCorrelatesRadarr)
 	PROBES+=(TestRadarrQueueRemovalSemantics)
-	if [ "$STANDIN" = 1 ]; then MANAGED_PROBES+=(TestRadarrManagedRemovalSemantics); fi
+	if [ "$STANDIN" = 1 ]; then MANAGED_PROBES+=(TestRadarrManagedRemovalSemantics TestRadarrRecoveryWorkflow); fi
 }
 
 for c in ${CLIENTS//,/ }; do

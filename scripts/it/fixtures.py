@@ -89,10 +89,13 @@ def main(out, save):
     release("tv-e02", "Housekeeparr.Fixture.Show.S01E02.1080p.WEB-DL.x264-HKFIX", 4 * MB, kind="tv", tvdbId=999001, season=1, episode=2)
     release("tv-e03", "Housekeeparr.Fixture.Show.S01E03.1080p.WEB-DL.x264-HKFIX", 4 * MB, kind="tv", tvdbId=999001, season=1, episode=3)
     release("tv-e04", "Housekeeparr.Fixture.Show.S01E04.1080p.WEB-DL.x264-HKFIX", 4 * MB, kind="tv", tvdbId=999001, season=1, episode=4)
+    # Released only to the recovery workflow test.
+    release("tv-e05", "Housekeeparr.Fixture.Show.S01E05.1080p.WEB-DL.x264-HKFIX", 4 * MB, kind="tv", tvdbId=999001, season=1, episode=5)
     release("film-a", "Housekeeparr.Fixture.Film.2020.1080p.WEB-DL.x264-HKFIX", 4 * MB, kind="movie", tmdbId=999002, imdbId="tt9990002")
     release("film-b", "Housekeeparr.Second.Fixture.Film.2021.1080p.WEB-DL.x264-HKFIX", 4 * MB, kind="movie", tmdbId=999003, imdbId="tt9990003")
     release("film-c", "Housekeeparr.Third.Fixture.Film.2019.1080p.WEB-DL.x264-HKFIX", 4 * MB, kind="movie", tmdbId=999004, imdbId="tt9990004")
     release("film-d", "Housekeeparr.Fourth.Fixture.Film.2018.1080p.WEB-DL.x264-HKFIX", 4 * MB, kind="movie", tmdbId=999005, imdbId="tt9990005")
+    release("film-e", "Housekeeparr.Fifth.Fixture.Film.2017.1080p.WEB-DL.x264-HKFIX", 4 * MB, kind="movie", tmdbId=999006, imdbId="tt9990006")
     with open(os.path.join(out, "managed.json"), "w") as f:
         json.dump(managed, f, indent=1)
 

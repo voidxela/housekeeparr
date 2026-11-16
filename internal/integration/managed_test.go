@@ -101,6 +101,16 @@ func prepareManager(t *testing.T, a arrAPI, root string, categories []int) {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// Idempotent: a later managed test on the same instance reuses them.
+	var roots []struct {
+		Path string `json:"path"`
+	}
+	a.mustJSON(http.MethodGet, "/api/v3/rootfolder", nil, nil, &roots)
+	for _, r := range roots {
+		if r.Path == root {
+			return
+		}
+	}
 	a.mustJSON(http.MethodPost, "/api/v3/rootfolder", nil, map[string]any{"path": root}, nil)
 	idx := map[string]any{
 		"name": "Housekeeparr stand-in", "implementation": "Torznab", "configContract": "TorznabSettings", "protocol": "torrent",
