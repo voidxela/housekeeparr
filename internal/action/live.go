@@ -178,12 +178,15 @@ func Revalidate(p Proposal, i int, live Live) []Check {
 // RelevantHealth returns the manager health problems that make failing a
 // grab unsafe: without a working download client or search-capable
 // indexer the replacement cannot happen, and failing grabs then only
-// blocklists releases (SPEC §13.4 scenario 5).
+// blocklists releases (SPEC §13.4 scenario 5). RSS-only checks are not
+// relevant: the replacement is a search. Released Sonarr 4.0.20 reports
+// IndexerSearchCheck as a warning even when no indexer can search.
 func RelevantHealth(items []domain.HealthItem) []string {
 	var out []string
 	for _, h := range items {
 		always := h.Source == "IndexerSearchCheck" || h.Source == "DownloadClientCheck" || h.Source == "DownloadClientStatusCheck"
-		failing := h.Type == "error" && (strings.HasPrefix(h.Source, "Indexer") || strings.HasPrefix(h.Source, "DownloadClient"))
+		failing := h.Type == "error" && (h.Source == "IndexerStatusCheck" || h.Source == "IndexerLongTermStatusCheck" ||
+			strings.HasPrefix(h.Source, "DownloadClient"))
 		if always || failing {
 			out = append(out, fmt.Sprintf("%s (%s): %s", h.Source, h.Type, h.Message))
 		}

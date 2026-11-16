@@ -551,8 +551,14 @@ func TestFirstWriteChecksPlannedState(t *testing.T) {
 		})
 	}
 	// Unrelated health warnings do not block.
-	if bad := RelevantHealth([]domain.HealthItem{{Source: "UpdateCheck", Type: "notice"}, {Source: "IndexerRssCheck", Type: "warning"},
+	// Observed on the disposable instances, whose only indexer has RSS
+	// disabled: RSS is not how the replacement is found.
+	if bad := RelevantHealth([]domain.HealthItem{{Source: "UpdateCheck", Type: "notice"}, {Source: "IndexerRssCheck", Type: "error",
+		Message: "No indexers available with RSS sync enabled, Sonarr will not grab new releases automatically"},
 		{Source: "IndexerStatusCheck", Type: "warning", Message: "Indexers unavailable due to failures: one"}}); len(bad) != 0 {
 		t.Fatalf("irrelevant health blocks: %v", bad)
+	}
+	if bad := RelevantHealth([]domain.HealthItem{{Source: "IndexerStatusCheck", Type: "error", Message: "All indexers are unavailable due to failures"}}); len(bad) != 1 {
+		t.Fatal("all indexers failing does not block")
 	}
 }
