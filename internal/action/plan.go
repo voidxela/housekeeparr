@@ -220,8 +220,9 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 	// owner of the replacement search.
 	if row != nil {
 		p.Operations = append(p.Operations, Operation{
-			Op:          "manager.queue.fail",
-			Target:      raw(map[string]any{"manager_id": row.ManagerID, "queue_id": row.QueueID, "download_id": row.DownloadID}),
+			Op: "manager.queue.fail",
+			Target: raw(map[string]any{"manager_id": row.ManagerID, "queue_id": row.QueueID, "download_id": row.DownloadID,
+				"title": row.Latest.Title, "series_id": row.Latest.SeriesID, "episode_id": row.Latest.EpisodeID, "movie_id": row.Latest.MovieID}),
 			Request:     raw(map[string]bool{"removeFromClient": false, "blocklist": true, "skipRedownload": false, "changeCategory": false}),
 			Expect:      raw(map[string]any{"queue_row_absent": true, "release_blocklisted": true, "history_event": "downloadFailed"}),
 			Description: fmt.Sprintf("Mark the grab failed in %s: blocklist this release and remove the queue item, keeping the torrent in the client", row.ManagerID),

@@ -52,16 +52,29 @@ func TestRemoveQueueItemTimeoutIsUncertain(t *testing.T) {
 }
 
 func TestBlocklistAndHistoryReads(t *testing.T) {
+	// Shape of released BlocklistResource: no infohash.
 	c := serve(t, map[string]string{
-		"/api/v3/blocklist": `{"totalRecords":2,"records":[{"torrentInfoHash":"AAAA"},{"torrentInfoHash":"bbbb"}]}`,
-		"/api/v3/history":   `{"totalRecords":3,"records":[{"eventType":"downloadFailed","downloadId":"BBBB"},{"eventType":"grabbed","downloadId":"BBBB"},{"eventType":"grabbed","downloadId":"CCCC"}]}`,
+		"/api/v3/blocklist": `{"totalRecords":3,"records":[
+			{"sourceTitle":"Show.S01E02.1080p-GRP","date":"2026-11-15T12:00:05Z","seriesId":3,"episodeIds":[9]},
+			{"sourceTitle":"Show.S01E02.1080p-GRP","date":"2026-11-14T12:00:00Z","seriesId":3,"episodeIds":[9]},
+			{"sourceTitle":"Film.2020.1080p-GRP","date":"2026-11-15T12:00:05Z","movieId":4}]}`,
+		"/api/v3/history": `{"totalRecords":3,"records":[{"eventType":"downloadFailed","downloadId":"BBBB"},{"eventType":"grabbed","downloadId":"BBBB"},{"eventType":"grabbed","downloadId":"CCCC"}]}`,
 	})
 	ctx := context.Background()
-	if ok, err := c.Blocklisted(ctx, "bbbb"); err != nil || !ok {
-		t.Fatalf("blocklisted: %v %v", ok, err)
-	}
-	if ok, err := c.Blocklisted(ctx, "dddd"); err != nil || ok {
-		t.Fatalf("absent hash: %v %v", ok, err)
+	since := time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)
+	for _, c2 := range []struct {
+		m    BlocklistMatch
+		want bool
+	}{
+		{BlocklistMatch{SourceTitle: "show.s01e02.1080p-grp", Since: since, SeriesID: 3, EpisodeID: 9}, true},
+		{BlocklistMatch{SourceTitle: "Show.S01E02.1080p-GRP", Since: since, SeriesID: 3, EpisodeID: 8}, false},
+		{BlocklistMatch{SourceTitle: "Show.S01E02.1080p-GRP", Since: since.Add(time.Hour)}, false},
+		{BlocklistMatch{SourceTitle: "Film.2020.1080p-GRP", Since: since, MovieID: 4}, true},
+		{BlocklistMatch{SourceTitle: "Film.2020.1080p-GRP", Since: since, MovieID: 5}, false},
+	} {
+		if ok, err := c.Blocklisted(ctx, c2.m); err != nil || ok != c2.want {
+			t.Errorf("%+v: %v %v", c2.m, ok, err)
+		}
 	}
 	ev, err := c.HistoryEvents(ctx, "bbbb")
 	if err != nil || len(ev) != 2 || ev[0] != "downloadFailed" {
@@ -71,7 +84,7 @@ func TestBlocklistAndHistoryReads(t *testing.T) {
 
 func TestMalformedBlocklistIsAnError(t *testing.T) {
 	c := serve(t, map[string]string{"/api/v3/blocklist": `{}`, "/api/v3/history": `{}`})
-	if _, err := c.Blocklisted(context.Background(), "x"); err == nil {
+	if _, err := c.Blocklisted(context.Background(), BlocklistMatch{SourceTitle: "x"}); err == nil {
 		t.Fatal("malformed blocklist accepted as 'not blocklisted'")
 	}
 	if _, err := c.HistoryEvents(context.Background(), "x"); err == nil {

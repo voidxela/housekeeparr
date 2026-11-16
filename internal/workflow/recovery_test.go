@@ -27,6 +27,7 @@ type fakeManager struct {
 	blocklist bool
 	history   []string
 	removed   []arr.RemoveFlags
+	match     arr.BlocklistMatch
 }
 
 func (m *fakeManager) ID() string { return "sonarr" }
@@ -37,7 +38,10 @@ func (m *fakeManager) RemoveQueueItem(_ context.Context, _ int64, f arr.RemoveFl
 	m.removed = append(m.removed, f)
 	return nil
 }
-func (m *fakeManager) Blocklisted(context.Context, string) (bool, error)       { return m.blocklist, nil }
+func (m *fakeManager) Blocklisted(_ context.Context, b arr.BlocklistMatch) (bool, error) {
+	m.match = b
+	return m.blocklist, nil
+}
 func (m *fakeManager) HistoryEvents(context.Context, string) ([]string, error) { return m.history, nil }
 
 type fakeClient struct {
@@ -62,7 +66,7 @@ func step(op, target, request string) store.Step {
 	return store.Step{Op: op, Target: json.RawMessage(target), Request: json.RawMessage(request)}
 }
 
-const qtarget = `{"manager_id":"sonarr","queue_id":7,"download_id":"aa"}`
+const qtarget = `{"manager_id":"sonarr","queue_id":7,"download_id":"aa","title":"Show.S01E01","series_id":3,"episode_id":9}`
 
 func TestDispatchRefusesImplicitOrDestructiveFlags(t *testing.T) {
 	m, c := &fakeManager{}, &fakeClient{}
@@ -102,9 +106,15 @@ func TestObserveQueueFail(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			m := c.m
-			obs, err := rec(&m, &fakeClient{}).Observe(ctx, step("manager.queue.fail", qtarget, req))
+			st := step("manager.queue.fail", qtarget, req)
+			at := time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)
+			st.DispatchedAt = &at
+			obs, err := rec(&m, &fakeClient{}).Observe(ctx, st)
 			if err != nil || obs.Verdict != c.want {
 				t.Fatalf("%+v %v", obs, err)
+			}
+			if c.want == action.Holds && (m.match.SourceTitle != "Show.S01E01" || m.match.EpisodeID != 9 || !m.match.Since.Before(at)) {
+				t.Fatalf("blocklist matched by %+v", m.match)
 			}
 		})
 	}

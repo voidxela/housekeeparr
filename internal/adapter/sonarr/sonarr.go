@@ -134,9 +134,10 @@ func (c *Client) RemoveQueueItem(ctx context.Context, queueID int64, f arr.Remov
 	return c.api.RemoveQueueItem(ctx, queueID, f)
 }
 
-// Blocklisted reports whether the blocklist holds the infohash.
-func (c *Client) Blocklisted(ctx context.Context, downloadID string) (bool, error) {
-	return c.api.Blocklisted(ctx, downloadID)
+// Blocklisted reports whether a matching blocklist entry exists (see
+// arr.BlocklistMatch for why this is evidence rather than hash identity).
+func (c *Client) Blocklisted(ctx context.Context, m arr.BlocklistMatch) (bool, error) {
+	return c.api.Blocklisted(ctx, m)
 }
 
 // HistoryEvents lists history event types for a download id, newest first.

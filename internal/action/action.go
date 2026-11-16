@@ -347,6 +347,7 @@ func (c *Coordinator) run(ctx context.Context, id int64, p Proposal) (Result, er
 			// Earlier steps took effect; leave the intent for reconciliation.
 			return Result{IntentID: id, State: store.IntentExecuting}, fmt.Errorf("%w after step %d: %v", ErrJournal, i, err)
 		}
+		st.State, st.DispatchedAt, st.Attempts = store.StepDispatching, &now, st.Attempts+1
 		out, derr := c.Executor.Dispatch(ctx, st)
 		state, detail, outcome := c.settle(jctx, st, out, derr)
 		if err := c.Store.Write(jctx, func(tx *store.Tx) error {

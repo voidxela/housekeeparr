@@ -330,15 +330,35 @@ func (c *Client) RemoveQueueItem(ctx context.Context, queueID int64, f RemoveFla
 	return err
 }
 
-// Blocklisted reports whether the blocklist holds an entry for the
-// infohash. The first pages (newest first) are searched; an entry beyond
-// them is reported as not found, so callers treat false as "not observed".
-func (c *Client) Blocklisted(ctx context.Context, downloadID string) (bool, error) {
+// BlocklistMatch identifies a blocklist entry by evidence. Released
+// Sonarr 4.0.20 and Radarr 6.4.4 BlocklistResource expose no infohash, so
+// an entry is matched by its exact source title, recorded at or after
+// Since, and (when set) for the same series/episode or movie. This is
+// evidence of identity, not proof: two releases may share a title.
+type BlocklistMatch struct {
+	SourceTitle string
+	Since       time.Time
+	SeriesID    int64
+	EpisodeID   int64
+	MovieID     int64
+}
+
+// Blocklisted reports whether a matching blocklist entry exists. The newest
+// pages are searched; an entry beyond them is reported as not found, so
+// callers treat false as "not observed".
+func (c *Client) Blocklisted(ctx context.Context, m BlocklistMatch) (bool, error) {
+	if strings.TrimSpace(m.SourceTitle) == "" {
+		return false, fmt.Errorf("blocklist match needs a source title")
+	}
 	for p := 1; p <= 5; p++ {
 		var pg struct {
 			TotalRecords *int `json:"totalRecords"`
 			Records      []struct {
-				TorrentInfoHash string `json:"torrentInfoHash"`
+				SourceTitle string    `json:"sourceTitle"`
+				Date        time.Time `json:"date"`
+				SeriesID    int64     `json:"seriesId"`
+				EpisodeIDs  []int64   `json:"episodeIds"`
+				MovieID     int64     `json:"movieId"`
 			} `json:"records"`
 		}
 		q := url.Values{"page": {fmt.Sprint(p)}, "pageSize": {"100"}, "sortKey": {"date"}, "sortDirection": {"descending"}}
@@ -349,9 +369,22 @@ func (c *Client) Blocklisted(ctx context.Context, downloadID string) (bool, erro
 			return false, httpx.Malformed(c.app+".blocklist", fmt.Errorf("missing totalRecords or records"))
 		}
 		for _, r := range pg.Records {
-			if strings.EqualFold(r.TorrentInfoHash, downloadID) {
-				return true, nil
+			if !strings.EqualFold(r.SourceTitle, m.SourceTitle) || r.Date.Before(m.Since) {
+				continue
 			}
+			if m.SeriesID != 0 && r.SeriesID != m.SeriesID || m.MovieID != 0 && r.MovieID != m.MovieID {
+				continue
+			}
+			if m.EpisodeID != 0 {
+				found := false
+				for _, e := range r.EpisodeIDs {
+					found = found || e == m.EpisodeID
+				}
+				if !found {
+					continue
+				}
+			}
+			return true, nil
 		}
 		if p*100 >= *pg.TotalRecords {
 			break

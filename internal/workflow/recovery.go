@@ -23,7 +23,7 @@ type Manager interface {
 	ID() string
 	Queue(ctx context.Context) (domain.QueueSnapshot, error)
 	RemoveQueueItem(ctx context.Context, queueID int64, f arr.RemoveFlags) error
-	Blocklisted(ctx context.Context, downloadID string) (bool, error)
+	Blocklisted(ctx context.Context, m arr.BlocklistMatch) (bool, error)
 	HistoryEvents(ctx context.Context, downloadID string) ([]string, error)
 }
 
@@ -69,7 +69,15 @@ type queueTarget struct {
 	ManagerID  string `json:"manager_id"`
 	QueueID    int64  `json:"queue_id"`
 	DownloadID string `json:"download_id"`
+	Title      string `json:"title"`
+	SeriesID   int64  `json:"series_id"`
+	EpisodeID  int64  `json:"episode_id"`
+	MovieID    int64  `json:"movie_id"`
 }
+
+// clockSlack tolerates a manager clock behind ours when matching blocklist
+// entries recorded after dispatch.
+const clockSlack = 5 * time.Minute
 
 type queueRequest struct {
 	RemoveFromClient *bool `json:"removeFromClient"`
@@ -255,9 +263,17 @@ func (r *Recovery) Observe(ctx context.Context, st store.Step) (action.Observati
 			if err != nil {
 				return action.Observation{}, err
 			}
-			bl, err := m.Blocklisted(ctx, tg.DownloadID)
-			if err != nil {
-				return action.Observation{}, err
+			bl := false
+			if blocklist {
+				if st.DispatchedAt == nil || tg.Title == "" {
+					return action.Observation{Verdict: action.Unknown, Detail: "no dispatch time or release title to match a blocklist entry"}, nil
+				}
+				var err error
+				bl, err = m.Blocklisted(ctx, arr.BlocklistMatch{SourceTitle: tg.Title, Since: st.DispatchedAt.Add(-clockSlack),
+					SeriesID: tg.SeriesID, EpisodeID: tg.EpisodeID, MovieID: tg.MovieID})
+				if err != nil {
+					return action.Observation{}, err
+				}
 			}
 			hist, err := m.HistoryEvents(ctx, tg.DownloadID)
 			if err != nil {
