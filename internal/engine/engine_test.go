@@ -760,10 +760,16 @@ func TestRetainedTransferReleasedOnlyWhenGone(t *testing.T) {
 // progress, and completion as separate outcomes, only from complete reads.
 func TestRecoveryOutcomesTrackedSeparately(t *testing.T) {
 	const newHash = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	const earlier = "cccccccccccccccccccccccccccccccccccccccc"
 	h := newHarness(t, baseConfig)
+	// A different release for the same episode was already queued before
+	// the recovery: it is not the replacement.
+	h.mgr.SetQueue(fake.Episode(3, earlier, "Earlier.Release", "Example Show", 1, 1))
 	h.cycle()
+	h.clock.Advance(time.Minute)
 	if err := h.st.Write(ctx, func(tx *store.Tx) error {
-		return tx.CreateOutcome(store.RecoveryOutcome{IntentID: 7, ManagerID: "sonarr", Content: []string{"episode:101"}, OldDownloadID: hash, StartedAt: t0})
+		return tx.CreateOutcome(store.RecoveryOutcome{IntentID: 7, ManagerID: "sonarr", Content: []string{"episode:101"}, OldDownloadID: hash,
+			StartedAt: h.clock.Now()})
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -775,8 +781,8 @@ func TestRecoveryOutcomesTrackedSeparately(t *testing.T) {
 		}
 		return m[7]
 	}
-	// The old release's row reappearing is not a replacement.
-	h.mgr.SetQueue(fake.Episode(1, hash, "Old.Release", "Example Show", 1, 1))
+	// The old release's row reappearing is not a replacement either.
+	h.mgr.SetQueue(fake.Episode(1, hash, "Old.Release", "Example Show", 1, 1), fake.Episode(3, earlier, "Earlier.Release", "Example Show", 1, 1))
 	h.run(10, 10)
 	if o := state(); o.State != store.OutcomeAwaitingGrab {
 		t.Fatalf("old release counted as replacement: %+v", o)

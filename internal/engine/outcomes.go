@@ -21,6 +21,7 @@ const (
 // manager for the same content with a different download ID; progress is
 // an increase of that transfer's verified bytes over their value when it
 // was first seen; completion is that transfer reaching the complete state.
+// The replacement row must have been first seen after the recovery.
 // Only managers whose queue was read completely this cycle are evaluated,
 // so a failed read never moves an outcome. Absence of a grab is reported
 // as not observed, never as proof that no release exists.
@@ -67,7 +68,10 @@ func (e *Engine) advanceOutcome(tx *store.Tx, o *store.RecoveryOutcome, rows []s
 	if o.GrabbedAt == nil {
 		for _, r := range rows {
 			key := r.Latest.ContentRef()
-			if key == "" || !containsStr(o.Content, key) || r.DownloadID == "" || strings.EqualFold(r.DownloadID, o.OldDownloadID) {
+			// A row for the same content that already existed before the
+			// recovery (another grab in flight) is not its replacement.
+			if key == "" || !containsStr(o.Content, key) || r.DownloadID == "" || strings.EqualFold(r.DownloadID, o.OldDownloadID) ||
+				r.FirstSeen.Before(o.StartedAt) {
 				continue
 			}
 			at := now
