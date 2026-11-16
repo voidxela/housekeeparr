@@ -46,20 +46,26 @@ type Mode string
 const (
 	ModeObserve Mode = "observe"
 	ModePaused  Mode = "paused"
-	// ModeAutomatic is reserved; it is rejected until automation exists.
+	// ModeAutomatic enables policy evaluation of per-workflow automation
+	// permissions; actual writes still require hard safety prerequisites.
 	ModeAutomatic Mode = "automatic"
 )
 
 // Config is the validated configuration.
 type Config struct {
-	Version   int             `toml:"version"`
-	Mode      Mode            `toml:"mode"`
-	State     StateConfig     `toml:"state"`
-	Web       WebConfig       `toml:"web"`
-	Polling   PollingConfig   `toml:"polling"`
-	Retention RetentionConfig `toml:"retention"`
-	Log       LogConfig       `toml:"log"`
-	Policy    PolicyOverrides `toml:"policy"`
+	Version    int              `toml:"version"`
+	Mode       Mode             `toml:"mode"`
+	Automation AutomationConfig `toml:"automation"`
+	State      StateConfig      `toml:"state"`
+	Web        WebConfig        `toml:"web"`
+	Polling    PollingConfig    `toml:"polling"`
+	Retention  RetentionConfig  `toml:"retention"`
+	Log        LogConfig        `toml:"log"`
+	Policy     PolicyOverrides  `toml:"policy"`
+
+	Rules      []RuleConfig      `toml:"rule"`
+	Overrides  []OverrideConfig  `toml:"override"`
+	Exclusions []ExclusionConfig `toml:"exclude"`
 
 	Sonarr       []ManagerConfig `toml:"sonarr"`
 	Radarr       []ManagerConfig `toml:"radarr"`
@@ -72,6 +78,50 @@ type Config struct {
 	Path string `toml:"-"`
 	// Revision is a digest of the effective (non-secret) configuration.
 	Revision string `toml:"-"`
+}
+
+// AutomationConfig holds global automation controls and per-workflow enablement.
+type AutomationConfig struct {
+	EmergencyStop bool            `toml:"emergency_stop"`
+	Workflows     map[string]bool `toml:"workflows"`
+}
+
+// RuleConfig defines a scoped policy and/or automation rule.
+type RuleConfig struct {
+	Name       string          `toml:"name"`
+	Priority   *int            `toml:"priority"`
+	Match      RuleMatch       `toml:"match"`
+	Policy     PolicyOverrides `toml:"policy"`
+	Automation map[string]bool `toml:"automation"`
+}
+
+// RuleMatch selects which subjects a rule applies to. All non-empty fields
+// must match.
+type RuleMatch struct {
+	Client   string `toml:"client"`
+	Category string `toml:"category"`
+	Manager  string `toml:"manager"`
+	Privacy  string `toml:"privacy"`
+}
+
+// OverrideConfig defines an item-level policy and/or automation override.
+type OverrideConfig struct {
+	Transfer   string          `toml:"transfer"`
+	Content    string          `toml:"content"`
+	Reason     string          `toml:"reason"`
+	Policy     PolicyOverrides `toml:"policy"`
+	Automation map[string]bool `toml:"automation"`
+}
+
+// ExclusionConfig excludes a scope from one or more automation workflows.
+type ExclusionConfig struct {
+	Client    string   `toml:"client"`
+	Category  string   `toml:"category"`
+	Transfer  string   `toml:"transfer"`
+	Content   string   `toml:"content"`
+	Manager   string   `toml:"manager"`
+	Workflows []string `toml:"workflows"`
+	Reason    string   `toml:"reason"`
 }
 
 // StateConfig locates persistent state.
@@ -283,12 +333,11 @@ func validate(cfg *Config, md toml.MetaData) []Problem {
 		errf("version", "unsupported configuration version %d (this build reads version %d)", cfg.Version, CurrentVersion)
 	}
 	switch cfg.Mode {
-	case ModeObserve, ModePaused:
-	case ModeAutomatic:
-		errf("mode", "controlled automatic mode is not available in this milestone; use \"observe\" or \"paused\"")
+	case ModeObserve, ModePaused, ModeAutomatic:
 	default:
-		errf("mode", "must be \"observe\" or \"paused\"")
+		errf("mode", "must be \"observe\", \"paused\", or \"automatic\"")
 	}
+	validateWorkflowMap(errf, "automation.workflows", cfg.Automation.Workflows)
 	if strings.TrimSpace(cfg.State.Dir) == "" {
 		errf("state.dir", "required")
 	}
@@ -410,6 +459,17 @@ func validate(cfg *Config, md toml.MetaData) []Problem {
 	}
 	checkManager("sonarr", cfg.Sonarr)
 	checkManager("radarr", cfg.Radarr)
+	managerIDs := map[string]bool{}
+	for _, m := range cfg.Sonarr {
+		if m.ID != "" {
+			managerIDs[m.ID] = true
+		}
+	}
+	for _, m := range cfg.Radarr {
+		if m.ID != "" {
+			managerIDs[m.ID] = true
+		}
+	}
 	clientIDs := map[string]bool{}
 	sectionIndex := map[string]int{}
 	for _, ce := range cfg.Clients() {
@@ -417,7 +477,9 @@ func validate(cfg *Config, md toml.MetaData) []Problem {
 		i := sectionIndex[ce.Section]
 		sectionIndex[ce.Section]++
 		checkCommon(ce.Section, i, &c.ConnectionCommon)
-		clientIDs[c.ID] = true
+		if c.ID != "" {
+			clientIDs[c.ID] = true
+		}
 		field := ce.Section + "." + c.ID
 		if err := c.Password.validateSyntax(); err != nil {
 			errf(field+".password", "%v", err)
@@ -470,10 +532,281 @@ func validate(cfg *Config, md toml.MetaData) []Problem {
 	if _, err := cfg.EffectivePolicy(""); err != nil {
 		errf("policy", "%v", err)
 	}
+	validateRules(errf, cfg, clientIDs, managerIDs)
+	validateOverrides(errf, cfg, clientIDs, managerIDs)
+	validateExclusions(errf, cfg, clientIDs, managerIDs)
 	if len(cfg.Sonarr) == 0 && len(cfg.Radarr) == 0 && len(cfg.Clients()) == 0 {
 		warnf("", "no connections are configured; Housekeeparr will have nothing to observe")
 	}
 	return probs
+}
+
+type errFunc func(field, msg string, args ...any)
+
+func validateWorkflowMap(errf errFunc, prefix string, m map[string]bool) {
+	if len(m) == 0 {
+		return
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if !policy.ValidWorkflow(policy.Workflow(k)) {
+			errf(prefix+"."+k, "unknown workflow %q", k)
+		}
+	}
+}
+
+func validatePolicyOverrides(errf errFunc, field string, pollInterval time.Duration, o PolicyOverrides) {
+	s := policy.DefaultSettings()
+	if pollInterval >= time.Minute && pollInterval <= time.Hour {
+		s.PollInterval = pollInterval
+		s.MaxObservationGap = 2 * pollInterval
+	}
+	src := map[string]string{}
+	apply(&s, src, o, field)
+	if err := s.Validate(); err != nil {
+		errf(field, "%v", err)
+	}
+}
+
+func parseScopedRef(s string) (id, key string, ok bool) {
+	id, key, ok = strings.Cut(s, "|")
+	if !ok || strings.TrimSpace(id) == "" || strings.TrimSpace(key) == "" {
+		return "", "", false
+	}
+	return id, key, true
+}
+
+func isValidPrivacy(p string) bool {
+	return p == "public" || p == "private" || p == "unknown"
+}
+
+func validateRules(errf errFunc, cfg *Config, clientIDs, managerIDs map[string]bool) {
+	names := map[string]string{}
+	for i, r := range cfg.Rules {
+		field := fmt.Sprintf("rule[%d]", i)
+		if strings.TrimSpace(r.Name) == "" {
+			errf(field+".name", "required")
+		} else if prev, dup := names[r.Name]; dup {
+			errf(field+".name", "duplicate rule name %q (also used by %s)", r.Name, prev)
+		} else {
+			names[r.Name] = field
+		}
+		if r.Priority == nil {
+			errf(field+".priority", "required")
+		}
+		m := r.Match
+		if m.Client == "" && m.Category == "" && m.Manager == "" && m.Privacy == "" {
+			errf(field+".match", "at least one match field (client, category, manager, or privacy) is required")
+		}
+		if m.Category != "" && m.Client == "" {
+			errf(field+".match.category", "category requires client to be set")
+		}
+		if m.Client != "" && !clientIDs[m.Client] {
+			errf(field+".match.client", "unknown client connection %q", m.Client)
+		}
+		if m.Manager != "" && !managerIDs[m.Manager] {
+			errf(field+".match.manager", "unknown manager connection %q", m.Manager)
+		}
+		if m.Privacy != "" && !isValidPrivacy(m.Privacy) {
+			errf(field+".match.privacy", "must be \"public\", \"private\", or \"unknown\"")
+		}
+		validatePolicyOverrides(errf, field+".policy", cfg.Polling.Interval.Duration, r.Policy)
+		validateWorkflowMap(errf, field+".automation", r.Automation)
+	}
+	for i := 0; i < len(cfg.Rules); i++ {
+		a := cfg.Rules[i]
+		if a.Priority == nil {
+			continue
+		}
+		for j := i + 1; j < len(cfg.Rules); j++ {
+			b := cfg.Rules[j]
+			if b.Priority == nil || *a.Priority != *b.Priority {
+				continue
+			}
+			if !matchersOverlap(a.Match, b.Match) {
+				continue
+			}
+			if conflicts := ruleConflicts(a, b); len(conflicts) > 0 {
+				errf(fmt.Sprintf("rule[%d]", j), "rule %s and rule %s have the same priority (%d) and overlapping matchers with conflicting %s",
+					ruleLabel(i, a), ruleLabel(j, b), *a.Priority, strings.Join(conflicts, ", "))
+			}
+		}
+	}
+}
+
+func ruleLabel(i int, r RuleConfig) string {
+	if strings.TrimSpace(r.Name) != "" {
+		return fmt.Sprintf("%q", r.Name)
+	}
+	return fmt.Sprintf("#%d", i+1)
+}
+
+func matchersOverlap(a, b RuleMatch) bool {
+	if a.Client != "" && b.Client != "" && a.Client != b.Client {
+		return false
+	}
+	if a.Category != "" && b.Category != "" && a.Category != b.Category {
+		return false
+	}
+	if a.Manager != "" && b.Manager != "" && a.Manager != b.Manager {
+		return false
+	}
+	if a.Privacy != "" && b.Privacy != "" && a.Privacy != b.Privacy {
+		return false
+	}
+	return true
+}
+
+func ruleConflicts(a, b RuleConfig) []string {
+	var conflicts []string
+	ap, bp := a.Policy, b.Policy
+	if ap.NewDownloadGrace != nil && bp.NewDownloadGrace != nil && ap.NewDownloadGrace.Duration != bp.NewDownloadGrace.Duration {
+		conflicts = append(conflicts, "policy.new_download_grace")
+	}
+	if ap.NoProgressWindow != nil && bp.NoProgressWindow != nil && ap.NoProgressWindow.Duration != bp.NoProgressWindow.Duration {
+		conflicts = append(conflicts, "policy.no_progress_window")
+	}
+	if ap.NearCompleteRatio != nil && bp.NearCompleteRatio != nil && *ap.NearCompleteRatio != *bp.NearCompleteRatio {
+		conflicts = append(conflicts, "policy.near_complete_ratio")
+	}
+	if ap.NearCompleteWindow != nil && bp.NearCompleteWindow != nil && ap.NearCompleteWindow.Duration != bp.NearCompleteWindow.Duration {
+		conflicts = append(conflicts, "policy.near_complete_window")
+	}
+	if ap.MinObservations != nil && bp.MinObservations != nil && *ap.MinObservations != *bp.MinObservations {
+		conflicts = append(conflicts, "policy.min_observations")
+	}
+	if ap.MaxObservationGap != nil && bp.MaxObservationGap != nil && ap.MaxObservationGap.Duration != bp.MaxObservationGap.Duration {
+		conflicts = append(conflicts, "policy.max_observation_gap")
+	}
+	if ap.MetadataTimeout != nil && bp.MetadataTimeout != nil && ap.MetadataTimeout.Duration != bp.MetadataTimeout.Duration {
+		conflicts = append(conflicts, "policy.metadata_timeout")
+	}
+	if ap.ImportSettle != nil && bp.ImportSettle != nil && ap.ImportSettle.Duration != bp.ImportSettle.Duration {
+		conflicts = append(conflicts, "policy.import_settle")
+	}
+	if ap.MinProgressBytes != nil && bp.MinProgressBytes != nil && *ap.MinProgressBytes != *bp.MinProgressBytes {
+		conflicts = append(conflicts, "policy.min_progress_bytes")
+	}
+	for _, wf := range policy.AllWorkflows() {
+		k := string(wf)
+		av, aok := a.Automation[k]
+		bv, bok := b.Automation[k]
+		if aok && bok && av != bv {
+			conflicts = append(conflicts, "automation."+k)
+		}
+	}
+	return conflicts
+}
+
+func validateOverrides(errf errFunc, cfg *Config, clientIDs, managerIDs map[string]bool) {
+	seenTransfers := map[string]string{}
+	seenContents := map[string]string{}
+	for i, o := range cfg.Overrides {
+		field := fmt.Sprintf("override[%d]", i)
+		if strings.TrimSpace(o.Reason) == "" {
+			errf(field+".reason", "required")
+		}
+		switch {
+		case o.Transfer == "" && o.Content == "":
+			errf(field, "must set either transfer or content")
+		case o.Transfer != "" && o.Content != "":
+			errf(field, "cannot set both transfer and content")
+		case o.Transfer != "":
+			cid, nid, ok := parseScopedRef(o.Transfer)
+			if !ok {
+				errf(field+".transfer", "must be \"<client-id>|<native-id>\" with non-empty parts")
+			} else {
+				if !clientIDs[cid] {
+					errf(field+".transfer", "unknown client connection %q", cid)
+				}
+				key := cid + "|" + nid
+				if prev, dup := seenTransfers[key]; dup {
+					errf(field+".transfer", "duplicate override for transfer %q (also defined at %s)", key, prev)
+				} else {
+					seenTransfers[key] = field
+				}
+			}
+		case o.Content != "":
+			mid, ckey, ok := parseScopedRef(o.Content)
+			if !ok {
+				errf(field+".content", "must be \"<manager-id>|<content-key>\" with non-empty parts")
+			} else {
+				if !managerIDs[mid] {
+					errf(field+".content", "unknown manager connection %q", mid)
+				}
+				key := mid + "|" + ckey
+				if prev, dup := seenContents[key]; dup {
+					errf(field+".content", "duplicate override for content %q (also defined at %s)", key, prev)
+				} else {
+					seenContents[key] = field
+				}
+			}
+		}
+		validatePolicyOverrides(errf, field+".policy", cfg.Polling.Interval.Duration, o.Policy)
+		validateWorkflowMap(errf, field+".automation", o.Automation)
+	}
+}
+
+func validateExclusions(errf errFunc, cfg *Config, clientIDs, managerIDs map[string]bool) {
+	for i, ex := range cfg.Exclusions {
+		field := fmt.Sprintf("exclude[%d]", i)
+		if strings.TrimSpace(ex.Reason) == "" {
+			errf(field+".reason", "required")
+		}
+		if ex.Category != "" && ex.Client == "" {
+			errf(field+".category", "category requires client to be set")
+		}
+		targets := 0
+		if ex.Client != "" {
+			targets++
+		}
+		if ex.Transfer != "" {
+			targets++
+		}
+		if ex.Content != "" {
+			targets++
+		}
+		if ex.Manager != "" {
+			targets++
+		}
+		switch {
+		case targets == 0 && ex.Category == "":
+			errf(field, "must set exactly one of client, transfer, content, or manager")
+		case targets > 1:
+			errf(field, "must set only one of client (optionally with category), transfer, content, or manager")
+		}
+		if ex.Client != "" && !clientIDs[ex.Client] {
+			errf(field+".client", "unknown client connection %q", ex.Client)
+		}
+		if ex.Manager != "" && !managerIDs[ex.Manager] {
+			errf(field+".manager", "unknown manager connection %q", ex.Manager)
+		}
+		if ex.Transfer != "" {
+			cid, _, ok := parseScopedRef(ex.Transfer)
+			if !ok {
+				errf(field+".transfer", "must be \"<client-id>|<native-id>\" with non-empty parts")
+			} else if !clientIDs[cid] {
+				errf(field+".transfer", "unknown client connection %q", cid)
+			}
+		}
+		if ex.Content != "" {
+			mid, _, ok := parseScopedRef(ex.Content)
+			if !ok {
+				errf(field+".content", "must be \"<manager-id>|<content-key>\" with non-empty parts")
+			} else if !managerIDs[mid] {
+				errf(field+".content", "unknown manager connection %q", mid)
+			}
+		}
+		for _, wf := range ex.Workflows {
+			if !policy.ValidWorkflow(policy.Workflow(wf)) {
+				errf(field+".workflows", "unknown workflow %q", wf)
+			}
+		}
+	}
 }
 
 // isLoopbackHost reports whether host is a loopback literal or "localhost".
@@ -510,8 +843,25 @@ func isLocalNetworkHost(host string) bool {
 
 // EffectivePolicy resolves diagnosis settings for a client connection (or
 // the global scope when clientID is empty): built-in proposed defaults,
-// then [policy], then the client's own [<section>.<id>.policy].
+// then [policy], then the client's own [<section>.<id>.policy], plus any
+// matching global/client-scoped rules.
 func (c *Config) EffectivePolicy(clientID string) (policy.Effective, error) {
+	return c.Resolve(policy.Subject{ClientID: clientID})
+}
+
+// Resolve evaluates the effective policy, automation permissions, and matching
+// exclusions for sub following the precedence order:
+// built-in defaults -> [policy] / [automation.workflows] ->
+// connection [<section>.<id>.policy] -> matching rules (ascending priority) ->
+// item override.
+func (c *Config) Resolve(sub policy.Subject) (policy.Effective, error) {
+	if sub.Privacy != "" && !isValidPrivacy(sub.Privacy) {
+		return policy.Effective{}, fmt.Errorf("invalid subject privacy %q", sub.Privacy)
+	}
+	if sub.ManagerID != "" && !c.hasManager(sub.ManagerID) {
+		return policy.Effective{}, fmt.Errorf("unknown manager connection %q", sub.ManagerID)
+	}
+
 	s := policy.DefaultSettings()
 	s.PollInterval = c.Polling.Interval.Duration
 	// The maximum gap follows the polling interval unless explicitly set.
@@ -523,24 +873,84 @@ func (c *Config) EffectivePolicy(clientID string) (policy.Effective, error) {
 	}
 	src["poll_interval"] = "config [polling].interval"
 	src["max_observation_gap"] = builtin + " (2 × polling interval)"
+
+	workflows := policy.AllWorkflows()
+	autoEnabled := make(map[policy.Workflow]bool, len(workflows))
+	autoFrom := make(map[policy.Workflow]string, len(workflows))
+	for _, wf := range workflows {
+		autoEnabled[wf] = false
+		autoFrom[wf] = "built-in default"
+	}
+
 	apply(&s, src, c.Policy, "config [policy]")
-	id := "global"
-	if clientID != "" {
+	applyWorkflows(autoEnabled, autoFrom, c.Automation.Workflows, "config [automation.workflows]")
+
+	if sub.ClientID != "" {
 		found := false
 		for _, ce := range c.Clients() {
-			if ce.Config.ID == clientID {
+			if ce.Config.ID == sub.ClientID {
 				apply(&s, src, ce.Config.Policy, fmt.Sprintf("config [%s.%s.policy]", ce.Section, ce.Config.ID))
 				found = true
 			}
 		}
 		if !found {
-			return policy.Effective{}, fmt.Errorf("unknown client connection %q", clientID)
+			return policy.Effective{}, fmt.Errorf("unknown client connection %q", sub.ClientID)
 		}
-		id = "client:" + clientID
 	}
+
+	var matching []RuleConfig
+	for _, r := range c.Rules {
+		if r.Priority != nil && ruleMatches(r.Match, sub) {
+			matching = append(matching, r)
+		}
+	}
+	sort.SliceStable(matching, func(i, j int) bool {
+		return *matching[i].Priority < *matching[j].Priority
+	})
+	for _, r := range matching {
+		from := fmt.Sprintf("config rule %q (priority %d)", r.Name, *r.Priority)
+		apply(&s, src, r.Policy, from)
+		applyWorkflows(autoEnabled, autoFrom, r.Automation, from)
+	}
+
+	if sub.ManagerID != "" && sub.ContentKey != "" {
+		target := sub.ManagerID + "|" + sub.ContentKey
+		for _, o := range c.Overrides {
+			if o.Content == target {
+				from := fmt.Sprintf("config override content %s", o.Content)
+				apply(&s, src, o.Policy, from)
+				applyWorkflows(autoEnabled, autoFrom, o.Automation, from)
+				break
+			}
+		}
+	}
+	if sub.ClientID != "" && sub.NativeID != "" {
+		target := sub.ClientID + "|" + sub.NativeID
+		for _, o := range c.Overrides {
+			if o.Transfer == target {
+				from := fmt.Sprintf("config override transfer %s", o.Transfer)
+				apply(&s, src, o.Policy, from)
+				applyWorkflows(autoEnabled, autoFrom, o.Automation, from)
+				break
+			}
+		}
+	}
+
 	if err := s.Validate(); err != nil {
 		return policy.Effective{}, err
 	}
+
+	var exclusions []policy.ExclusionMatch
+	for i, ex := range c.Exclusions {
+		if exclusionMatches(ex, sub) {
+			exclusions = append(exclusions, policy.ExclusionMatch{
+				Workflows: resolveExclusionWorkflows(ex.Workflows),
+				Reason:    ex.Reason,
+				From:      fmt.Sprintf("config exclude #%d", i+1),
+			})
+		}
+	}
+
 	vals := map[string]string{
 		"poll_interval":        s.PollInterval.String(),
 		"new_download_grace":   s.NewDownloadGrace.String(),
@@ -553,11 +963,121 @@ func (c *Config) EffectivePolicy(clientID string) (policy.Effective, error) {
 		"import_settle":        s.ImportSettle.String(),
 		"min_progress_bytes":   strconv.FormatInt(s.MinProgressBytes, 10),
 	}
-	eff := policy.Effective{ID: id, Settings: s, Revision: s.Revision()}
+	eff := policy.Effective{
+		ID:            subjectID(sub),
+		Mode:          string(c.Mode),
+		EmergencyStop: c.Automation.EmergencyStop,
+		Settings:      s,
+		Exclusions:    exclusions,
+	}
 	for _, k := range append([]string{"poll_interval"}, settingNames...) {
 		eff.Sources = append(eff.Sources, policy.Source{Setting: k, Value: vals[k], From: src[k]})
 	}
+	for _, wf := range workflows {
+		eff.Automation = append(eff.Automation, policy.WorkflowPermission{
+			Workflow: wf,
+			Enabled:  autoEnabled[wf],
+			From:     autoFrom[wf],
+		})
+	}
+	eff.Revision = eff.ComputeRevision()
 	return eff, nil
+}
+
+func (c *Config) hasManager(id string) bool {
+	for _, m := range c.Sonarr {
+		if m.ID == id {
+			return true
+		}
+	}
+	for _, m := range c.Radarr {
+		if m.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func subjectID(sub policy.Subject) string {
+	var parts []string
+	if sub.ClientID != "" && sub.NativeID != "" {
+		parts = append(parts, "transfer:"+sub.ClientID+"|"+sub.NativeID)
+	} else if sub.ClientID != "" {
+		parts = append(parts, "client:"+sub.ClientID)
+	}
+	if sub.Category != "" {
+		parts = append(parts, "category:"+sub.Category)
+	}
+	if sub.ManagerID != "" && sub.ContentKey != "" {
+		parts = append(parts, "content:"+sub.ManagerID+"|"+sub.ContentKey)
+	} else if sub.ManagerID != "" {
+		parts = append(parts, "manager:"+sub.ManagerID)
+	}
+	if sub.Privacy != "" {
+		parts = append(parts, "privacy:"+sub.Privacy)
+	}
+	if len(parts) == 0 {
+		return "global"
+	}
+	return strings.Join(parts, ",")
+}
+
+func ruleMatches(m RuleMatch, sub policy.Subject) bool {
+	if m.Client != "" && sub.ClientID != m.Client {
+		return false
+	}
+	if m.Category != "" && (sub.ClientID != m.Client || sub.Category != m.Category) {
+		return false
+	}
+	if m.Manager != "" && sub.ManagerID != m.Manager {
+		return false
+	}
+	if m.Privacy != "" && sub.Privacy != m.Privacy {
+		return false
+	}
+	return true
+}
+
+func exclusionMatches(ex ExclusionConfig, sub policy.Subject) bool {
+	switch {
+	case ex.Transfer != "":
+		return sub.ClientID != "" && sub.NativeID != "" && (sub.ClientID+"|"+sub.NativeID) == ex.Transfer
+	case ex.Content != "":
+		return sub.ManagerID != "" && sub.ContentKey != "" && (sub.ManagerID+"|"+sub.ContentKey) == ex.Content
+	case ex.Manager != "":
+		return sub.ManagerID == ex.Manager
+	case ex.Client != "" && ex.Category != "":
+		return sub.ClientID == ex.Client && sub.Category == ex.Category
+	case ex.Client != "":
+		return sub.ClientID == ex.Client
+	default:
+		return false
+	}
+}
+
+func resolveExclusionWorkflows(raw []string) []policy.Workflow {
+	if len(raw) == 0 {
+		return policy.AllWorkflows()
+	}
+	seen := make(map[policy.Workflow]bool, len(raw))
+	var out []policy.Workflow
+	for _, s := range raw {
+		wf := policy.Workflow(s)
+		if !seen[wf] {
+			seen[wf] = true
+			out = append(out, wf)
+		}
+	}
+	return out
+}
+
+func applyWorkflows(enabled map[policy.Workflow]bool, fromMap map[policy.Workflow]string, m map[string]bool, from string) {
+	for _, wf := range policy.AllWorkflows() {
+		if v, ok := m[string(wf)]; ok {
+			enabled[wf] = v
+			fromMap[wf] = from
+		}
+	}
 }
 
 var settingNames = []string{

@@ -87,10 +87,15 @@ type Source struct {
 	From    string `json:"from"` // "built-in proposed default", "config [policy]", "config [qbittorrent.<id>.policy]"
 }
 
-// Effective is a resolved policy together with its provenance.
+// Effective is a resolved policy together with its provenance, automation
+// permissions, and matching exclusions.
 type Effective struct {
-	ID       string   `json:"id"` // scope identity, e.g. "client:qbit"
-	Settings Settings `json:"settings"`
-	Revision string   `json:"revision"`
-	Sources  []Source `json:"sources"`
+	ID            string               `json:"id"` // scope identity, e.g. "client:qbit"
+	Mode          string               `json:"mode"`
+	EmergencyStop bool                 `json:"emergency_stop"`
+	Settings      Settings             `json:"settings"`
+	Revision      string               `json:"revision"`
+	Sources       []Source             `json:"sources"`
+	Automation    []WorkflowPermission `json:"automation"`
+	Exclusions    []ExclusionMatch     `json:"exclusions,omitempty"`
 }

@@ -5,9 +5,25 @@
 version = 1
 
 # "observe" (default) reads and evaluates but never writes to managers or
-# clients. "paused" keeps visibility and stops new automation. Controlled
-# automatic mode is not available in this milestone.
+# clients. "paused" keeps visibility and stops new automation. "automatic"
+# permits automation ONLY for workflows that are separately enabled AND whose
+# hard safety prerequisites hold (including a recorded, tested write capability
+# for the exact application versions, which no workflow has yet), so in this
+# build "automatic" performs no writes.
 mode = "observe"
+
+[automation]
+# Global kill switch: when true, no workflow automation is permitted regardless
+# of mode, rules, or overrides.
+emergency_stop = false
+
+[automation.workflows]
+# Every workflow defaults to false; enabling one never enables another.
+no_progress_recovery = false
+metadata_recovery = false
+preserved_data_failure = false
+partial_pack = false
+missing_search = false
 
 [state]
 # Small writable directory for the embedded database and lock file.
@@ -82,6 +98,39 @@ password = "file:/run/secrets/qbittorrent_password"
 # Connection-scoped overrides take precedence over [policy].
 # [qbittorrent.policy]
 # no_progress_window = "3h"
+
+# Scoped rules apply after connection policies, in ascending priority order
+# (higher priority number wins). At least one match field is required; category
+# requires client.
+# [[rule]]
+# name = "slow-private"
+# priority = 10
+# [rule.match]
+# client = "qbittorrent"
+# privacy = "private"
+# [rule.policy]
+# no_progress_window = "6h"
+# [rule.automation]
+# no_progress_recovery = false
+
+# Item-level overrides apply after all matching rules. Set either transfer
+# ("<client-id>|<native-id>") or content ("<manager-id>|<content-key>"),
+# plus a required reason.
+# [[override]]
+# transfer = "qbittorrent|0123456789abcdef0123456789abcdef01234567"
+# reason = "rare release, wait longer before failing"
+# [override.policy]
+# no_progress_window = "24h"
+# [override.automation]
+# no_progress_recovery = false
+
+# Exclusions make one or more workflows (default: all) ineligible for a scope.
+# An exclusion cannot be cancelled by a rule or override.
+# [[exclude]]
+# client = "qbittorrent"
+# category = "keep"
+# workflows = ["no_progress_recovery", "metadata_recovery"]
+# reason = "manually curated category"
 
 # Transmission (legacy RPC; HTTP basic auth is optional).
 # [[transmission]]

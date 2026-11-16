@@ -193,8 +193,8 @@ func TestCLIErrorsAndExitCodes(t *testing.T) {
 	}
 	dir := t.TempDir()
 	bad := filepath.Join(dir, "bad.toml")
-	_ = os.WriteFile(bad, []byte("version = 1\nmode = \"automatic\"\n"), 0o600)
-	if code, out, _ := runCLI(t, "config", "validate", "--config", bad); code != exitUsage || !strings.Contains(out, "not available") {
+	_ = os.WriteFile(bad, []byte("version = 1\nmode = \"autopilot\"\n"), 0o600)
+	if code, out, _ := runCLI(t, "config", "validate", "--config", bad); code != exitUsage || !strings.Contains(out, "must be \"observe\", \"paused\", or \"automatic\"") {
 		t.Fatalf("invalid config: %d %s", code, out)
 	}
 	ok := filepath.Join(dir, "ok.toml")
