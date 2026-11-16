@@ -225,3 +225,35 @@ func TestPlanUsesConfiguredLimits(t *testing.T) {
 		t.Fatalf("budget explanations:\n%s", all)
 	}
 }
+
+// The full mode × origin × enablement × exclusion × emergency-stop matrix
+// (review 2026-11-16, decision 1). Observe forbids every operational write;
+// paused stops automation but allows a deliberate manual action; disabled
+// automation for a workflow still allows a manual one; an exclusion or the
+// emergency stop forbids both.
+func TestPolicyCheckMatrix(t *testing.T) {
+	wf := policy.WorkflowNoProgressRecovery
+	for _, mode := range []string{"observe", "paused", "automatic"} {
+		for _, origin := range []Origin{OriginManual, OriginAutomatic} {
+			for _, enabled := range []bool{false, true} {
+				for _, excluded := range []bool{false, true} {
+					for _, estop := range []bool{false, true} {
+						pol := policy.Effective{Mode: mode, EmergencyStop: estop,
+							Automation: []policy.WorkflowPermission{{Workflow: wf, Enabled: enabled, From: "test"}}}
+						if excluded {
+							pol.Exclusions = []policy.ExclusionMatch{{Workflows: []policy.Workflow{wf}, Reason: "keep", From: "test"}}
+						}
+						want := !estop && !excluded && mode != "observe"
+						if origin == OriginAutomatic {
+							want = want && mode == "automatic" && enabled
+						}
+						if got := PolicyCheck(pol, wf, origin); got.Satisfied != want {
+							t.Errorf("mode=%s origin=%s enabled=%v excluded=%v estop=%v: permitted=%v, want %v (%s)",
+								mode, origin, enabled, excluded, estop, got.Satisfied, want, got.Detail)
+						}
+					}
+				}
+			}
+		}
+	}
+}
