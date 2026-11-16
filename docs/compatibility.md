@@ -42,6 +42,7 @@ workflow.
 | 2026-11-16 (`2984479`) | Linux aarch64, Go 1.27.4 | same | all passed, including both recovery workflows with live per-write checks |
 | 2026-11-16 (`05b2afb`: content identity, attempt ledger, baseline verification) | Linux aarch64, Go 1.27.4 | same | all passed, including both recovery workflows |
 | 2026-11-16 (`d1d10f3`: retained records, outcome tracking, automatic dispatcher in the commit path) | Linux aarch64, Go 1.27.4 | same | all passed, including both recovery workflows |
+| 2026-11-16 (`99cf198`, `--clients deluge --manager-client deluge --managers sonarr,radarr`) | Linux aarch64, Go 1.27.4 | Deluge 2.2.0 + Sonarr 4.0.20.3014 + Radarr 6.4.4.10685 (isolated) | all passed, including both recovery workflows through Deluge |
 
 What the suite exercised (`scripts/it/run.sh`, `internal/integration`):
 session login; version probe; listing of complete, half-complete (after
@@ -239,7 +240,9 @@ in the proposal comes from engine-written state and live re-fetches.
 | 2026-11-16 (`2984479`, R5 live checks) | Sonarr 4.0.20.3014 + qBittorrent 5.3.0; Radarr 6.4.4.10685 + qBittorrent 5.3.0 (isolated) | **passed**. Before each write the executor re-read the transfer (state, verified and wanted bytes, privacy, category), the client version, every manager's queue for the download ID, and, before the manager step, the manager version, health, and the content's existence and monitoring (`GET /api/v3/episode/{id}` + `/api/v3/series/{id}`; `GET /api/v3/movie/{id}`), with the step-aware comparison expecting the queue row to be gone before the stop. The first attempt at `ee3d164` refused both before sending anything (see *Integration runs*) |
 | 2026-11-16 (`05b2afb`, baseline verification) | same | **passed**. The queue step's evidence is now attributed only against a baseline read immediately before dispatch and journaled with it: on Sonarr the baseline held the grab's history record (id 9) and no matching blocklist entry; verification found one new blocklist entry (id 4, byte-exact title and episode) and one new `downloadFailed` record. Radarr likewise. Content locks, cooldowns, and attempt budgets used manager content identity (`content:sonarr|episode:5`, `attempts:sonarr|episode:5`) |
 
-These two combinations are registered in `action.Tested`; no other
+| 2026-11-16 (`99cf198`) | Sonarr 4.0.20.3014 + Deluge 2.2.0; Radarr 6.4.4.10685 + Deluge 2.2.0 (isolated) | **passed**: same planner, live checks, baseline-attributed verification, and independent checks, with `core.pause_torrent` as the data-retaining stop; the torrent remained registered as `Paused` with the same label and byte-identical payload, and each manager queued its own replacement search |
+
+The qBittorrent 5.3.0 and Deluge 2.2.0 combinations above are registered in `action.Tested`; no other
 combination is eligible. qBittorrent 4.x does not report privacy, so
 recovery is refused there by the "public transfer" prerequisite (the test
 asserts this refusal). Not covered: engine-initiated (automatic) dispatch,
