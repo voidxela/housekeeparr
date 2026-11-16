@@ -38,6 +38,9 @@ workflow.
 | 2026-11-15 (same) | Linux aarch64, Go 1.27.4 | qBittorrent 4.6.7 + Transmission 4.1.4 + Sonarr + Radarr | all passed |
 | 2026-11-15 (same) | Linux aarch64, Go 1.27.4 | managers' download client Transmission 4.0.6; Transmission 4.1.4; Deluge 2.2.0 | all passed, including all four managed-row variants on each manager |
 | 2026-11-15 (same) | Linux aarch64, Go 1.27.4 | managers' download client rTorrent 0.9.8 | first run: one failure, Radarr's replacement search for `skipRedownload=false` was not yet queued when checked (test took 510 s against about 82 s normally, host under load); rerun: all passed. The check now polls up to 60 s for the expected search; a further run with the poll passed |
+| 2026-11-16 (after the R5 live-check rewrite, `ee3d164`) | Linux aarch64, Go 1.27.4 | qBittorrent 5.3.0 + Sonarr 4.0.20.3014 + Radarr 6.4.4.10685 (isolated) | observation and probe tests passed; both recovery workflows **refused safely** before any request: the new manager-health check treated `IndexerRssCheck` (error: "No indexers available with RSS sync enabled") as blocking. RSS is irrelevant to a search-based replacement; fixed in `2984479` |
+| 2026-11-16 (`2984479`) | Linux aarch64, Go 1.27.4 | same | all passed, including both recovery workflows with live per-write checks |
+| 2026-11-16 (`05b2afb`: content identity, attempt ledger, baseline verification) | Linux aarch64, Go 1.27.4 | same | all passed, including both recovery workflows |
 
 What the suite exercised (`scripts/it/run.sh`, `internal/integration`):
 session login; version probe; listing of complete, half-complete (after
@@ -213,7 +216,7 @@ adapters, on a fresh managed grab, planned from records an engine cycle
 wrote to a real store, with every flag explicit:
 
 1. `manager.queue.fail`: `DELETE /api/v3/queue/{id}?removeFromClient=false&blocklist=true&skipRedownload=false&changeCategory=false`,
-   verified by observation (queue row absent, a matching blocklist entry, a `downloadFailed` history event);
+   verified by observation (queue row absent, a matching blocklist entry and a `downloadFailed` history record that are both new relative to a baseline read just before dispatch);
 2. `client.stop` retaining data, verified by listing (still registered, stopped).
 
 The test then verifies independently: the row stays absent after two
@@ -231,6 +234,9 @@ in the proposal comes from engine-written state and live re-fetches.
 | 2026-11-15 | Sonarr 4.0.20.3014 + qBittorrent 5.3.0; Radarr 6.4.4.10685 + qBittorrent 5.3.0 (isolated) | **passed**: every step verified, every independent check above held |
 | 2026-11-15 | Sonarr 4.0.20.3014 + qBittorrent 4.6.7; Radarr 6.4.4.10685 + qBittorrent 4.6.7 (isolated) | passed as a refusal: privacy unknown, the only blocker is "public transfer", nothing sent |
 | 2026-11-15 (production path) | Sonarr 4.0.20.3014 + qBittorrent 5.3.0; Radarr 6.4.4.10685 + qBittorrent 5.3.0 (isolated) | **passed**: an engine cycle with engine-built adapters wrote the transfer, correlated queue row, and probes to a real store; the proposal was planned from those stored records (as `act` and the web form do), its fingerprint matched the executor's live re-fetch, and every step and independent check held |
+
+| 2026-11-16 (`2984479`, R5 live checks) | Sonarr 4.0.20.3014 + qBittorrent 5.3.0; Radarr 6.4.4.10685 + qBittorrent 5.3.0 (isolated) | **passed**. Before each write the executor re-read the transfer (state, verified and wanted bytes, privacy, category), the client version, every manager's queue for the download ID, and, before the manager step, the manager version, health, and the content's existence and monitoring (`GET /api/v3/episode/{id}` + `/api/v3/series/{id}`; `GET /api/v3/movie/{id}`), with the step-aware comparison expecting the queue row to be gone before the stop. The first attempt at `ee3d164` refused both before sending anything (see *Integration runs*) |
+| 2026-11-16 (`05b2afb`, baseline verification) | same | **passed**. The queue step's evidence is now attributed only against a baseline read immediately before dispatch and journaled with it: on Sonarr the baseline held the grab's history record (id 9) and no matching blocklist entry; verification found one new blocklist entry (id 4, byte-exact title and episode) and one new `downloadFailed` record. Radarr likewise. Content locks, cooldowns, and attempt budgets used manager content identity (`content:sonarr|episode:5`, `attempts:sonarr|episode:5`) |
 
 These two combinations are registered in `action.Tested`; no other
 combination is eligible. qBittorrent 4.x does not report privacy, so
