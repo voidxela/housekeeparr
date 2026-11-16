@@ -119,7 +119,7 @@ func TestSonarrRecoveryWorkflow(t *testing.T) {
 	ep := episodeID(t, a, sid, 1, 5)
 	e := mm["tv-e05"]
 	waitGrab(t, a, e, map[string]any{"name": "EpisodeSearch", "episodeIds": []int{ep}}, url.Values{"episodeId": {fmt.Sprint(ep)}})
-	settle(t, e)
+	settleIncomplete(t, e)
 	runRecovery(t, a, sonarrClient(t), e, "EpisodeSearch")
 }
 
@@ -130,7 +130,7 @@ func TestRadarrRecoveryWorkflow(t *testing.T) {
 	e := mm["film-e"]
 	id := addMovie(t, a, e.Managed.TmdbID)
 	waitGrab(t, a, e, map[string]any{"name": "MoviesSearch", "movieIds": []int{id}}, url.Values{"movieId": {fmt.Sprint(id)}})
-	settle(t, e)
+	settleIncomplete(t, e)
 	rc, err := radarr.New(radarr.Options{ID: "radarr", BaseURL: env(t, "HK_IT_RADARR_URL"), APIKey: env(t, "HK_IT_RADARR_KEY"), Timeout: 15 * time.Second})
 	if err != nil {
 		t.Fatal(err)

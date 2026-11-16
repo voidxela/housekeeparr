@@ -175,7 +175,21 @@ func TestTransmissionReleasedBehaviour(t *testing.T) {
 // returns the raw torrent objects.
 func transmissionRaw(t *testing.T, base string) []map[string]any {
 	t.Helper()
-	body, _ := json.Marshal(map[string]any{"method": "torrent-get", "arguments": map[string]any{"fields": transmission.RequestedFields()}})
+	var out struct {
+		Torrents []map[string]any `json:"torrents"`
+	}
+	if err := json.Unmarshal(transmissionCall(t, base, "torrent-get", map[string]any{"fields": transmission.RequestedFields()}), &out); err != nil {
+		t.Fatalf("raw torrent-get: %v", err)
+	}
+	return out.Torrents
+}
+
+// transmissionCall sends one legacy RPC request directly to the disposable
+// daemon (harness side, never through Housekeeparr) and returns its
+// arguments.
+func transmissionCall(t *testing.T, base, method string, args map[string]any) json.RawMessage {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{"method": method, "arguments": args})
 	auth := "Basic " + base64.StdEncoding.EncodeToString([]byte(env(t, "HK_IT_TR_USER")+":"+env(t, "HK_IT_TR_PASS")))
 	sid := ""
 	for i := 0; i < 2; i++ {
@@ -193,15 +207,13 @@ func transmissionRaw(t *testing.T, base string) []map[string]any {
 			continue
 		}
 		var out struct {
-			Result    string `json:"result"`
-			Arguments struct {
-				Torrents []map[string]any `json:"torrents"`
-			} `json:"arguments"`
+			Result    string          `json:"result"`
+			Arguments json.RawMessage `json:"arguments"`
 		}
 		if err := json.Unmarshal(b, &out); err != nil || out.Result != "success" {
-			t.Fatalf("raw torrent-get: %v %s", err, b)
+			t.Fatalf("raw %s: %v %s", method, err, b)
 		}
-		return out.Arguments.Torrents
+		return out.Arguments
 	}
 	t.Fatal("session handshake failed")
 	return nil

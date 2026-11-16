@@ -196,6 +196,32 @@ func settle(t *testing.T, e managedEntry) {
 	t.Fatalf("%s: torrent never settled in the client", e.Key)
 }
 
+// settleIncomplete is settle for a workflow that needs the grab to remain an
+// incomplete download. Transmission 4 treats an existing payload file under
+// its final name (not ".part") as complete when the manager adds the
+// torrent, without hashing it, so the half-present synthetic release first
+// shows as seeding. The harness forces a verify on the disposable daemon,
+// as its observation fixtures do, and then requires a downloading state.
+func settleIncomplete(t *testing.T, e managedEntry) {
+	t.Helper()
+	if managerClientKind() == "transmission" {
+		transmissionCall(t, env(t, "HK_IT_TR_URL"), "torrent-verify", map[string]any{"ids": []string{e.Hash}})
+	}
+	deadline := time.Now().Add(60 * time.Second)
+	var last domain.Transfer
+	for time.Now().Before(deadline) {
+		if tr, ok := clientState(t, e.Hash); ok {
+			last = tr
+			if tr.StateClass == domain.StateDownloading {
+				t.Logf("%s: settled in client: %s/%s verified=%v", e.Key, tr.NativeState, tr.StateClass, tr.VerifiedBytes)
+				return
+			}
+		}
+		time.Sleep(2 * time.Second)
+	}
+	t.Fatalf("%s: grab never settled as an incomplete download (last %s/%s verified=%v)", e.Key, last.NativeState, last.StateClass, last.VerifiedBytes)
+}
+
 func firstQualityProfile(a arrAPI) int {
 	var ps []struct {
 		ID   int    `json:"id"`
