@@ -6,15 +6,17 @@ Continue implementing Housekeeparr through the complete approved v1 scope in
 behavior. The earlier review `docs/reviews/2026-11-15.md` supplies background;
 its R1–R4 are fixed. Implement and verify concrete increments, not just plans.
 
-Checkpoint: `dev` at `afc253e` (docs)  (session of 2026-11-16, second; 7b0d1d0..HEAD,
-not pushed). Real-instance matrix at `118f15c` from a worktree pinned to that
-commit (all five registered combinations passed, including both recovery
-workflows, the automatic test and exact search attribution; qBittorrent 4.6.7
-failed only on the `errored-restart` observation fixture, undiagnosed); later commits change only
-operator controls (attempts view/reset, workflow pause; local, inert unless
-used), wording, and docs, and passed the full Go suite. Not run: browser
-check, race detector (host limitation), Docker, the daemon loop with default
-windows on real instances.
+Checkpoint: `dev`, code last changed at `c966439` (session of 2026-11-16,
+second; 7b0d1d0..HEAD, not pushed). Validation: full Go suite, vet, gofmt and
+the static binary at `c966439`; real-instance matrix at `118f15c` from a
+pinned worktree (all five registered combinations passed, including both
+recovery workflows, the automatic test and exact search attribution;
+qBittorrent 4.6.7 failed only on the `errored-restart` observation fixture,
+undiagnosed); qBittorrent 5.3.0 + Sonarr + Radarr again at `c966439` (all
+passed). Commits after `118f15c` add operator controls (attempts
+view/reset, workflow pause), tests and wording. Not run: browser check, race
+detector (host limitation), Docker, the daemon loop with default windows on
+real instances.
 
 No-progress recovery is now real-instance-tested and registered for Sonarr
 4.0.20.3014 and Radarr 6.4.4.10685 with **all four clients** (qBittorrent
