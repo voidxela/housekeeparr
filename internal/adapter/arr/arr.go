@@ -444,6 +444,58 @@ func (c *Client) History(ctx context.Context, downloadID string) ([]HistoryEvent
 	return out, nil
 }
 
+// Command is one entry of the manager's command list (GET /api/v3/command).
+// The list holds queued and running commands and recently finished ones;
+// Sonarr and Radarr drop finished commands from it after a few minutes, so
+// absence of a finished command is not evidence that it never ran.
+type Command struct {
+	ID         int64      `json:"id"`
+	Name       string     `json:"name"`
+	Status     string     `json:"status"`           // queued, started, completed, failed, aborted, cancelled, orphaned
+	Result     string     `json:"result,omitempty"` // successful, unsuccessful, unknown
+	Message    string     `json:"message,omitempty"`
+	Trigger    string     `json:"trigger,omitempty"`
+	Queued     time.Time  `json:"queued"`
+	Started    *time.Time `json:"started,omitempty"`
+	Ended      *time.Time `json:"ended,omitempty"`
+	EpisodeIDs []int64    `json:"episode_ids,omitempty"`
+	MovieIDs   []int64    `json:"movie_ids,omitempty"`
+}
+
+// Commands returns the manager's current command list.
+func (c *Client) Commands(ctx context.Context) ([]Command, error) {
+	var raw []struct {
+		ID      *int64     `json:"id"`
+		Name    string     `json:"name"`
+		Status  string     `json:"status"`
+		Result  string     `json:"result"`
+		Message string     `json:"message"`
+		Trigger string     `json:"trigger"`
+		Queued  *time.Time `json:"queued"`
+		Started *time.Time `json:"started"`
+		Ended   *time.Time `json:"ended"`
+		Body    struct {
+			EpisodeIDs []int64 `json:"episodeIds"`
+			MovieIDs   []int64 `json:"movieIds"`
+		} `json:"body"`
+	}
+	if err := c.Get(ctx, "command", "/api/v3/command", nil, &raw); err != nil {
+		return nil, err
+	}
+	if raw == nil {
+		return nil, httpx.Malformed(c.app+".command", fmt.Errorf("missing command list"))
+	}
+	out := make([]Command, 0, len(raw))
+	for _, r := range raw {
+		if r.ID == nil || r.Name == "" || r.Status == "" || r.Queued == nil {
+			return nil, httpx.Malformed(c.app+".command", fmt.Errorf("command without id, name, status, or queued time"))
+		}
+		out = append(out, Command{ID: *r.ID, Name: r.Name, Status: r.Status, Result: r.Result, Message: r.Message, Trigger: r.Trigger,
+			Queued: *r.Queued, Started: r.Started, Ended: r.Ended, EpisodeIDs: r.Body.EpisodeIDs, MovieIDs: r.Body.MovieIDs})
+	}
+	return out, nil
+}
+
 // Content is the live state of one managed episode or movie.
 type Content struct {
 	Key       string `json:"key"`

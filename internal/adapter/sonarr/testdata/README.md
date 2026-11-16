@@ -11,3 +11,7 @@ contract tests prove they are not retained. These fixtures are not captures
 from a running instance. Observation compatibility with Sonarr 4.0.20.3014 was
 established by `scripts/it/run.sh` on 2026-11-15 (see `docs/compatibility.md`);
 Sonarr responses are not yet captured as fixtures.
+
+| File | Provenance |
+| --- | --- |
+| `v4.0.20-command.json` | **Captured** from the disposable Sonarr 4.0.20.3014 instance of `scripts/it/run.sh` on 2026-11-16 (fictional stand-in content; a subset of `GET /api/v3/command`, no paths or credentials), right after a recovery: command 45 is the manager-native replacement `EpisodeSearch` (trigger `unspecified`) for episode 5. |

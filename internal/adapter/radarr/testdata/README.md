@@ -8,3 +8,7 @@
 
 Observation is validated against a real Radarr 6.4.4.10685 instance; see
 `docs/compatibility.md`. These files remain source-derived.
+
+| File | Provenance |
+| --- | --- |
+| `v6.4.4-command.json` | **Captured** from the disposable Radarr 6.4.4.10685 instance of `scripts/it/run.sh` on 2026-11-16 (fictional stand-in content; a subset of `GET /api/v3/command`, no paths or credentials), right after a recovery: command 46 is the manager-native replacement `MoviesSearch` (trigger `unspecified`) for movie 5. |

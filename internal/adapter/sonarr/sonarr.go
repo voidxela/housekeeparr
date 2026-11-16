@@ -154,6 +154,10 @@ func (c *Client) History(ctx context.Context, downloadID string) ([]arr.HistoryE
 	return c.api.History(ctx, downloadID)
 }
 
+// Commands lists the manager's queued, running, and recently finished
+// commands (read-only).
+func (c *Client) Commands(ctx context.Context) ([]arr.Command, error) { return c.api.Commands(ctx) }
+
 // Content reports whether an episode ("episode:<id>") exists and is
 // monitored. Sonarr searches for an episode only when both the episode and
 // its series are monitored, so both are read.

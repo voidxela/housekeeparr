@@ -1,0 +1,176 @@
+[
+ {
+  "name": "ProcessMonitoredDownloads",
+  "commandName": "Process Monitored Downloads",
+  "body": {
+   "requiresDiskAccess": true,
+   "isLongRunning": true,
+   "sendUpdatesToClient": false,
+   "updateScheduledTask": true,
+   "isExclusive": false,
+   "name": "ProcessMonitoredDownloads",
+   "trigger": "unspecified",
+   "suppressMessages": false
+  },
+  "priority": "high",
+  "status": "completed",
+  "result": "successful",
+  "queued": "2026-11-16T18:56:59Z",
+  "started": "2026-11-16T18:56:59Z",
+  "ended": "2026-11-16T18:56:59Z",
+  "duration": "00:00:00.0741447",
+  "trigger": "unspecified",
+  "stateChangeTime": "2026-11-16T18:56:59Z",
+  "sendUpdatesToClient": false,
+  "updateScheduledTask": true,
+  "id": 2
+ },
+ {
+  "name": "RefreshMonitoredDownloads",
+  "commandName": "Refresh Monitored Downloads",
+  "body": {
+   "sendUpdatesToClient": false,
+   "updateScheduledTask": true,
+   "requiresDiskAccess": false,
+   "isExclusive": false,
+   "isLongRunning": false,
+   "name": "RefreshMonitoredDownloads",
+   "trigger": "unspecified",
+   "suppressMessages": false
+  },
+  "priority": "high",
+  "status": "completed",
+  "result": "successful",
+  "queued": "2026-11-16T18:57:04Z",
+  "started": "2026-11-16T18:57:04Z",
+  "ended": "2026-11-16T18:57:04Z",
+  "duration": "00:00:00.1984782",
+  "trigger": "unspecified",
+  "stateChangeTime": "2026-11-16T18:57:04Z",
+  "sendUpdatesToClient": false,
+  "updateScheduledTask": true,
+  "id": 3
+ },
+ {
+  "name": "RefreshSeries",
+  "commandName": "Refresh Series",
+  "message": "Completed",
+  "body": {
+   "seriesIds": [
+    1
+   ],
+   "isNewSeries": true,
+   "sendUpdatesToClient": true,
+   "updateScheduledTask": false,
+   "isLongRunning": true,
+   "completionMessage": "Completed",
+   "requiresDiskAccess": false,
+   "isExclusive": false,
+   "name": "RefreshSeries",
+   "trigger": "unspecified",
+   "suppressMessages": false
+  },
+  "priority": "normal",
+  "status": "completed",
+  "result": "successful",
+  "queued": "2026-11-16T18:57:57Z",
+  "started": "2026-11-16T18:57:57Z",
+  "ended": "2026-11-16T18:57:57Z",
+  "duration": "00:00:00.3369393",
+  "trigger": "unspecified",
+  "stateChangeTime": "2026-11-16T18:57:57Z",
+  "sendUpdatesToClient": true,
+  "updateScheduledTask": false,
+  "id": 11
+ },
+ {
+  "name": "EpisodeSearch",
+  "commandName": "Episode Search",
+  "message": "Episode search completed. 0 reports downloaded.",
+  "body": {
+   "episodeIds": [
+    4
+   ],
+   "sendUpdatesToClient": true,
+   "updateScheduledTask": true,
+   "requiresDiskAccess": false,
+   "isExclusive": false,
+   "isLongRunning": false,
+   "name": "EpisodeSearch",
+   "trigger": "unspecified",
+   "suppressMessages": false
+  },
+  "priority": "normal",
+  "status": "completed",
+  "result": "successful",
+  "queued": "2026-11-16T18:59:41Z",
+  "started": "2026-11-16T18:59:41Z",
+  "ended": "2026-11-16T18:59:41Z",
+  "duration": "00:00:00.1389053",
+  "trigger": "unspecified",
+  "stateChangeTime": "2026-11-16T18:59:41Z",
+  "sendUpdatesToClient": true,
+  "updateScheduledTask": true,
+  "id": 37
+ },
+ {
+  "name": "EpisodeSearch",
+  "commandName": "Episode Search",
+  "message": "Episode search completed. 1 reports downloaded.",
+  "body": {
+   "episodeIds": [
+    5
+   ],
+   "sendUpdatesToClient": true,
+   "updateScheduledTask": true,
+   "requiresDiskAccess": false,
+   "isExclusive": false,
+   "isLongRunning": false,
+   "name": "EpisodeSearch",
+   "trigger": "manual",
+   "suppressMessages": false
+  },
+  "priority": "normal",
+  "status": "completed",
+  "result": "successful",
+  "queued": "2026-11-16T18:59:54Z",
+  "started": "2026-11-16T18:59:54Z",
+  "ended": "2026-11-16T18:59:56Z",
+  "duration": "00:00:02.0850870",
+  "trigger": "manual",
+  "stateChangeTime": "2026-11-16T18:59:54Z",
+  "sendUpdatesToClient": true,
+  "updateScheduledTask": true,
+  "id": 42
+ },
+ {
+  "name": "EpisodeSearch",
+  "commandName": "Episode Search",
+  "message": "Episode search completed. 0 reports downloaded.",
+  "body": {
+   "episodeIds": [
+    5
+   ],
+   "sendUpdatesToClient": true,
+   "updateScheduledTask": true,
+   "requiresDiskAccess": false,
+   "isExclusive": false,
+   "isLongRunning": false,
+   "name": "EpisodeSearch",
+   "trigger": "unspecified",
+   "suppressMessages": false
+  },
+  "priority": "normal",
+  "status": "completed",
+  "result": "successful",
+  "queued": "2026-11-16T19:00:04Z",
+  "started": "2026-11-16T19:00:04Z",
+  "ended": "2026-11-16T19:00:04Z",
+  "duration": "00:00:00.1162351",
+  "trigger": "unspecified",
+  "stateChangeTime": "2026-11-16T19:00:04Z",
+  "sendUpdatesToClient": true,
+  "updateScheduledTask": true,
+  "id": 45
+ }
+]
