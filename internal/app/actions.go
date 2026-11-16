@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/voidxela/housekeeparr/internal/action"
 	"github.com/voidxela/housekeeparr/internal/adapter"
@@ -164,6 +165,12 @@ var ErrNoExecutor = errors.New("this build has no write executor for the workflo
 // prerequisites as automation. It re-plans from current local state, so a
 // stale preview is never executed.
 func (s *Service) Act(ctx context.Context, findingID int64, actor Actor) (*ActionPreview, *action.Result, error) {
+	// Settle anything a crash interrupted before planning new work, so a
+	// half-finished action holds its locks as uncertain rather than as
+	// executing forever.
+	if _, err := s.Reconcile(ctx); err != nil {
+		return nil, nil, fmt.Errorf("reconcile interrupted actions: %w", err)
+	}
 	pv, err := s.Preview(ctx, findingID, action.OriginManual)
 	if err != nil {
 		return nil, nil, err
@@ -180,6 +187,18 @@ func (s *Service) Act(ctx context.Context, findingID int64, actor Actor) (*Actio
 	}
 	res, err := c.Execute(ctx, *pv.Proposal)
 	return pv, &res, err
+}
+
+// Reconcile settles actions an interruption left in progress: it observes,
+// never re-sends, and holds anything it cannot establish as uncertain.
+// Without an executor nothing can be observed, so interrupted actions are
+// only reported (they keep their locks).
+func (s *Service) Reconcile(ctx context.Context) (action.ReconcileReport, error) {
+	if s.executor == nil {
+		return action.ReconcileReport{}, nil
+	}
+	c := &action.Coordinator{Store: s.st, Executor: s.executor, Now: s.now, Actor: "reconcile"}
+	return c.Reconcile(ctx)
 }
 
 // Review resolves an uncertain action after operator inspection.

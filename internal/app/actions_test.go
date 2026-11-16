@@ -162,3 +162,54 @@ func trimV(v string) string {
 	}
 	return v
 }
+
+type unknownExec struct{ sent int }
+
+func (e *unknownExec) Refetch(_ context.Context, p action.Proposal) (string, error) {
+	return p.Fingerprint, nil
+}
+func (e *unknownExec) Dispatch(context.Context, store.Step) (json.RawMessage, error) {
+	e.sent++
+	return nil, nil
+}
+func (e *unknownExec) Observe(context.Context, store.Step) (action.Observation, error) {
+	return action.Observation{Verdict: action.Unknown, Detail: "unreachable"}, nil
+}
+
+// An action interrupted after "dispatching" was committed is reconciled
+// before any new action: held as uncertain, never re-sent.
+func TestActReconcilesInterruptedActionsFirst(t *testing.T) {
+	ctx := context.Background()
+	d, err := demo.Generate(ctx, t.TempDir(), time.Date(2026, 11, 1, 16, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Store.Close()
+	now := d.Clock.Now()
+	var id int64
+	err = d.Store.Write(ctx, func(tx *store.Tx) error {
+		if id, err = tx.CreateIntent(store.Intent{Key: "k", Workflow: "no_progress_recovery", Origin: "manual",
+			Locks: []string{"transfer:x|y"}, Steps: []store.Step{{Op: "manager.queue.fail"}, {Op: "client.stop"}}}, now); err != nil {
+			return err
+		}
+		if err := tx.SetIntentState(id, store.IntentExecuting, "", now); err != nil {
+			return err
+		}
+		return tx.BeginStep(id, 1, now)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := app.New(d.Store, d.Config, d.Clock.Now, nil)
+	ex := &unknownExec{}
+	svc.SetExecutor(ex)
+	_, _, _ = svc.Act(ctx, stalledFindings(t, d)[0].ID, app.ActorCLI)
+	in, err := d.Store.Intent(ctx, id)
+	if err != nil || in.State != store.IntentUncertain || !in.ReviewRequired || in.Steps[1].State != store.StepSkipped || len(in.Locks) != 1 || ex.sent != 0 {
+		t.Fatalf("interrupted intent %+v %v; sent %d", in, err, ex.sent)
+	}
+	// Review now works on it.
+	if err := svc.Review(ctx, id, store.IntentFailed, app.ActorCLI, "checked: not applied"); err != nil {
+		t.Fatal(err)
+	}
+}

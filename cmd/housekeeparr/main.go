@@ -220,19 +220,31 @@ func cmdRun(args []string, out, errOut io.Writer) int {
 		return code
 	}
 	defer st.Close()
-	// Startup reconciliation of the action journal. This build has no write
-	// executor, so nothing can be observed or settled here; anything
-	// interrupted or uncertain is reported and keeps its locks for review,
-	// and a suspected restore holds all writes. Nothing is ever replayed.
-	if js, err := app.New(st, cfg, nil, nil).Journal(ctx); err != nil {
-		fmt.Fprintln(errOut, "action journal:", err)
-		return exitFailure
-	} else {
+	// Startup reconciliation of the action journal: interrupted actions are
+	// observed with the real executor (never re-sent); anything that cannot
+	// be established is held as uncertain with its locks for review, and a
+	// suspected restore holds all writes.
+	{
+		jsvc := app.New(st, cfg, nil, nil)
+		jsvc.SetExecutor(workflow.FromConnections(conns.Clients, conns.Managers))
+		rep, err := jsvc.Reconcile(ctx)
+		if err != nil {
+			fmt.Fprintln(errOut, "action journal reconciliation:", err)
+			return exitFailure
+		}
+		if len(rep.Settled)+len(rep.Cancelled)+len(rep.Uncertain) > 0 {
+			log.Warn("reconciled interrupted actions", "settled", rep.Settled, "cancelled", rep.Cancelled, "uncertain", rep.Uncertain)
+		}
+		js, err := jsvc.Journal(ctx)
+		if err != nil {
+			fmt.Fprintln(errOut, "action journal:", err)
+			return exitFailure
+		}
 		if js.RestoreHold != nil {
 			log.Warn("writes held: state database may predate actions already sent", "reason", js.RestoreHold.Reason)
 		}
-		if js.Active > 0 || js.Uncertain > 0 {
-			log.Warn("actions need review before related work can proceed", "interrupted", js.Active, "uncertain", js.Uncertain)
+		if js.Uncertain > 0 {
+			log.Warn("actions need review before related work can proceed", "uncertain", js.Uncertain)
 		}
 	}
 	kind := "daemon"
