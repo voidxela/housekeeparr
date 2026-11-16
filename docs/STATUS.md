@@ -92,6 +92,19 @@ compatibility.md):
   Blocklist/history evidence must be new relative to a baseline journaled
   with the dispatching record (migration 0006); titles match byte-exactly.
 
+### Implementation proposals still hard-coded (not approved defaults)
+
+Configurable with provenance in `[automation.limits]` (values are proposals):
+acquisitions 20 and manager_acquisitions 20 per rolling 24 h, content_attempts
+3 (until reset), success_cooldown 24 h, retained_transfers 25, retained_gib
+none, actions_per_cycle 1, correlated_stalls 3 / correlated_percent 50.
+Still constants in code, also proposals needing a product decision or
+configuration: the repeated-refusal circuit breaker (2 definite refusals in
+24 h per client/manager scope), 5 live evaluations per dispatch pass,
+outcome tracking's "no grab observed" after 24 h and tracking window of 7
+days, the 5-minute preview expiry, and the executor's 15 s observation
+settle time.
+
 ## Milestone 1 — read-only foundation (in progress)
 
 | Area | Status | Notes |
