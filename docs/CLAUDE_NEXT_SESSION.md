@@ -68,9 +68,12 @@ do not turn a choice of defaults into a prolonged blocker for other work.
 
 1. **Real-instance runs of the other clients' recovery.** The recovery
    integration test now runs through `--manager-client` and is required.
-   Deluge 2.2.0 passed and is registered. Run, one at a time, rTorrent
-   (`--clients rtorrent --manager-client rtorrent --managers sonarr,radarr`),
-   then Transmission 4.0.6 and 4.1.4 (`--tr`). Inspect each failure before changing code. Probe rTorrent `d.stop`
+   Deluge 2.2.0 passed and is registered. rTorrent 0.9.8: both recovery
+   workflows passed at `b8d3313`, but the run failed on the pre-existing
+   `errored-recheck` observation fixture (reported seeding instead of an
+   error; see compatibility.md). Diagnose that fixture first (do not rerun
+   until green), then register rTorrent only after a clean run. Then
+   Transmission 4.0.6 and 4.1.4 (`--tr`; first build ~15 minutes each). Inspect each failure before changing code. Probe rTorrent `d.stop`
    versus `d.close` (registration, files, state mapping, stale `d.message`)
    before relying on it; user pause must never be mistaken for permission.
    Add `action.Tested` entries only for recorded passing runs, and record
