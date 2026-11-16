@@ -213,8 +213,13 @@ func cmdActions(args []string, out, errOut io.Writer) int {
 		fmt.Fprintln(errOut, err)
 		return exitFailure
 	}
+	outcomes, err := svc.Outcomes(ctx, list)
+	if err != nil {
+		fmt.Fprintln(errOut, err)
+		return exitFailure
+	}
 	if o.json {
-		return writeJSON(out, map[string]any{"journal": js, "actions": list})
+		return writeJSON(out, map[string]any{"journal": js, "actions": list, "outcomes": outcomes})
 	}
 	if js.RestoreHold != nil {
 		fmt.Fprintf(out, "WRITES HELD: %s\nCheck external state, then run `housekeeparr restore-ack --confirm`.\n\n", js.RestoreHold.Reason)
@@ -234,6 +239,15 @@ func cmdActions(args []string, out, errOut io.Writer) int {
 		fmt.Fprintf(w, "%d\t%s%s\t%s\t%s\t%s\t%s\n", in.ID, in.State, review, in.Workflow, in.Origin, ts(&in.CreatedAt), in.Explanation)
 	}
 	w.Flush()
+	for _, in := range list {
+		if oc, ok := outcomes[in.ID]; ok {
+			fmt.Fprintf(out, "#%d replacement: %s", in.ID, oc.State)
+			if oc.Note != "" {
+				fmt.Fprintf(out, " — %s", oc.Note)
+			}
+			fmt.Fprintln(out)
+		}
+	}
 	if js.Uncertain > 0 || js.RestoreHold != nil {
 		return exitProblem
 	}

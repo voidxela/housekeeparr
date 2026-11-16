@@ -313,6 +313,16 @@ func (e *Engine) evaluate(tx *store.Tx, results []*fetched, gone map[string][]st
 			return total, err
 		}
 	}
+	// 1b. Outcomes of earlier recoveries, from managers read completely.
+	freshManagers := map[string]bool{}
+	for _, f := range results {
+		if f.queue != nil && f.err == nil && f.queue.Complete {
+			freshManagers[f.id] = true
+		}
+	}
+	if err := e.trackOutcomes(tx, freshManagers, now); err != nil {
+		return total, err
+	}
 	// 2. Transfer diagnoses.
 	for _, f := range results {
 		if f.transfer == nil || f.err != nil {

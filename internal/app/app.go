@@ -497,15 +497,30 @@ type Activity struct {
 	Audit   []store.AuditEvent    `json:"audit_events"`
 	Runs    []store.Run           `json:"runs"`
 	Actions []store.Intent        `json:"actions"`
-	Journal JournalStatus         `json:"journal"`
-	Note    string                `json:"note"`
+	// Outcomes are what was observed after each verified recovery, by
+	// action ID.
+	Outcomes map[int64]store.RecoveryOutcome `json:"outcomes,omitempty"`
+	Journal  JournalStatus                   `json:"journal"`
+	Note     string                          `json:"note"`
+}
+
+// Outcomes returns the replacement outcomes of the given actions.
+func (s *Service) Outcomes(ctx context.Context, actions []store.Intent) (map[int64]store.RecoveryOutcome, error) {
+	ids := make([]int64, 0, len(actions))
+	for _, in := range actions {
+		ids = append(ids, in.ID)
+	}
+	return s.st.Outcomes(ctx, ids)
 }
 
 // Activity returns recent lifecycle and audit history.
 func (s *Service) Activity(ctx context.Context, limit int) (*Activity, error) {
-	a := &Activity{Note: "Every action is journaled before any request is sent, and each step is verified by observation. Only tested workflows can run, and only manually outside observe mode; uncertain outcomes are held for review, never retried."}
+	a := &Activity{Note: "Every action is journaled before any request is sent, and each step is verified by observation. Only tested workflows can run, and only manually outside observe mode; uncertain outcomes are held for review, never retried. After a verified recovery, the replacement grab, its progress, and completion are observed separately."}
 	var err error
 	if a.Actions, err = s.st.Intents(ctx, store.IntentFilter{Limit: limit}); err != nil {
+		return nil, err
+	}
+	if a.Outcomes, err = s.Outcomes(ctx, a.Actions); err != nil {
 		return nil, err
 	}
 	if a.Journal, err = s.Journal(ctx); err != nil {

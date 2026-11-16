@@ -140,7 +140,8 @@ func proposal(subject string) Proposal {
 		Workflow: "no_progress_recovery", Origin: OriginManual, Subject: json.RawMessage(`{"transfer":"` + subject + `"}`),
 		Locks: []string{"transfer:" + subject}, Fingerprint: "fp1", PolicyRevision: "p", ConfigRevision: "c",
 		Operations: []Operation{
-			{Op: "manager.queue.fail", Request: json.RawMessage(`{"removeFromClient":false,"blocklist":true,"skipRedownload":true,"changeCategory":false}`)},
+			{Op: "manager.queue.fail", Target: json.RawMessage(`{"manager_id":"sonarr","queue_id":7,"download_id":"aa","episode_id":1}`),
+				Request: json.RawMessage(`{"removeFromClient":false,"blocklist":true,"skipRedownload":true,"changeCategory":false}`)},
 			{Op: "client.stop", Target: json.RawMessage(`{"client_id":"qbit","native_id":"aa"}`), Request: json.RawMessage(`{}`)},
 		},
 		Prerequisites: []Check{{Name: "eligible", Satisfied: true}},
@@ -173,6 +174,11 @@ func TestExecuteSucceedsAndReleasesLocks(t *testing.T) {
 	}
 	if until, _, ok, _ := c.Store.Cooldown(ctx, "transfer:qbit|aa"); !ok || !until.Equal(t0.Add(time.Hour)) {
 		t.Fatalf("cooldown %v %v", until, ok)
+	}
+	// The replacement is now tracked from the failed release.
+	if oc, _ := c.Store.Outcomes(ctx, []int64{res.IntentID}); oc[res.IntentID].State != store.OutcomeAwaitingGrab ||
+		oc[res.IntentID].Content[0] != "episode:1" || oc[res.IntentID].OldDownloadID != "aa" {
+		t.Fatalf("outcome %+v", oc)
 	}
 	// The verified stop retained the transfer with its planned size.
 	ret, _ := c.Store.RetainedTransfers(ctx, false, 0)

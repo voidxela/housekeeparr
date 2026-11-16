@@ -320,6 +320,18 @@ func (s *Store) Transfer(ctx context.Context, clientID, nativeID string) (*Trans
 	return &r, nil
 }
 
+// Transfer returns one transfer within the transaction, or nil.
+func (t *Tx) Transfer(clientID, nativeID string) (*TransferRecord, error) {
+	r, err := scanTransfer(t.queryRow("SELECT "+transferCols+" FROM transfers WHERE client_id=? AND native_id=?", clientID, nativeID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
 // TransferRef is a lightweight identity used for correlation.
 type TransferRef struct {
 	ClientID, NativeID, Name string

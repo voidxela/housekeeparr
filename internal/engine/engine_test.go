@@ -755,3 +755,62 @@ func TestRetainedTransferReleasedOnlyWhenGone(t *testing.T) {
 		t.Fatalf("usage %+v", u)
 	}
 }
+
+// After a verified recovery the engine records the replacement grab, its
+// progress, and completion as separate outcomes, only from complete reads.
+func TestRecoveryOutcomesTrackedSeparately(t *testing.T) {
+	const newHash = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	h := newHarness(t, baseConfig)
+	h.cycle()
+	if err := h.st.Write(ctx, func(tx *store.Tx) error {
+		return tx.CreateOutcome(store.RecoveryOutcome{IntentID: 7, ManagerID: "sonarr", Content: []string{"episode:101"}, OldDownloadID: hash, StartedAt: t0})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	state := func() store.RecoveryOutcome {
+		t.Helper()
+		m, err := h.st.Outcomes(ctx, []int64{7})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m[7]
+	}
+	// The old release's row reappearing is not a replacement.
+	h.mgr.SetQueue(fake.Episode(1, hash, "Old.Release", "Example Show", 1, 1))
+	h.run(10, 10)
+	if o := state(); o.State != store.OutcomeAwaitingGrab {
+		t.Fatalf("old release counted as replacement: %+v", o)
+	}
+	// Nothing for a day: reported as not observed, still watched.
+	h.mgr.SetQueue()
+	h.run(25*60, 60)
+	if o := state(); o.State != store.OutcomeNoGrabYet || !strings.Contains(o.Note, "not evidence that no release exists") {
+		t.Fatalf("no grab: %+v", o)
+	}
+	// A failed manager read changes nothing.
+	h.mgr.SetQueue(fake.Episode(2, newHash, "New.Release", "Example Show", 1, 1))
+	h.mgr.Fail(&adapter.Error{Class: adapter.ErrTransient, Op: "fake", Message: "down"})
+	h.run(10, 10)
+	if o := state(); o.State != store.OutcomeNoGrabYet {
+		t.Fatalf("moved on a failed read: %+v", o)
+	}
+	h.mgr.Fail(nil)
+	h.client.SetTransfers(fake.Transfer(newHash, "New.Release", domain.StateDownloading, 1*gib, 10*gib, t0))
+	h.run(20, 10)
+	o := state()
+	if o.State != store.OutcomeGrabbed || o.NewDownloadID != newHash || o.NewNativeID != newHash || o.GrabVerified == nil {
+		t.Fatalf("grab: %+v", o)
+	}
+	h.client.Update(newHash, func(tr *domain.Transfer) { tr.VerifiedBytes = domain.KnownValue[int64](3 * gib) })
+	h.run(10, 10)
+	if o := state(); o.State != store.OutcomeProgressing {
+		t.Fatalf("progress: %+v", o)
+	}
+	h.client.Update(newHash, func(tr *domain.Transfer) {
+		tr.StateClass, tr.VerifiedBytes = domain.StateComplete, domain.KnownValue[int64](10*gib)
+	})
+	h.run(10, 10)
+	if o := state(); o.State != store.OutcomeCompleted || o.CompletedAt == nil || o.GrabbedAt == nil || o.ProgressAt == nil {
+		t.Fatalf("completion: %+v", o)
+	}
+}

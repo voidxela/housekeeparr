@@ -483,6 +483,9 @@ func (c *Coordinator) run(ctx context.Context, id int64, p Proposal) (Result, er
 		if err := tx.SetIntentState(id, store.IntentSucceeded, "every step verified", now); err != nil {
 			return err
 		}
+		if err := trackOutcome(tx, id, in.Steps, now); err != nil {
+			return err
+		}
 		if p.Cooldown > 0 {
 			for _, l := range p.Locks {
 				if err := tx.SetCooldown(l, now.Add(p.Cooldown), fmt.Sprintf("action #%d (%s)", id, p.Workflow)); err != nil {
@@ -650,6 +653,9 @@ func (c *Coordinator) Reconcile(ctx context.Context) (ReconcileReport, error) {
 			if err := c.finish(ctx, in.ID, store.IntentSucceeded, "verified by reconciliation after interruption"); err != nil {
 				return rep, err
 			}
+			if err := c.Store.Write(ctx, func(tx *store.Tx) error { return trackOutcome(tx, in.ID, in.Steps, c.now()) }); err != nil {
+				return rep, err
+			}
 			rep.Settled = append(rep.Settled, in.ID)
 		default:
 			var pend []store.Step
@@ -729,4 +735,36 @@ func recordRetained(tx *store.Tx, id int64, st store.Step, pl *Planned, now time
 		}
 	}
 	return tx.RecordRetained(r)
+}
+
+// trackOutcome starts observing the replacement after a recovery whose
+// manager step failed a grab with the manager owning the redownload. The
+// engine then records a replacement grab, its progress, and completion as
+// separate outcomes.
+func trackOutcome(tx *store.Tx, id int64, steps []store.Step, now time.Time) error {
+	for _, st := range steps {
+		if st.Op != "manager.queue.fail" {
+			continue
+		}
+		var tg struct {
+			ManagerID  string `json:"manager_id"`
+			DownloadID string `json:"download_id"`
+			EpisodeID  int64  `json:"episode_id"`
+			MovieID    int64  `json:"movie_id"`
+		}
+		if err := json.Unmarshal(st.Target, &tg); err != nil || tg.ManagerID == "" {
+			return nil
+		}
+		var content []string
+		switch {
+		case tg.MovieID > 0:
+			content = []string{fmt.Sprintf("movie:%d", tg.MovieID)}
+		case tg.EpisodeID > 0:
+			content = []string{fmt.Sprintf("episode:%d", tg.EpisodeID)}
+		default:
+			return nil
+		}
+		return tx.CreateOutcome(store.RecoveryOutcome{IntentID: id, ManagerID: tg.ManagerID, Content: content, OldDownloadID: tg.DownloadID, StartedAt: now})
+	}
+	return nil
 }
