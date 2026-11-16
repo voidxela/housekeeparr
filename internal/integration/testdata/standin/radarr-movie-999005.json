@@ -1,0 +1,35 @@
+{
+ "tmdbId": 999005,
+ "imdbId": "tt9990005",
+ "title": "Housekeeparr Fourth Fixture Film",
+ "originalTitle": "Housekeeparr Fourth Fixture Film",
+ "titleSlug": "999005",
+ "overview": "Fictional film served by the Housekeeparr integration stand-in.",
+ "year": 2018,
+ "inCinema": "2018-03-01T00:00:00Z",
+ "physicalRelease": "2018-06-01T00:00:00Z",
+ "digitalRelease": "2018-05-15T00:00:00Z",
+ "runtime": 100,
+ "originalLanguage": "en",
+ "status": "Released",
+ "studio": "Fixture Studio",
+ "movieRatings": {
+  "tmdb": {
+   "count": 1,
+   "value": 7.0,
+   "type": "user"
+  }
+ },
+ "ratings": [],
+ "genres": [],
+ "keywords": [],
+ "alternativeTitles": [],
+ "translations": [],
+ "certifications": [],
+ "images": [],
+ "credits": {
+  "cast": [],
+  "crew": []
+ },
+ "recommendations": []
+}

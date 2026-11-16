@@ -1,0 +1,52 @@
+[
+ {
+  "host": "skyhook.sonarr.tv",
+  "path": "/v1/tvdb/shows/en/999001",
+  "file": "sonarr-show-999001.json"
+ },
+ {
+  "host": "skyhook.sonarr.tv",
+  "path": "/v1/tvdb/search/en/*",
+  "file": "sonarr-search-999001.json"
+ },
+ {
+  "host": "services.sonarr.tv",
+  "path": "*",
+  "status": 404
+ },
+ {
+  "host": "api.radarr.video",
+  "path": "/v1/movie/999002",
+  "file": "radarr-movie-999002.json"
+ },
+ {
+  "host": "api.radarr.video",
+  "path": "/v1/movie/999003",
+  "file": "radarr-movie-999003.json"
+ },
+ {
+  "host": "api.radarr.video",
+  "path": "/v1/movie/999005",
+  "file": "radarr-movie-999005.json"
+ },
+ {
+  "host": "api.radarr.video",
+  "path": "/v1/movie/999004",
+  "file": "radarr-movie-999004.json"
+ },
+ {
+  "host": "api.radarr.video",
+  "path": "*",
+  "status": 404
+ },
+ {
+  "host": "radarr.servarr.com",
+  "path": "*",
+  "status": 404
+ },
+ {
+  "host": "api.themoviedb.org",
+  "path": "*",
+  "status": 404
+ }
+]

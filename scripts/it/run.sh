@@ -20,8 +20,13 @@
 # Every selected application's tests must report PASS; a skipped test fails
 # the run, so a missing environment variable can never be recorded as a pass.
 #
-# Note: Sonarr and Radarr may contact their own update/metadata services
-# while they run. No real user data or public torrent is involved.
+# Inside the network namespace, the managers' hard-coded metadata/update
+# hosts resolve (via a private bind-mounted /etc/hosts) to a loopback
+# stand-in serving fictional content, and a loopback Torznab stand-in offers
+# synthetic releases, so the managed-content probes produce real grab
+# history. With --no-netns those probes are skipped and the managers may try
+# to reach their real services. No real user data or public torrent is
+# involved.
 set -euo pipefail
 
 QBT_VERSION=5.3.0
@@ -132,7 +137,10 @@ prefetch() {
 if [ "$NETNS" = 1 ] && [ -z "${HK_IT_IN_NETNS:-}" ]; then
 	command -v unshare >/dev/null && command -v ip >/dev/null || { echo "unshare and ip are required for network isolation (or pass --no-netns)" >&2; exit 2; }
 	prefetch
-	exec unshare -rn env HK_IT_IN_NETNS=1 bash -c 'ip link set lo up && exec "$@"' _ "$0" "${ORIG_ARGS[@]}"
+	# -m: a private mount namespace, so the managers' metadata hosts can be
+	# redirected to the loopback stand-in by bind-mounting a private hosts
+	# file over /etc/hosts. The host's /etc/hosts is never modified.
+	exec unshare -rnm env HK_IT_IN_NETNS=1 bash -c 'ip link set lo up && exec "$@"' _ "$0" "${ORIG_ARGS[@]}"
 fi
 if [ -n "${HK_IT_IN_NETNS:-}" ]; then
 	python3 -c 'import socket,sys; s=socket.socket(); s.settimeout(2); sys.exit(0 if s.connect_ex(("192.0.2.1", 80)) != 0 else 1)' ||
@@ -154,6 +162,29 @@ trap cleanup EXIT
 
 TESTS=()
 PROBES=() # state-changing workflow probes, run after observation tests
+MANAGED_PROBES=() # run after every unknown-content probe
+
+# --- metadata and indexer stand-in (managed-content probes) ------------------
+# Only inside the isolated namespace: the managers' metadata hosts are
+# hard-coded HTTPS names, redirected here to a loopback stand-in whose
+# throwaway CA the managers trust through SSL_CERT_FILE.
+STANDIN=0
+META_HOSTS="skyhook.sonarr.tv services.sonarr.tv api.radarr.video radarr.servarr.com api.themoviedb.org"
+start_standin() {
+	printf '127.0.0.1 localhost\n::1 localhost\n127.0.0.1 %s\n' "$META_HOSTS" > "$WORK/hosts"
+	mount --bind "$WORK/hosts" /etc/hosts
+	go build -tags integration -o "$WORK/standin" "$ROOT/internal/integration/standin"
+	local port key; port=$(freeport); key=$(python3 -c 'import secrets; print(secrets.token_hex(16))')
+	"$WORK/standin" -tls-addr 127.0.0.1:443 -indexer-addr "127.0.0.1:$port" -hosts "${META_HOSTS// /,}" \
+		-ca-out "$WORK/standin-ca.pem" -routes "$ROOT/internal/integration/testdata/standin/routes.json" \
+		-manifest "$WORK/torrents/managed.json" -torrents "$WORK/torrents" -apikey "$key" -ready "$WORK/standin.ready" \
+		> "$WORK/standin.log" 2>&1 &
+	PIDS+=($!); LOGS+=("$WORK/standin.log")
+	for _ in $(seq 1 30); do [ -f "$WORK/standin.ready" ] && break; sleep 1; done
+	[ -f "$WORK/standin.ready" ] || { echo "stand-in did not start" >&2; tail "$WORK/standin.log" >&2; exit 1; }
+	export HK_IT_INDEXER_URL="http://127.0.0.1:$port" HK_IT_INDEXER_KEY="$key"
+	STANDIN=1
+}
 export HK_IT_MANIFEST="$WORK/torrents/manifest.json" HK_IT_WORK="$WORK"
 
 # --- synthetic torrents -----------------------------------------------------
@@ -374,7 +405,9 @@ EOF
 	# migrations require ICU cultures, so it uses the host ICU.
 	local invariant=0
 	[ "$app" = sonarr ] && invariant=1
-	DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=$invariant "$WORK/$app-app/$title/$title" -nobrowser -data="$WORK/$app-data" > "$WORK/$app.log" 2>&1 &
+	local tls=()
+	[ "$STANDIN" = 1 ] && tls=(SSL_CERT_FILE="$WORK/standin-ca.pem")
+	env "${tls[@]}" DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=$invariant "$WORK/$app-app/$title/$title" -nobrowser -data="$WORK/$app-data" > "$WORK/$app.log" 2>&1 &
 	PIDS+=($!); LOGS+=("$WORK/$app.log")
 	local url="http://127.0.0.1:$port"
 	waitfor "$url/api/v3/system/status?apikey=$key" 180
@@ -395,6 +428,7 @@ start_sonarr() {
 	export HK_IT_SONARR_URL="$SONARR" HK_IT_SONARR_KEY="$SONARR_KEY" HK_IT_SONARR_VERSION="$SONARR_VERSION"
 	TESTS+=(TestSonarrReleasedBehaviour TestEngineCorrelatesRealInstances)
 	PROBES+=(TestSonarrQueueRemovalSemantics)
+	if [ "$STANDIN" = 1 ]; then MANAGED_PROBES+=(TestSonarrManagedRemovalSemantics); fi
 }
 
 start_radarr() {
@@ -402,6 +436,7 @@ start_radarr() {
 	export HK_IT_RADARR_URL="$RADARR" HK_IT_RADARR_KEY="$RADARR_KEY" HK_IT_RADARR_VERSION="$RADARR_VERSION"
 	TESTS+=(TestRadarrReleasedBehaviour TestEngineCorrelatesRadarr)
 	PROBES+=(TestRadarrQueueRemovalSemantics)
+	if [ "$STANDIN" = 1 ]; then MANAGED_PROBES+=(TestRadarrManagedRemovalSemantics); fi
 }
 
 for c in ${CLIENTS//,/ }; do
@@ -413,6 +448,9 @@ for c in ${CLIENTS//,/ }; do
 	*) echo "client $c is not in the harness yet" >&2; exit 2 ;;
 	esac
 done
+if [ -n "$MANAGERS" ]; then
+	if [ -n "${HK_IT_IN_NETNS:-}" ]; then start_standin; else echo "managed-content probes need the network namespace; skipped with --no-netns" >&2; fi
+fi
 for m in ${MANAGERS//,/ }; do
 	case "$m" in
 	sonarr) start_sonarr ;;
@@ -429,11 +467,13 @@ RUN=$(IFS='|'; echo "^(${TESTS[*]})\$")
 set +e
 go test -tags integration -count=1 -v -run "$RUN" ./internal/integration/ | tee "$WORK/go-test.log"
 STATUS=${PIPESTATUS[0]}
-if [ ${#PROBES[@]} -gt 0 ]; then
-	RUN=$(IFS='|'; echo "^(${PROBES[*]})\$")
-	go test -tags integration -count=1 -v -run "$RUN" ./internal/integration/ | tee -a "$WORK/go-test.log"
+# Probes change manager and client state, so each runs on its own, in the
+# order registered (unknown-content probes before managed-content probes).
+PROBES+=("${MANAGED_PROBES[@]}")
+for p in "${PROBES[@]}"; do
+	go test -tags integration -count=1 -v -run "^$p\$" ./internal/integration/ | tee -a "$WORK/go-test.log"
 	[ "${PIPESTATUS[0]}" -eq 0 ] || STATUS=1
-fi
+done
 set -e
 for t in "${TESTS[@]}" "${PROBES[@]}"; do
 	if ! grep -q -- "^--- PASS: $t " "$WORK/go-test.log"; then

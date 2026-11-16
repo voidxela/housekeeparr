@@ -75,5 +75,26 @@ def main(out, save):
     with open(os.path.join(out, "manifest.json"), "w") as f:
         json.dump(m, f, indent=1)
 
+    # Managed releases: never added to a client by the harness. The
+    # integration stand-in indexer (internal/integration/standin) offers them
+    # to Sonarr/Radarr for fictional content its metadata stand-in serves, so
+    # the managers grab them and create real grab history. Partial data, so
+    # each grab stays incomplete.
+    managed = []
+    def release(key, name, size, **ident):
+        h, payload = make(out, name, [(name + ".mkv", size)])
+        write(save, name, payload, False, lambda p, d: d[: len(d) // 2] + b"\0" * (len(d) - len(d) // 2))
+        managed.append(dict(key=key, name=name, hash=h, size=size, files=[name + ".mkv"], data="half", managed=ident))
+    release("tv-e01", "Housekeeparr.Fixture.Show.S01E01.1080p.WEB-DL.x264-HKFIX", 4 * MB, kind="tv", tvdbId=999001, season=1, episode=1)
+    release("tv-e02", "Housekeeparr.Fixture.Show.S01E02.1080p.WEB-DL.x264-HKFIX", 4 * MB, kind="tv", tvdbId=999001, season=1, episode=2)
+    release("tv-e03", "Housekeeparr.Fixture.Show.S01E03.1080p.WEB-DL.x264-HKFIX", 4 * MB, kind="tv", tvdbId=999001, season=1, episode=3)
+    release("tv-e04", "Housekeeparr.Fixture.Show.S01E04.1080p.WEB-DL.x264-HKFIX", 4 * MB, kind="tv", tvdbId=999001, season=1, episode=4)
+    release("film-a", "Housekeeparr.Fixture.Film.2020.1080p.WEB-DL.x264-HKFIX", 4 * MB, kind="movie", tmdbId=999002, imdbId="tt9990002")
+    release("film-b", "Housekeeparr.Second.Fixture.Film.2021.1080p.WEB-DL.x264-HKFIX", 4 * MB, kind="movie", tmdbId=999003, imdbId="tt9990003")
+    release("film-c", "Housekeeparr.Third.Fixture.Film.2019.1080p.WEB-DL.x264-HKFIX", 4 * MB, kind="movie", tmdbId=999004, imdbId="tt9990004")
+    release("film-d", "Housekeeparr.Fourth.Fixture.Film.2018.1080p.WEB-DL.x264-HKFIX", 4 * MB, kind="movie", tmdbId=999005, imdbId="tt9990005")
+    with open(os.path.join(out, "managed.json"), "w") as f:
+        json.dump(managed, f, indent=1)
+
 if __name__ == "__main__":
     main(sys.argv[1], sys.argv[2])

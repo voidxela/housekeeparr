@@ -141,13 +141,17 @@ func (a arrAPI) history(hash string) []string {
 	}
 	var pg struct {
 		Records []struct {
-			EventType string `json:"eventType"`
+			EventType  string `json:"eventType"`
+			DownloadID string `json:"downloadId"`
 		} `json:"records"`
 	}
 	_ = json.Unmarshal(b, &pg)
 	var out []string
 	for _, r := range pg.Records {
-		out = append(out, r.EventType)
+		// Filter client-side as well: the query filter is not relied on.
+		if strings.EqualFold(r.DownloadID, hash) {
+			out = append(out, r.EventType)
+		}
 	}
 	return out
 }

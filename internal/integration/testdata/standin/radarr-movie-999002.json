@@ -1,0 +1,35 @@
+{
+ "tmdbId": 999002,
+ "imdbId": "tt9990002",
+ "title": "Housekeeparr Fixture Film",
+ "originalTitle": "Housekeeparr Fixture Film",
+ "titleSlug": "999002",
+ "overview": "Fictional film served by the Housekeeparr integration stand-in.",
+ "year": 2020,
+ "inCinema": "2020-03-01T00:00:00Z",
+ "physicalRelease": "2020-06-01T00:00:00Z",
+ "digitalRelease": "2020-05-15T00:00:00Z",
+ "runtime": 100,
+ "originalLanguage": "en",
+ "status": "Released",
+ "studio": "Fixture Studio",
+ "movieRatings": {
+  "tmdb": {
+   "count": 1,
+   "value": 7.0,
+   "type": "user"
+  }
+ },
+ "ratings": [],
+ "genres": [],
+ "keywords": [],
+ "alternativeTitles": [],
+ "translations": [],
+ "certifications": [],
+ "images": [],
+ "credits": {
+  "cast": [],
+  "crew": []
+ },
+ "recommendations": []
+}

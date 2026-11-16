@@ -1,0 +1,35 @@
+{
+ "tmdbId": 999004,
+ "imdbId": "tt9990004",
+ "title": "Housekeeparr Third Fixture Film",
+ "originalTitle": "Housekeeparr Third Fixture Film",
+ "titleSlug": "999004",
+ "overview": "Fictional film served by the Housekeeparr integration stand-in.",
+ "year": 2019,
+ "inCinema": "2019-03-01T00:00:00Z",
+ "physicalRelease": "2019-06-01T00:00:00Z",
+ "digitalRelease": "2019-05-15T00:00:00Z",
+ "runtime": 100,
+ "originalLanguage": "en",
+ "status": "Released",
+ "studio": "Fixture Studio",
+ "movieRatings": {
+  "tmdb": {
+   "count": 1,
+   "value": 7.0,
+   "type": "user"
+  }
+ },
+ "ratings": [],
+ "genres": [],
+ "keywords": [],
+ "alternativeTitles": [],
+ "translations": [],
+ "certifications": [],
+ "images": [],
+ "credits": {
+  "cast": [],
+  "crew": []
+ },
+ "recommendations": []
+}

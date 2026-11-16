@@ -1,0 +1,35 @@
+{
+ "tmdbId": 999003,
+ "imdbId": "tt9990003",
+ "title": "Housekeeparr Second Fixture Film",
+ "originalTitle": "Housekeeparr Second Fixture Film",
+ "titleSlug": "999003",
+ "overview": "Fictional film served by the Housekeeparr integration stand-in.",
+ "year": 2021,
+ "inCinema": "2021-03-01T00:00:00Z",
+ "physicalRelease": "2021-06-01T00:00:00Z",
+ "digitalRelease": "2021-05-15T00:00:00Z",
+ "runtime": 100,
+ "originalLanguage": "en",
+ "status": "Released",
+ "studio": "Fixture Studio",
+ "movieRatings": {
+  "tmdb": {
+   "count": 1,
+   "value": 7.0,
+   "type": "user"
+  }
+ },
+ "ratings": [],
+ "genres": [],
+ "keywords": [],
+ "alternativeTitles": [],
+ "translations": [],
+ "certifications": [],
+ "images": [],
+ "credits": {
+  "cast": [],
+  "crew": []
+ },
+ "recommendations": []
+}
