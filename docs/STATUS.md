@@ -49,7 +49,7 @@ testing decisions and implementation sequence.
 | --- | --- | --- |
 | Go module, toolchain, build/vet/test commands | done | See [AGENTS.md](../AGENTS.md). |
 | Versioned TOML configuration, validation, secret references (`env:`/`file:`) | done | Literal secrets, unknown keys, non-loopback web binds, plain HTTP to non-local hosts, and unimplemented integrations are rejected. |
-| Effective policy resolution with per-setting provenance | done | Global defaults → `[policy]` → `[qbittorrent.<id>.policy]`. Scoped rules, item overrides, and exclusions are *remaining*. |
+| Effective policy resolution with per-setting provenance | done | Global defaults → `[policy]`/`[automation.workflows]` → `[<client>.<id>.policy]` → `[[rule]]` by priority → `[[override]]`; `[[exclude]]` always applies. See milestone 2. |
 | Embedded state store, OS-level single-writer lock, read-only opens | done | SQLite (pure Go), WAL, `synchronous=FULL`, `flock`. Unix only; other platforms refuse to run as writer. |
 | Versioned forward migrations with pre-migration backup | done | v1 → v2 tested against a real v1 database. |
 | Bounded retention (observations, checks, resolved findings, audit) | done | Unresolved findings and transfers they reference are never pruned. |
@@ -70,18 +70,37 @@ testing decisions and implementation sequence.
 | Integration harness against disposable released instances (`scripts/it/run.sh`) | done | Pinned, checksum-verified qBittorrent 5.3.0 / 4.6.7 and Sonarr 4.0.20 releases on loopback with locally generated torrents (closed-port tracker, DHT/PeX/LSD off). Executed and passing on 2026-11-15 (aarch64). Selectable per application (`--clients`, `--managers`); a required test that skips fails the run. Transmission is built from pinned release tarballs (`scripts/it/build-transmission.sh`); rTorrent and lighttpd come from pinned Debian packages extracted into the cache, never installed. Deluge 2.2.0 likewise. Runs are isolated in a loopback-only network namespace by default. |
 | Packaging: `Dockerfile` (distroless, non-root, headless by default), user-level systemd unit | unverified | Written but never built or run here (no container runtime or user systemd session). The web interface cannot be exposed from a container until authentication exists. See `packaging/README.md`. |
 
+## Milestone 2 — policy and durable action foundation (in progress)
+
+No adapter has a write method, and the registry of tested write workflows
+(`action.Tested`) is empty, so no operational write can happen. Everything
+below is exercised with fakes.
+
+| Area | Status | Notes |
+| --- | --- | --- |
+| Modes `observe` / `paused` / `automatic`, `[automation] emergency_stop`, per-workflow enablement (`no_progress_recovery`, `metadata_recovery`, `preserved_data_failure`, `partial_pack`, `missing_search`; all off by default) | done | `automatic` is accepted but permits nothing without a tested workflow. Interpretation (proposed, not yet in SPEC): manual actions are refused in `observe` (no operational writes at all) and allowed in `paused` (which stops automation only); emergency stop blocks both. |
+| Scoped rules (`[[rule]]`, priority, match on client/category/manager/privacy), item overrides (`[[override]]` by transfer or content, reason required), exclusions (`[[exclude]]`, per workflow) with provenance in every effective setting | done | Equal-priority rules with possibly overlapping matchers and conflicting values are validation errors. The effective revision covers settings, permissions, exclusions, mode, and emergency stop. Implemented by a delegated agent (Gemini via `agy`) in an isolated worktree, reviewed, and applied as one commit. |
+| Action journal: migration 0003 (intents, steps, locks, budgets, cooldowns), upgrade test from a real v2 database | done | Intent, steps, locks, and budget reservation are committed in one transaction before any request; each step is committed as `dispatching` before it is sent. Uncertain intents keep their locks until reviewed. Budgets persist across restart. |
+| Restore detection | done | A journal high-water marker beside the database (`journal.hwm`, fsynced) detects a restored or replaced database; writes are held until `housekeeparr restore-ack --confirm`. |
+| Action coordinator (`internal/action`) | done | Gate and prerequisites, preview expiry, pre-write re-fetch compared with the preview fingerprint, journaled dispatch, postcondition verification by observation, conservative error classification (only unauthorized/unsupported/rate-limited/4xx count as refused; a timeout or malformed 2xx response is uncertain), no blind retry, partial-workflow holds, graceful stop that persists the current step, startup `Reconcile` that observes but never re-sends, and operator `Review`. Fault tests: accepted-then-timed-out, timeout reconciled by observation, accepted-but-not-effective, partial failure, crash between network and commit, crash before dispatch, stop between steps, unwritable store, restored database, budget across restart, duplicate execution. |
+| Recovery planner (`action.Plan`) | done (fixture-tested) | Proposal for stalled, metadata-timeout, and client-error findings with every prerequisite stated: tested workflow for the exact versions, finding active, fresh evidence, qualified diagnosis, applicable state (never paused/queued/checking), known-public privacy, exactly one matched manager association, no lock, no cooldown, policy. Operations carry every flag explicitly, using the managed-row semantics recorded in compatibility.md (`removeFromClient=false&blocklist=true&skipRedownload=false&changeCategory=false`: the manager owns the replacement search), then a client stop that retains data. Budget limits (20/day global, 3/week per content item) are hard-coded proposals; making them configuration is *remaining*. |
+| Shared previews and manual actions | done | `housekeeparr preview <id> [--automatic] [--json]`, `act <id> --confirm`, `actions`, `review <id> --as … --note …`, `restore-ack --confirm`; web finding page shows the same preview, with an action form (confirmation required) only when eligible; `GET /api/v1/findings/{id}/preview`; Activity lists journaled actions and restore holds. `run` reports holds and actions that need review at start-up. Not yet reviewed in a real browser. |
+| Retention of terminal intents | remaining | Intents are never pruned yet (bounded only by how few can exist); add retention for succeeded/failed/cancelled intents beyond the audit window, never for uncertain or active ones. |
+| Routing CLI mutations through a running worker | remaining | `act`, `review`, and `restore-ack` need the writer lock (exit 3 while the worker runs), like `ack`. |
+
 ## Remaining v1 scope (not started unless noted)
 
 - Observation of all four clients (qBittorrent 5.3.0/4.6.7, Transmission
   4.0.6/4.1.4, rTorrent 0.9.8, Deluge 2.2.0), Sonarr, and Radarr is validated
   against real instances (see
   [compatibility.md](compatibility.md)); correlation is validated only with
-  qBittorrent as the managers' download client, and only for unknown
-  series/movie queue rows.
-- Exclusions, snooze/exclude from the interfaces, scoped rules and item
-  overrides, effective-policy and action previews.
-- Durable action coordinator (intent journal, locks, budgets, reconciliation,
-  uncertain-outcome holds) and controlled automatic mode.
+  qBittorrent as the managers' download client. Managed content with real
+  grab history (fictional series/movies through the metadata and Torznab
+  stand-ins) is exercised for queue-removal semantics only; imports and
+  season packs are not.
+- Exclude from the interfaces (exclusions are configuration-only so far);
+  configurable budgets; automatic dispatch from the engine (the coordinator
+  exists; nothing invokes it automatically yet).
 - Stalled-grab recovery, metadata recovery, preserved-data failure handling —
   each requires version-tested manager/client semantics first.
 - Sonarr partial season-pack handling (import history, coverage evidence,
@@ -95,6 +114,15 @@ testing decisions and implementation sequence.
 
 ## Design-constraining findings (real instances, 2026-11-15)
 
+- **Queue removal of rows with real grab history is durable** (Sonarr
+  4.0.20, Radarr 6.4.4, qBittorrent 5.3.0/4.6.7 as their download client):
+  the ignore path records `downloadIgnored`; the blocklist path blocklists
+  exactly that release and records `downloadFailed`; `removeFromClient=false`
+  keeps the torrent running in its category with data intact, even with
+  `removeFailedDownloads=true`; `skipRedownload=false` makes the manager
+  queue its own replacement search at once. The torrent is not stopped by
+  the manager, so separation is a separate client step. Other clients as the
+  managers' download client are not yet probed.
 - **Queue removal of rows without grab history is accepted but not durable.**
   Sonarr 4.0.20 and Radarr 6.4.4 return HTTP 200 to `DELETE /api/v3/queue/{id}`
   (ignore and blocklist paths, every flag explicit), but the row is tracked
