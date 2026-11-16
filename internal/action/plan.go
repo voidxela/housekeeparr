@@ -1,8 +1,6 @@
 package action
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -51,10 +49,13 @@ func WorkflowFor(findingType string) (policy.Workflow, bool) {
 // PlanInput is everything the planner needs; it is read from local state
 // by the caller so planning itself is pure and identical for CLI and web.
 type PlanInput struct {
-	Finding        domain.Finding
-	Transfer       *store.TransferRecord
-	Queue          []store.QueueRecord // rows correlated with the transfer
-	Policy         policy.Effective
+	Finding  domain.Finding
+	Transfer *store.TransferRecord
+	Queue    []store.QueueRecord // rows correlated with the transfer
+	Policy   policy.Effective
+	// Scope is the policy subject Policy was resolved for; the gate
+	// re-resolves it before every write.
+	Scope          policy.Subject
 	Origin         Origin
 	ClientKind     adapter.Kind
 	ClientProbe    *adapter.Probe
@@ -99,7 +100,7 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 	p := &Proposal{
 		Workflow: string(wf), Origin: in.Origin, Subject: raw(map[string]string{"client_id": t.ClientID, "native_id": t.NativeID}),
 		Locks:          []string{"transfer:" + t.ClientID + "|" + t.NativeID},
-		PolicyRevision: in.Policy.Revision, ConfigRevision: in.ConfigRevision,
+		PolicyRevision: in.Policy.Revision, ConfigRevision: in.ConfigRevision, Scope: in.Scope, LiveChecks: LiveChecks,
 		CreatedAt: in.Now, ExpiresAt: in.Now.Add(ttl), Cooldown: 24 * time.Hour,
 	}
 	fid := in.Finding.ID
@@ -192,27 +193,7 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 	}
 
 	// --- policy -------------------------------------------------------------
-	pol := in.Policy
-	if in.Origin == OriginAutomatic {
-		ok, reasons := pol.Permits(wf)
-		add("automation permitted by policy", ok, false, strings.Join(nonEmptyList(reasons, "permitted"), "; "))
-	} else {
-		var reasons []string
-		if pol.Mode == "observe" || pol.Mode == "" {
-			reasons = append(reasons, "mode is observe: no operational writes, manual or automatic")
-		}
-		if pol.EmergencyStop {
-			reasons = append(reasons, "emergency stop is set")
-		}
-		for _, ex := range pol.Exclusions {
-			for _, w := range ex.Workflows {
-				if w == wf {
-					reasons = append(reasons, "excluded: "+ex.Reason+" ("+ex.From+")")
-				}
-			}
-		}
-		add("manual action permitted by policy", len(reasons) == 0, false, strings.Join(nonEmptyList(reasons, "permitted"), "; "))
-	}
+	p.Prerequisites = append(p.Prerequisites, PolicyCheck(in.Policy, wf, in.Origin))
 
 	// --- operations ---------------------------------------------------------
 	// Every flag is explicit (SPEC §7.3). The semantics are those recorded
@@ -253,40 +234,48 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 	}
 	p.Evidence = raw(map[string]any{"finding": in.Finding.ID, "finding_type": in.Finding.Type, "assessment": t.Assessment,
 		"transfer_state": t.StateClass, "native_state": t.Latest.NativeState, "verified_bytes": t.Latest.VerifiedBytes, "last_seen": t.LastSeen})
-	p.Fingerprint = fingerprint(in, row)
+	p.Planned = planned(in, cv, mv, row, present)
+	p.Fingerprint = p.Planned.fingerprint()
 	return p, nil
 }
 
-// Facts are the external, decision-relevant facts a proposal was planned
-// against. The executor recomputes them from a fresh read immediately
-// before the first write; any difference cancels the action. (Local facts,
-// such as finding state and policy, are re-checked by re-planning.)
-type Facts struct {
-	ClientID, NativeID string
-	Present            bool
-	StateClass         domain.StateClass
-	Verified           domain.Signal[int64]
-	ManagerID          string
-	QueueID            int64
-	DownloadID         string
-}
-
-// Fingerprint digests the facts.
-func (f Facts) Fingerprint() string {
-	h := sha256.New()
-	v, known := f.Verified.Get()
-	fmt.Fprintf(h, "v1|%s|%s|%v|%s|%v:%d|%s|%d|%s", f.ClientID, f.NativeID, f.Present, f.StateClass, known, v,
-		f.ManagerID, f.QueueID, strings.ToLower(f.DownloadID))
-	return hex.EncodeToString(h.Sum(nil))[:16]
-}
-
-func fingerprint(in PlanInput, row *store.QueueRecord) string {
-	t := in.Transfer
-	f := Facts{ClientID: t.ClientID, NativeID: t.NativeID, Present: t.Present, StateClass: t.StateClass, Verified: t.Latest.VerifiedBytes}
-	if row != nil {
-		f.ManagerID, f.QueueID, f.DownloadID = row.ManagerID, row.QueueID, row.DownloadID
+// PolicyCheck evaluates mode, emergency stop, exclusions, and (for
+// automation) workflow permission. Planning and the per-write gate use it.
+func PolicyCheck(pol policy.Effective, wf policy.Workflow, origin Origin) Check {
+	if origin == OriginAutomatic {
+		ok, reasons := pol.Permits(wf)
+		return Check{Name: "automation permitted by policy", Satisfied: ok, Detail: strings.Join(nonEmptyList(reasons, "permitted"), "; ")}
 	}
-	return f.Fingerprint()
+	var reasons []string
+	if pol.Mode == "observe" || pol.Mode == "" {
+		reasons = append(reasons, "mode is observe: no operational writes, manual or automatic")
+	}
+	if pol.EmergencyStop {
+		reasons = append(reasons, "emergency stop is set")
+	}
+	for _, ex := range pol.Exclusions {
+		for _, w := range ex.Workflows {
+			if w == wf {
+				reasons = append(reasons, "excluded: "+ex.Reason+" ("+ex.From+")")
+			}
+		}
+	}
+	return Check{Name: "manual action permitted by policy", Satisfied: len(reasons) == 0, Detail: strings.Join(nonEmptyList(reasons, "permitted"), "; ")}
+}
+
+func planned(in PlanInput, cv, mv string, row *store.QueueRecord, present []store.QueueRecord) Planned {
+	t := in.Transfer
+	pl := Planned{ClientID: t.ClientID, NativeID: t.NativeID, StateClass: t.StateClass, Verified: t.Latest.VerifiedBytes,
+		Wanted: t.Latest.WantedBytes, Private: t.Latest.Private, Category: t.Latest.Category, ClientVersion: cv}
+	if row != nil {
+		pl.ManagerID, pl.ManagerVersion, pl.QueueID, pl.DownloadID = row.ManagerID, mv, row.QueueID, row.DownloadID
+		var rows []domain.QueueItem
+		for _, q := range present {
+			rows = append(rows, q.Latest)
+		}
+		pl.Content = contentKeys(rows)
+	}
+	return pl
 }
 
 func probeVersion(p *adapter.Probe) string {

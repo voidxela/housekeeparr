@@ -49,6 +49,9 @@
   {{if .Eligible}}<p><span class="glyph" aria-hidden="true">✓</span> <strong>Eligible.</strong> Every prerequisite holds right now.</p>
   {{else}}<p><span class="glyph" aria-hidden="true">✕</span> <strong>Not eligible.</strong> Nothing will be sent while any prerequisite below fails.</p>{{end}}
   <ul class="checks">{{range .Prerequisites}}<li class="{{if .Satisfied}}check-ok{{else}}check-fail{{end}}"><span class="check-mark">{{if .Satisfied}}OK{{else}}FAILS{{end}}</span> <strong>{{.Name}}</strong>{{if .Hard}} <span class="muted small">(safety)</span>{{end}} — {{.Detail}}</li>{{end}}</ul>
+  {{with .LiveChecks}}<h3>Checked again before each write</h3>
+  <p class="muted small">Re-read from the applications immediately before every request; any change cancels the action, or holds it for review if an earlier step already took effect.</p>
+  <ul>{{range .}}<li>{{.}}</li>{{end}}</ul>{{end}}
   <h3>Intended operations</h3>
   <ol>{{range .Operations}}<li>{{.Description}}<br><code class="small">{{.Op}} {{printf "%s" .Request}}</code></li>{{end}}</ol>
   <h3>Effects</h3>

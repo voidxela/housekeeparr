@@ -130,3 +130,25 @@ func (c *Client) Blocklisted(ctx context.Context, m arr.BlocklistMatch) (bool, e
 func (c *Client) HistoryEvents(ctx context.Context, downloadID string) ([]string, error) {
 	return c.api.HistoryEvents(ctx, downloadID)
 }
+
+// Content reports whether a movie ("movie:<id>") exists and is monitored.
+func (c *Client) Content(ctx context.Context, key string) (arr.Content, error) {
+	kind, id, ok := domain.ParseContentKey(key)
+	if !ok || kind != "movie" {
+		return arr.Content{}, fmt.Errorf("radarr content key %q is not a movie", key)
+	}
+	found, mon, _, err := c.api.Monitored(ctx, "movie", fmt.Sprintf("/api/v3/movie/%d", id))
+	if err != nil {
+		return arr.Content{}, err
+	}
+	out := arr.Content{Key: key, Exists: found, Monitored: found && mon}
+	switch {
+	case !found:
+		out.Detail = "the movie no longer exists in Radarr"
+	case !mon:
+		out.Detail = "the movie is unmonitored"
+	default:
+		out.Detail = "the movie is monitored"
+	}
+	return out, nil
+}

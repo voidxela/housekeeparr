@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -21,7 +22,10 @@ import (
 // Manager is a media manager connection with the recovery operations.
 type Manager interface {
 	ID() string
+	Probe(ctx context.Context) (adapter.Probe, error)
 	Queue(ctx context.Context) (domain.QueueSnapshot, error)
+	Health(ctx context.Context) (domain.HealthSnapshot, error)
+	Content(ctx context.Context, key string) (arr.Content, error)
 	RemoveQueueItem(ctx context.Context, queueID int64, f arr.RemoveFlags) error
 	Blocklisted(ctx context.Context, m arr.BlocklistMatch) (bool, error)
 	HistoryEvents(ctx context.Context, downloadID string) ([]string, error)
@@ -30,6 +34,7 @@ type Manager interface {
 // Client is a download client connection with the recovery operations.
 type Client interface {
 	ID() string
+	Probe(ctx context.Context) (adapter.Probe, error)
 	ListTransfers(ctx context.Context) (domain.TransferSnapshot, error)
 	Stop(ctx context.Context, nativeID string) error
 }
@@ -144,36 +149,81 @@ func (r *Recovery) queueRow(ctx context.Context, managerID, downloadID string) (
 	return found, nil
 }
 
-// Refetch re-reads the transfer and its queue row and recomputes the
-// planner's fingerprint.
-func (r *Recovery) Refetch(ctx context.Context, p action.Proposal) (string, error) {
-	var sub subject
-	if err := json.Unmarshal(p.Subject, &sub); err != nil {
-		return "", err
+// Live re-reads everything action.Revalidate compares: the transfer and
+// client version; every readable manager's queue rows for the transfer's
+// download ID; and, for the planned manager, its version, health, and the
+// content's existence and monitoring. Failure to read the transfer is an
+// error; other gaps are recorded so that the checks fail closed with a
+// specific explanation.
+func (r *Recovery) Live(ctx context.Context, p action.Proposal) (action.Live, error) {
+	pl := p.Planned
+	var live action.Live
+	c, ok := r.Clients[pl.ClientID]
+	if !ok {
+		return live, fmt.Errorf("client %q has no recovery support", pl.ClientID)
 	}
-	t, present, err := r.transfer(ctx, sub.ClientID, sub.NativeID)
+	t, present, err := r.transfer(ctx, pl.ClientID, pl.NativeID)
 	if err != nil {
-		return "", err
+		return live, err
 	}
-	f := action.Facts{ClientID: sub.ClientID, NativeID: sub.NativeID, Present: present, StateClass: t.StateClass, Verified: t.VerifiedBytes}
-	for _, op := range p.Operations {
-		if op.Op != "manager.queue.fail" {
+	if present {
+		live.Transfer = &t
+	}
+	probe, err := c.Probe(ctx)
+	if err != nil {
+		return live, fmt.Errorf("client %s version: %w", pl.ClientID, err)
+	}
+	live.ClientVersion = probe.Version
+
+	downloadID := pl.DownloadID
+	if downloadID == "" {
+		downloadID = pl.NativeID
+	}
+	ids := make([]string, 0, len(r.Managers))
+	for id := range r.Managers {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		q, err := r.Managers[id].Queue(ctx)
+		if err != nil || !q.Complete {
+			live.Unread = append(live.Unread, id)
 			continue
 		}
-		var tg queueTarget
-		if err := json.Unmarshal(op.Target, &tg); err != nil {
-			return "", err
-		}
-		row, err := r.queueRow(ctx, tg.ManagerID, tg.DownloadID)
-		if err != nil {
-			return "", err
-		}
-		f.ManagerID, f.DownloadID = tg.ManagerID, tg.DownloadID
-		if row != nil {
-			f.QueueID = row.QueueID
+		for _, it := range q.Items {
+			if strings.EqualFold(it.DownloadID, downloadID) {
+				if it.ManagerID == "" {
+					it.ManagerID = id
+				}
+				live.Associations = append(live.Associations, it)
+			}
 		}
 	}
-	return f.Fingerprint(), nil
+	if pl.ManagerID == "" {
+		return live, nil
+	}
+	m, ok := r.Managers[pl.ManagerID]
+	if !ok {
+		live.Unread = append(live.Unread, pl.ManagerID)
+		return live, nil
+	}
+	if mp, err := m.Probe(ctx); err == nil {
+		live.ManagerVersion = mp.Version
+	}
+	if h, err := m.Health(ctx); err != nil {
+		live.HealthErr = err.Error()
+	} else {
+		live.Health = h.Items
+	}
+	for _, key := range pl.Content {
+		cs, err := m.Content(ctx, key)
+		if err != nil {
+			live.ContentErr = key + ": " + err.Error()
+			break
+		}
+		live.Content = append(live.Content, action.ContentState{Key: cs.Key, Exists: cs.Exists, Monitored: cs.Monitored, Detail: cs.Detail})
+	}
+	return live, nil
 }
 
 // Dispatch sends one step.

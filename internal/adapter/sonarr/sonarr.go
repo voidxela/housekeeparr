@@ -148,3 +148,43 @@ func (c *Client) Blocklisted(ctx context.Context, m arr.BlocklistMatch) (bool, e
 func (c *Client) HistoryEvents(ctx context.Context, downloadID string) ([]string, error) {
 	return c.api.HistoryEvents(ctx, downloadID)
 }
+
+// Content reports whether an episode ("episode:<id>") exists and is
+// monitored. Sonarr searches for an episode only when both the episode and
+// its series are monitored, so both are read.
+func (c *Client) Content(ctx context.Context, key string) (arr.Content, error) {
+	kind, id, ok := domain.ParseContentKey(key)
+	if !ok || kind != "episode" {
+		return arr.Content{}, fmt.Errorf("sonarr content key %q is not an episode", key)
+	}
+	out := arr.Content{Key: key}
+	found, mon, raw, err := c.api.Monitored(ctx, "episode", fmt.Sprintf("/api/v3/episode/%d", id))
+	if err != nil {
+		return arr.Content{}, err
+	}
+	if !found {
+		out.Detail = "the episode no longer exists in Sonarr"
+		return out, nil
+	}
+	var seriesID int64
+	if json.Unmarshal(raw["seriesId"], &seriesID) != nil || seriesID <= 0 {
+		return arr.Content{}, fmt.Errorf("sonarr episode %d has no series id", id)
+	}
+	sFound, sMon, _, err := c.api.Monitored(ctx, "series", fmt.Sprintf("/api/v3/series/%d", seriesID))
+	if err != nil {
+		return arr.Content{}, err
+	}
+	out.Exists = sFound
+	switch {
+	case !sFound:
+		out.Detail = "the series no longer exists in Sonarr"
+	case !sMon:
+		out.Detail = "the series is unmonitored"
+	case !mon:
+		out.Detail = "the episode is unmonitored"
+	default:
+		out.Monitored = true
+		out.Detail = "episode and series are monitored"
+	}
+	return out, nil
+}

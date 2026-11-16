@@ -89,6 +89,12 @@ func printPreview(out io.Writer, pv *app.ActionPreview) {
 		}
 		fmt.Fprintf(out, "  [%s] %-34s (%s) %s\n", mark, c.Name, kind, c.Detail)
 	}
+	if len(p.LiveChecks) > 0 {
+		fmt.Fprintln(out, "\nRe-read from the applications immediately before each write (any change holds the action):")
+		for _, c := range p.LiveChecks {
+			fmt.Fprintln(out, "  - "+c)
+		}
+	}
 	fmt.Fprintln(out, "\nIntended operations (every flag explicit):")
 	for i, op := range p.Operations {
 		fmt.Fprintf(out, "  %d. %s\n     %s %s\n     expect %s\n", i+1, op.Description, op.Op, op.Request, op.Expect)

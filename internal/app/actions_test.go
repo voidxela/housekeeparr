@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/voidxela/housekeeparr/internal/action"
+	"github.com/voidxela/housekeeparr/internal/action/actiontest"
 	"github.com/voidxela/housekeeparr/internal/adapter"
 	"github.com/voidxela/housekeeparr/internal/app"
 	"github.com/voidxela/housekeeparr/internal/demo"
@@ -17,8 +18,8 @@ import (
 
 type okExec struct{ sent []string }
 
-func (e *okExec) Refetch(_ context.Context, p action.Proposal) (string, error) {
-	return p.Fingerprint, nil
+func (e *okExec) Live(_ context.Context, p action.Proposal) (action.Live, error) {
+	return actiontest.Matching(p, len(e.sent) > 0), nil
 }
 func (e *okExec) Dispatch(_ context.Context, st store.Step) (json.RawMessage, error) {
 	e.sent = append(e.sent, st.Op)
@@ -165,8 +166,8 @@ func trimV(v string) string {
 
 type unknownExec struct{ sent int }
 
-func (e *unknownExec) Refetch(_ context.Context, p action.Proposal) (string, error) {
-	return p.Fingerprint, nil
+func (e *unknownExec) Live(_ context.Context, p action.Proposal) (action.Live, error) {
+	return actiontest.Matching(p, e.sent > 0), nil
 }
 func (e *unknownExec) Dispatch(context.Context, store.Step) (json.RawMessage, error) {
 	e.sent++

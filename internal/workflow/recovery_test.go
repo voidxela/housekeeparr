@@ -3,10 +3,12 @@ package workflow
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/voidxela/housekeeparr/internal/action"
+	"github.com/voidxela/housekeeparr/internal/adapter"
 	"github.com/voidxela/housekeeparr/internal/adapter/arr"
 	"github.com/voidxela/housekeeparr/internal/adapter/qbittorrent"
 	"github.com/voidxela/housekeeparr/internal/adapter/radarr"
@@ -23,16 +25,37 @@ var (
 )
 
 type fakeManager struct {
+	id        string
 	rows      []domain.QueueItem
+	queueErr  error
+	health    []domain.HealthItem
+	content   map[string]arr.Content
 	blocklist bool
 	history   []string
 	removed   []arr.RemoveFlags
 	match     arr.BlocklistMatch
 }
 
-func (m *fakeManager) ID() string { return "sonarr" }
+func (m *fakeManager) ID() string {
+	if m.id == "" {
+		return "sonarr"
+	}
+	return m.id
+}
+func (m *fakeManager) Probe(context.Context) (adapter.Probe, error) {
+	return adapter.Probe{Version: "4.0.20.3014"}, nil
+}
 func (m *fakeManager) Queue(context.Context) (domain.QueueSnapshot, error) {
-	return domain.QueueSnapshot{Items: m.rows, Complete: true}, nil
+	return domain.QueueSnapshot{Items: m.rows, Complete: m.queueErr == nil}, m.queueErr
+}
+func (m *fakeManager) Health(context.Context) (domain.HealthSnapshot, error) {
+	return domain.HealthSnapshot{Items: m.health}, nil
+}
+func (m *fakeManager) Content(_ context.Context, key string) (arr.Content, error) {
+	if c, ok := m.content[key]; ok {
+		return c, nil
+	}
+	return arr.Content{Key: key, Exists: true, Monitored: true, Detail: "monitored"}, nil
 }
 func (m *fakeManager) RemoveQueueItem(_ context.Context, _ int64, f arr.RemoveFlags) error {
 	m.removed = append(m.removed, f)
@@ -50,6 +73,9 @@ type fakeClient struct {
 }
 
 func (c *fakeClient) ID() string { return "qbit" }
+func (c *fakeClient) Probe(context.Context) (adapter.Probe, error) {
+	return adapter.Probe{Version: "v5.3.0"}, nil
+}
 func (c *fakeClient) ListTransfers(context.Context) (domain.TransferSnapshot, error) {
 	return domain.TransferSnapshot{Transfers: c.ts, Complete: true}, nil
 }
@@ -138,21 +164,84 @@ func TestObserveStop(t *testing.T) {
 	}
 }
 
-func TestRefetchMatchesPlannerFingerprint(t *testing.T) {
-	tr := domain.Transfer{NativeID: "aa", StateClass: domain.StateDownloading, VerifiedBytes: domain.KnownValue[int64](10)}
-	m := &fakeManager{rows: []domain.QueueItem{{DownloadID: "aa", QueueID: 7}}}
+func liveProposal() action.Proposal {
+	return action.Proposal{Operations: []action.Operation{{Op: "manager.queue.fail"}, {Op: "client.stop"}},
+		Planned: action.Planned{ClientID: "qbit", NativeID: "aa", StateClass: domain.StateDownloading, Verified: domain.KnownValue[int64](10),
+			Private: domain.KnownValue(false), ClientVersion: "5.3.0", ManagerID: "sonarr", ManagerVersion: "4.0.20.3014", QueueID: 7, DownloadID: "aa",
+			Content: []string{"episode:9"}}}
+}
+
+func TestLiveReadsEveryDecisionInput(t *testing.T) {
+	ctx := context.Background()
+	tr := domain.Transfer{NativeID: "aa", StateClass: domain.StateDownloading, VerifiedBytes: domain.KnownValue[int64](10), Private: domain.KnownValue(false)}
+	m := &fakeManager{rows: []domain.QueueItem{{ManagerID: "sonarr", DownloadID: "AA", QueueID: 7, ContentKind: "episode", SeriesID: 3, EpisodeID: 9}}}
+	other := &fakeManager{id: "radarr"}
 	c := &fakeClient{ts: []domain.Transfer{tr}}
-	want := action.Facts{ClientID: "qbit", NativeID: "aa", Present: true, StateClass: domain.StateDownloading, Verified: tr.VerifiedBytes,
-		ManagerID: "sonarr", QueueID: 7, DownloadID: "aa"}.Fingerprint()
-	p := action.Proposal{Subject: json.RawMessage(`{"client_id":"qbit","native_id":"aa"}`),
-		Operations: []action.Operation{{Op: "manager.queue.fail", Target: json.RawMessage(qtarget)}}}
-	got, err := rec(m, c).Refetch(context.Background(), p)
-	if err != nil || got != want {
-		t.Fatalf("fingerprint %s want %s (%v)", got, want, err)
+	r := rec(m, c)
+	r.Managers["radarr"] = other
+	p := liveProposal()
+	check := func(i int) []string {
+		t.Helper()
+		live, err := r.Live(ctx, p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var bad []string
+		for _, ch := range action.Revalidate(p, i, live) {
+			if !ch.Satisfied {
+				bad = append(bad, ch.Name)
+			}
+		}
+		return bad
 	}
-	// Progress since the preview changes the fingerprint.
+	if bad := check(0); len(bad) != 0 {
+		t.Fatalf("matching state fails %v", bad)
+	}
+	// Review R5 reproduction: privacy and content changes are visible.
+	c.ts[0].Private = domain.KnownValue(true)
+	if bad := check(0); len(bad) != 1 || bad[0] != "public transfer" {
+		t.Fatalf("privacy change: %v", bad)
+	}
+	c.ts[0].Private = domain.KnownValue(false)
+	m.rows[0].SeriesID, m.rows[0].EpisodeID = 999, 999
+	if bad := check(0); len(bad) != 1 || bad[0] != "ownership unchanged" {
+		t.Fatalf("content change: %v", bad)
+	}
+	m.rows[0].EpisodeID = 9
+	// Monitoring and health of the planned manager.
+	m.content = map[string]arr.Content{"episode:9": {Key: "episode:9", Exists: true, Detail: "the series is unmonitored"}}
+	if bad := check(0); len(bad) != 1 || bad[0] != "content monitored" {
+		t.Fatalf("unmonitored: %v", bad)
+	}
+	m.content = nil
+	m.health = []domain.HealthItem{{Source: "DownloadClientStatusCheck", Type: "error", Message: "All download clients are unavailable"}}
+	if bad := check(0); len(bad) != 1 || bad[0] != "manager health" {
+		t.Fatalf("health: %v", bad)
+	}
+	m.health = nil
+	// Another manager's row for the same torrent, or an unreadable queue.
+	other.rows = []domain.QueueItem{{DownloadID: "aa", QueueID: 3, ContentKind: "movie", MovieID: 4}}
+	if bad := check(0); len(bad) != 1 || bad[0] != "ownership unchanged" {
+		t.Fatalf("shared ownership: %v", bad)
+	}
+	other.rows = nil
+	other.queueErr = errors.New("timeout")
+	if bad := check(0); len(bad) != 1 || bad[0] != "ownership unchanged" {
+		t.Fatalf("unread manager: %v", bad)
+	}
+	other.queueErr = nil
+	// Before the stop, the failed row's absence is expected; its presence
+	// is not, and manager health no longer matters.
+	if bad := check(1); len(bad) != 1 || bad[0] != "ownership unchanged" {
+		t.Fatalf("row still present before stop: %v", bad)
+	}
+	m.rows = nil
+	m.health = []domain.HealthItem{{Source: "IndexerSearchCheck", Type: "warning"}}
+	if bad := check(1); len(bad) != 0 {
+		t.Fatalf("clean state before stop fails %v", bad)
+	}
 	c.ts[0].VerifiedBytes = domain.KnownValue[int64](11)
-	if got, _ := rec(m, c).Refetch(context.Background(), p); got == want {
-		t.Fatal("fingerprint ignores verified progress")
+	if bad := check(1); len(bad) != 1 || bad[0] != "no new verified progress" {
+		t.Fatalf("progress before stop: %v", bad)
 	}
 }

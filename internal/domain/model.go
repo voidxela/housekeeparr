@@ -2,6 +2,7 @@ package domain
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -204,6 +205,34 @@ func (q QueueItem) ContentLabel() string {
 		}
 	}
 	return label
+}
+
+// ContentKey is the manager-scoped identity of the content a queue row is
+// for: "episode:<id>" or "movie:<id>". It is independent of the release
+// (download ID) and of the transient queue row, so replacement attempts for
+// the same episode or movie share it. ok is false when the manager did not
+// report the episode or movie ID; a series ID or title is not a substitute.
+func (q QueueItem) ContentKey() (string, bool) {
+	switch {
+	case q.ContentKind == "movie" && q.MovieID > 0:
+		return fmt.Sprintf("movie:%d", q.MovieID), true
+	case q.ContentKind == "episode" && q.EpisodeID > 0:
+		return fmt.Sprintf("episode:%d", q.EpisodeID), true
+	}
+	return "", false
+}
+
+// ParseContentKey splits a content key into its kind and manager ID.
+func ParseContentKey(key string) (kind string, id int64, ok bool) {
+	kind, num, found := strings.Cut(key, ":")
+	if !found || (kind != "episode" && kind != "movie") {
+		return "", 0, false
+	}
+	n, err := strconv.ParseInt(num, 10, 64)
+	if err != nil || n <= 0 || strconv.FormatInt(n, 10) != num {
+		return "", 0, false
+	}
+	return kind, n, true
 }
 
 func episodeCode(s, e int64) string { return fmt.Sprintf("S%02dE%02d", s, e) }

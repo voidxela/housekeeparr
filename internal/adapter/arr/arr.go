@@ -7,6 +7,7 @@ package arr
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -416,4 +417,38 @@ func (c *Client) HistoryEvents(ctx context.Context, downloadID string) ([]string
 		}
 	}
 	return out, nil
+}
+
+// Content is the live state of one managed episode or movie.
+type Content struct {
+	Key       string `json:"key"`
+	Exists    bool   `json:"exists"`
+	Monitored bool   `json:"monitored"`
+	// Detail explains how monitoring was established (for example, that
+	// the series is unmonitored although the episode is not).
+	Detail string `json:"detail,omitempty"`
+}
+
+// NotFound reports whether err is an HTTP 404 from the application.
+func NotFound(err error) bool {
+	var ae *adapter.Error
+	return errors.As(err, &ae) && ae.HTTPStatus == http.StatusNotFound
+}
+
+// Monitored reads a resource's id and monitored flag. found is false for a
+// 404; a response without both fields is malformed.
+func (c *Client) Monitored(ctx context.Context, op, path string) (found, monitored bool, raw map[string]json.RawMessage, err error) {
+	var r map[string]json.RawMessage
+	if err := c.Get(ctx, op, path, nil, &r); err != nil {
+		if NotFound(err) {
+			return false, false, nil, nil
+		}
+		return false, false, nil, err
+	}
+	var id int64
+	var mon *bool
+	if r == nil || json.Unmarshal(r["id"], &id) != nil || id <= 0 || json.Unmarshal(r["monitored"], &mon) != nil || mon == nil {
+		return false, false, nil, httpx.Malformed(c.app+"."+op, fmt.Errorf("missing id or monitored"))
+	}
+	return true, *mon, r, nil
 }

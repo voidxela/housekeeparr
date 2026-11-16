@@ -4,18 +4,19 @@
 // A Proposal describes an intended workflow with its evidence, effective
 // policy, prerequisites, exact operations, and side effects; the same value
 // is the preview shown by the CLI and the web interface. Execute re-checks
-// every prerequisite, re-fetches decision-relevant state, journals the
-// intent with its locks and budget reservations before any external write,
-// commits each step as dispatching before sending it, and verifies each
-// step's postcondition by observation. A request whose outcome cannot be
+// every prerequisite, re-reads decision-relevant external state and
+// compares it with the plan (Revalidate), journals the intent with its
+// locks and budget reservations before any external write, commits each
+// step as dispatching before sending it, and verifies each step's
+// postcondition by observation. Every later step gets its own fresh gate
+// and live checks; a divergence holds the partial workflow for review. A request whose outcome cannot be
 // established is never re-sent: the intent becomes uncertain and keeps its
 // locks until an operator reviews it. Reconcile performs the same
 // observation-only settlement at startup for anything a crash interrupted.
 //
 // The coordinator never talks to an application directly; it uses an
-// Executor. Real adapters expose no write methods yet, so the only
-// Executor implementations are test fakes, and every real workflow fails
-// the "tested write capability" prerequisite.
+// Executor (internal/workflow). A workflow is eligible only for the exact
+// manager/client versions recorded in Tested.
 package action
 
 import (
@@ -30,6 +31,7 @@ import (
 	"time"
 
 	"github.com/voidxela/housekeeparr/internal/adapter"
+	"github.com/voidxela/housekeeparr/internal/policy"
 	"github.com/voidxela/housekeeparr/internal/store"
 )
 
@@ -86,6 +88,13 @@ type Proposal struct {
 	PolicyRevision string          `json:"policy_revision"`
 	ConfigRevision string          `json:"config_revision"`
 	Evidence       json.RawMessage `json:"evidence"`
+	// Planned is the external state the proposal was planned against;
+	// it is re-verified before every write (Revalidate).
+	Planned Planned `json:"planned"`
+	// LiveChecks describes what is re-read before every write.
+	LiveChecks []string `json:"live_checks,omitempty"`
+	// Scope is the policy subject; the gate re-resolves policy for it.
+	Scope policy.Subject `json:"scope"`
 	// Cooldown applied to every lock subject after success.
 	Cooldown  time.Duration `json:"cooldown,omitempty"`
 	CreatedAt time.Time     `json:"created_at"`
@@ -109,9 +118,12 @@ func (p Proposal) Eligible() bool { return len(p.Blockers()) == 0 }
 // Key is the local idempotency key: the same workflow on the same subject
 // for the same observed state yields the same key.
 func (p Proposal) Key() string {
-	h := sha256.New()
-	fmt.Fprintf(h, "%s|%s|%s", p.Workflow, p.Subject, p.Fingerprint)
-	return hex.EncodeToString(h.Sum(nil))[:24]
+	return digest(fmt.Sprintf("%s|%s|%s", p.Workflow, p.Subject, p.Fingerprint))[:24]
+}
+
+func digest(s string) string {
+	h := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(h[:])
 }
 
 // Verdict is the result of observing a step's postcondition.
@@ -131,22 +143,23 @@ type Observation struct {
 }
 
 // Executor performs and observes operations for the coordinator. Dispatch
-// must return *adapter.Error for remote failures. Refetch and Observe are
+// must return *adapter.Error for remote failures. Live and Observe are
 // read-only.
 type Executor interface {
-	// Refetch re-reads decision-relevant state and returns its current
-	// fingerprint, comparable with Proposal.Fingerprint.
-	Refetch(ctx context.Context, p Proposal) (string, error)
+	// Live re-reads the decision-relevant external state for p, for
+	// Revalidate. It must not write.
+	Live(ctx context.Context, p Proposal) (Live, error)
 	Dispatch(ctx context.Context, step store.Step) (json.RawMessage, error)
 	Observe(ctx context.Context, step store.Step) (Observation, error)
 }
 
 // Gate supplies the global conditions evaluated for every execution.
 type Gate interface {
-	// Blockers returns unsatisfied global prerequisites for an origin, for
-	// example paused mode, emergency stop, or observe-only mode for
-	// automatic actions.
-	Blockers(origin Origin) []Check
+	// Blockers returns unsatisfied prerequisites that are not external
+	// state: mode, emergency stop, exclusions, and workflow permission as
+	// currently configured for p's scope. It is evaluated before every
+	// write, not only the first.
+	Blockers(ctx context.Context, p Proposal) []Check
 }
 
 // Coordinator executes proposals durably.
@@ -221,17 +234,14 @@ func definiteFailure(err error) bool {
 
 // Execute runs an eligible proposal. Before any external write it verifies
 // the gate and prerequisites, the restore marker, the preview's expiry,
-// and a fresh re-fetch; then it journals the intent, locks, and budgets in
-// one transaction.
+// local locks, and a fresh live read; then it journals the intent, locks,
+// and budgets in one transaction.
 func (c *Coordinator) Execute(ctx context.Context, p Proposal) (Result, error) {
 	now := c.now()
 	if !p.ExpiresAt.IsZero() && now.After(p.ExpiresAt) {
 		return Result{}, ErrExpired
 	}
-	checks := append([]Check(nil), p.Blockers()...)
-	if c.Gate != nil {
-		checks = append(checks, c.Gate.Blockers(p.Origin)...)
-	}
+	checks := append(p.Blockers(), c.gateBlockers(ctx, p)...)
 	if len(checks) > 0 {
 		return Result{}, &RefusedError{Err: ErrNotEligible, Checks: checks}
 	}
@@ -245,12 +255,21 @@ func (c *Coordinator) Execute(ctx context.Context, p Proposal) (Result, error) {
 	if rs.Suspected {
 		return Result{}, &RefusedError{Err: ErrRestoreHold, Checks: []Check{{Name: "state matches the action journal", Detail: rs.Reason, Hard: true}}}
 	}
-	fp, err := c.Executor.Refetch(ctx, p)
-	if err != nil {
-		return Result{}, fmt.Errorf("re-fetch before write failed; nothing was sent: %w", err)
+	// Local conflicts are cheaper to detect than external state; the
+	// journal transaction below remains the authoritative lock check.
+	for _, l := range p.Locks {
+		if h, err := c.Store.LockHolder(ctx, l); err != nil {
+			return Result{}, fmt.Errorf("%w: %v", ErrJournal, err)
+		} else if h != 0 {
+			return Result{}, &RefusedError{Err: ErrConflict, Checks: []Check{{Name: "exclusive access", Detail: (&store.LockHeldError{Subject: l, Holder: h}).Error(), Hard: true}}}
+		}
 	}
-	if fp != p.Fingerprint {
-		return Result{}, ErrStale
+	live, err := c.Executor.Live(ctx, p)
+	if err != nil {
+		return Result{}, fmt.Errorf("re-read before write failed; nothing was sent: %w", err)
+	}
+	if bad := unsatisfied(Revalidate(p, 0, live)); len(bad) > 0 {
+		return Result{}, &RefusedError{Err: ErrStale, Checks: bad}
 	}
 
 	in := store.Intent{Key: p.Key(), Workflow: p.Workflow, Origin: string(p.Origin), FindingID: p.FindingID, Subject: p.Subject,
@@ -297,6 +316,40 @@ func (c *Coordinator) Execute(ctx context.Context, p Proposal) (Result, error) {
 	return c.run(ctx, id, p)
 }
 
+func (c *Coordinator) gateBlockers(ctx context.Context, p Proposal) []Check {
+	if c.Gate == nil {
+		return nil
+	}
+	return unsatisfied(c.Gate.Blockers(ctx, p))
+}
+
+func unsatisfied(cs []Check) []Check {
+	var out []Check
+	for _, c := range cs {
+		if !c.Satisfied {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// recheck repeats the gate and live checks before operation i > 0. It
+// returns why the remaining operations must not be sent, or "".
+func (c *Coordinator) recheck(ctx context.Context, p Proposal, i int) string {
+	bad := c.gateBlockers(ctx, p)
+	live, err := c.Executor.Live(ctx, p)
+	if err != nil {
+		bad = append(bad, Check{Name: "live state", Detail: "could not be re-read: " + err.Error()})
+	} else {
+		bad = append(bad, unsatisfied(Revalidate(p, i, live))...)
+	}
+	var parts []string
+	for _, b := range bad {
+		parts = append(parts, b.Name+": "+b.Detail)
+	}
+	return strings.Join(parts, "; ")
+}
+
 func (c *Coordinator) actor() string {
 	if c.Actor != "" {
 		return c.Actor
@@ -327,6 +380,17 @@ func (c *Coordinator) run(ctx context.Context, id int64, p Proposal) (Result, er
 	for i, st := range in.Steps {
 		if err := ctx.Err(); err != nil {
 			return c.stopEarly(ctx, id, i, in.Steps, "stopped before step "+fmt.Sprint(st.Seq)+": "+err.Error())
+		}
+		// The first step was checked immediately before the intent was
+		// journaled. Every later write gets its own fresh checks; a
+		// divergence holds the partial workflow for review.
+		if i > 0 {
+			if why := c.recheck(ctx, p, i); why != "" {
+				c.skipRest(jctx, id, in.Steps[i:])
+				why = fmt.Sprintf("held before step %d (%s): %s; earlier steps took effect, review required", st.Seq, st.Op, why)
+				_ = c.finish(jctx, id, store.IntentUncertain, why)
+				return Result{IntentID: id, State: store.IntentUncertain, Detail: why}, nil
+			}
 		}
 		// Commit "dispatching" before sending. If this write fails nothing
 		// is sent.

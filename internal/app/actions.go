@@ -7,6 +7,7 @@ import (
 
 	"github.com/voidxela/housekeeparr/internal/action"
 	"github.com/voidxela/housekeeparr/internal/adapter"
+	"github.com/voidxela/housekeeparr/internal/domain"
 	"github.com/voidxela/housekeeparr/internal/policy"
 	"github.com/voidxela/housekeeparr/internal/store"
 )
@@ -128,6 +129,7 @@ func (s *Service) Preview(ctx context.Context, findingID int64, origin action.Or
 	if in.Policy, err = s.cfg.Resolve(sub); err != nil {
 		return nil, err
 	}
+	in.Scope = sub
 	out.Policy = in.Policy
 	for _, l := range []string{"transfer:" + f.Subject.ClientID + "|" + f.Subject.NativeID} {
 		if in.LockHolder, err = s.st.LockHolder(ctx, l); err != nil {
@@ -178,7 +180,7 @@ func (s *Service) Act(ctx context.Context, findingID int64, actor Actor) (*Actio
 	if pv.Proposal == nil {
 		return pv, nil, &action.RefusedError{Err: action.ErrNotEligible, Checks: []action.Check{{Name: "workflow", Detail: pv.NoAction}}}
 	}
-	c := &action.Coordinator{Store: s.st, Executor: s.executor, Now: s.now, Actor: string(actor)}
+	c := &action.Coordinator{Store: s.st, Executor: s.executor, Gate: gate{s}, Now: s.now, Actor: string(actor)}
 	if c.Executor == nil {
 		if b := pv.Proposal.Blockers(); len(b) > 0 {
 			return pv, nil, &action.RefusedError{Err: action.ErrNotEligible, Checks: b}
@@ -210,4 +212,49 @@ func (s *Service) Review(ctx context.Context, id int64, to store.IntentState, ac
 // AcknowledgeRestore accepts a restored state database as authoritative.
 func (s *Service) AcknowledgeRestore(ctx context.Context, actor Actor) error {
 	return s.st.AcknowledgeRestore(ctx, string(actor))
+}
+
+// gate re-evaluates, before every write, the local conditions a proposal
+// was planned under: the finding is still active, the state store is still
+// consistent with the journal, and the effective policy for the proposal's
+// scope is unchanged and still permits the workflow for its origin.
+type gate struct{ s *Service }
+
+func (g gate) Blockers(ctx context.Context, p action.Proposal) []action.Check {
+	var out []action.Check
+	block := func(name, detail string) {
+		out = append(out, action.Check{Name: name, Detail: detail, Hard: true})
+	}
+	if p.FindingID != nil {
+		f, err := g.s.st.Finding(ctx, *p.FindingID)
+		switch {
+		case err != nil:
+			block("finding is active", "could not be read: "+err.Error())
+		case f == nil:
+			block("finding is active", "the finding no longer exists")
+		case f.State == domain.FindingOpen || f.State == domain.FindingAcknowledged:
+		case f.State == domain.FindingSnoozed && p.Origin == action.OriginManual:
+		default:
+			block("finding is active", "the finding is now "+string(f.State))
+		}
+	}
+	if rs, err := g.s.st.CheckRestore(ctx); err != nil || rs.Suspected {
+		detail := rs.Reason
+		if err != nil {
+			detail = err.Error()
+		}
+		block("state matches the action journal", detail)
+	}
+	pol, err := g.s.cfg.Resolve(p.Scope)
+	if err != nil {
+		block("policy", "could not be resolved: "+err.Error())
+		return out
+	}
+	if pol.Revision != p.PolicyRevision {
+		block("policy unchanged", fmt.Sprintf("the effective policy changed since the preview (revision %s, now %s)", p.PolicyRevision, pol.Revision))
+	}
+	if c := action.PolicyCheck(pol, policy.Workflow(p.Workflow), p.Origin); !c.Satisfied {
+		out = append(out, c)
+	}
+	return out
 }
