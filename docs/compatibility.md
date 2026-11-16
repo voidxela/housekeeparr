@@ -47,6 +47,8 @@ workflow.
 | 2026-11-16 (`725f96b`, final session HEAD: owner-scoped ownership blocking, dispatcher fixes) | Linux aarch64, Go 1.27.4 | qBittorrent 5.3.0 + Sonarr 4.0.20.3014 + Radarr 6.4.4.10685 (isolated) | all passed, including both recovery workflows |
 | 2026-11-16 (`725f96b`, same) | Linux aarch64, Go 1.27.4 | Deluge 2.2.0 + Sonarr + Radarr, Deluge as the managers' client (isolated) | all passed, including both recovery workflows through Deluge |
 | 2026-11-16 (`7b0d1d0` + the fixture fix committed as `1f24634`, `--clients rtorrent --manager-client rtorrent --managers sonarr,radarr`) | Linux aarch64, Go 1.27.4 | rTorrent 0.9.8 + Sonarr 4.0.20.3014 + Radarr 6.4.4.10685 (isolated) | **all passed**: every observation assertion (`errored`, `errored-restart` and `errored-recheck` all client errors), the `d.message` probe, all probes, and both recovery workflows through rTorrent |
+| 2026-11-16 (`dff2166`, `--clients transmission --manager-client transmission --managers sonarr,radarr --tr 4.0.6`) | Linux aarch64, Go 1.27.4 | Transmission 4.0.6 + Sonarr 4.0.20.3014 + Radarr 6.4.4.10685 (isolated) | first run: both recovery workflows **refused safely** before any request ("transfer is complete"): Transmission 4 treats the pre-existing half payload under its final file name as complete when the manager adds it, without hashing. Harness fix `c26f83a`: the recovery test forces `torrent-verify` on the disposable daemon and requires a downloading state. Rerun: **all passed**, including both recovery workflows |
+| 2026-11-16 (`dff2166` + `c26f83a`, same with `--tr 4.1.4`) | Linux aarch64, Go 1.27.4 | Transmission 4.1.4 + Sonarr + Radarr (isolated) | **all passed**, including both recovery workflows, over the legacy RPC |
 
 What the suite exercised (`scripts/it/run.sh`, `internal/integration`):
 session login; version probe; listing of complete, half-complete (after
@@ -267,26 +269,27 @@ in the proposal comes from engine-written state and live re-fetches.
 
 | 2026-11-16 (`99cf198`) | Sonarr 4.0.20.3014 + Deluge 2.2.0; Radarr 6.4.4.10685 + Deluge 2.2.0 (isolated) | **passed**: same planner, live checks, baseline-attributed verification, and independent checks, with `core.pause_torrent` as the data-retaining stop; the torrent remained registered as `Paused` with the same label and byte-identical payload, and each manager queued its own replacement search |
 
+| 2026-11-16 (`dff2166` + `c26f83a`) | Sonarr 4.0.20.3014 + Transmission 4.0.6; Radarr 6.4.4.10685 + Transmission 4.0.6; the same with Transmission 4.1.4 (isolated) | **passed** on both branches with the legacy RPC: `torrent-stop` as the data-retaining stop; the torrent stayed registered and stopped in its download directory with a byte-identical payload, and each manager queued its own replacement search. The grab was first re-verified by the harness (see *Integration runs*). Registered in `action.Tested` with the exact reported versions `4.0.6 (38c164933e)` and `4.1.4 (a6d907d9ea)`. No second protocol was needed |
 | 2026-11-16 (`7b0d1d0` + `1f24634`) | Sonarr 4.0.20.3014 + rTorrent 0.9.8; Radarr 6.4.4.10685 + rTorrent 0.9.8 (isolated) | **passed** in a clean run: `d.stop` (never `d.close`/`d.erase`) as the data-retaining stop; the download stayed registered with `d.state=0`/`d.is_active=0`, the same `d.custom1` label and a byte-identical payload, and each manager queued its own replacement search. Registered in `action.Tested` |
 | 2026-11-16 (`b8d3313`) | Sonarr 4.0.20.3014 + rTorrent 0.9.8; Radarr 6.4.4.10685 + rTorrent 0.9.8 (isolated) | workflow **passed** (every step and independent check, `d.stop` as the stop: the download stayed registered, `d.state=0`/`d.is_active=0`, payload byte-identical), but the run as a whole failed on an unrelated observation fixture (see *Integration runs*), so this combination is **not registered** until a clean run. The same run's `d.message` probe again showed messages persisting across `d.stop`/`d.start` |
 
-The qBittorrent 5.3.0, Deluge 2.2.0, and rTorrent 0.9.8 combinations above are registered in `action.Tested`; no other
+The qBittorrent 5.3.0, Deluge 2.2.0, rTorrent 0.9.8, and Transmission 4.0.6/4.1.4 combinations above are registered in `action.Tested`; no other
 combination is eligible. qBittorrent 4.x does not report privacy, so
 recovery is refused there by the "public transfer" prerequisite (the test
 asserts this refusal). Not covered on real instances: engine-initiated
 (automatic) dispatch (implemented, tested only with simulated
 applications); the replacement's grab, progress and completion tracking
 (fixture-tested); search acceptance as an outcome tracked by Housekeeparr;
-retained-data and capacity limits (fixture-tested); Transmission.
+retained-data and capacity limits (fixture-tested).
 
 ## Workflows by application
 
 | Application | Floor | Source evidence | Transport | Observation | No-progress recovery | Metadata recovery | Preserved-data failure handling | Partial-pack handling |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Sonarr | 4.0 | `v4.0.20.3014` | HTTP API v3, API key header | **tested: 4.0.20.3014**; others contract-tested | **tested: 4.0.20.3014 with qBittorrent 5.3.0, Deluge 2.2.0, rTorrent 0.9.8** (manual dispatch) | not implemented | not implemented | not implemented |
-| Radarr | 5.0 | `v6.4.4.10685` | HTTP API v3, API key header | **tested: 6.4.4.10685**; others contract-tested | **tested: 6.4.4.10685 with qBittorrent 5.3.0, Deluge 2.2.0, rTorrent 0.9.8** (manual dispatch) | not implemented | not implemented | n/a (Sonarr-specific in v1) |
+| Sonarr | 4.0 | `v4.0.20.3014` | HTTP API v3, API key header | **tested: 4.0.20.3014**; others contract-tested | **tested: 4.0.20.3014 with qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8** (manual dispatch) | not implemented | not implemented | not implemented |
+| Radarr | 5.0 | `v6.4.4.10685` | HTTP API v3, API key header | **tested: 6.4.4.10685**; others contract-tested | **tested: 6.4.4.10685 with qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8** (manual dispatch) | not implemented | not implemented | n/a (Sonarr-specific in v1) |
 | qBittorrent | 4.1 (WebUI API v2) | `release-4.6.7`, `release-5.3.0` | WebUI API v2, session cookie | **tested: 5.3.0, 4.6.7**; others contract-tested | **tested: 5.3.0** with Sonarr/Radarr above; 4.x refused (privacy unknown) | not implemented | not implemented | — |
-| Transmission | 2.80 (RPC 15) | `4.0.6`, `4.1.4` | legacy RPC (deprecated in 4.1, still supported throughout 4.x), session-id handshake, optional basic auth | **tested: 4.0.6, 4.1.4**; others contract-tested | not implemented | not implemented | not implemented | — |
+| Transmission | 2.80 (RPC 15) | `4.0.6`, `4.1.4` | legacy RPC (deprecated in 4.1, still supported throughout 4.x), session-id handshake, optional basic auth | **tested: 4.0.6, 4.1.4**; others contract-tested | **tested: 4.0.6, 4.1.4** with Sonarr/Radarr above (`torrent-stop`, legacy RPC) | not implemented | not implemented | — |
 | Deluge | 2.0 | `deluge-2.0.0`, `deluge-2.1.1`, `deluge-2.2.0` | deluge-web JSON API (`/json`); daemon protocol unsupported | **tested: 2.2.0**; others contract-tested | **tested: 2.2.0** with Sonarr/Radarr above (`core.pause_torrent`) | not implemented | not implemented | — |
 | rTorrent | 0.9.8 | `v0.9.8`, `v0.16.28` | XML-RPC over an HTTP(S) SCGI gateway (tested: lighttpd `mod_scgi`); raw SCGI unsupported | **tested: 0.9.8**; others contract-tested | **tested: 0.9.8** with Sonarr/Radarr above (`d.stop`) | not implemented | not implemented | — |
 

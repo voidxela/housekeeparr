@@ -35,6 +35,12 @@ var Tested = []TestedWorkflow{
 	{Workflow: policy.WorkflowNoProgressRecovery, Manager: adapter.KindRadarr, ManagerVersion: "6.4.4.10685", Client: adapter.KindDeluge, ClientVersion: "2.2.0"},
 	{Workflow: policy.WorkflowNoProgressRecovery, Manager: adapter.KindSonarr, ManagerVersion: "4.0.20.3014", Client: adapter.KindRTorrent, ClientVersion: "0.9.8"},
 	{Workflow: policy.WorkflowNoProgressRecovery, Manager: adapter.KindRadarr, ManagerVersion: "6.4.4.10685", Client: adapter.KindRTorrent, ClientVersion: "0.9.8"},
+	// Transmission reports its build revision with the release; both are
+	// matched exactly.
+	{Workflow: policy.WorkflowNoProgressRecovery, Manager: adapter.KindSonarr, ManagerVersion: "4.0.20.3014", Client: adapter.KindTransmission, ClientVersion: "4.0.6 (38c164933e)"},
+	{Workflow: policy.WorkflowNoProgressRecovery, Manager: adapter.KindRadarr, ManagerVersion: "6.4.4.10685", Client: adapter.KindTransmission, ClientVersion: "4.0.6 (38c164933e)"},
+	{Workflow: policy.WorkflowNoProgressRecovery, Manager: adapter.KindSonarr, ManagerVersion: "4.0.20.3014", Client: adapter.KindTransmission, ClientVersion: "4.1.4 (a6d907d9ea)"},
+	{Workflow: policy.WorkflowNoProgressRecovery, Manager: adapter.KindRadarr, ManagerVersion: "6.4.4.10685", Client: adapter.KindTransmission, ClientVersion: "4.1.4 (a6d907d9ea)"},
 }
 
 // WorkflowFor maps a finding type to the workflow that would address it.

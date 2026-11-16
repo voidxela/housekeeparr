@@ -1,6 +1,6 @@
 # Project context
 
-Housekeeparr is in early implementation: the read-only foundation (milestone 1) and the policy/durable action foundation (milestone 2) are largely built; one write workflow (no-progress recovery, Sonarr/Radarr with qBittorrent 5.3.0, Deluge 2.2.0, or rTorrent 0.9.8) is tested end to end, manually and through automatic dispatch (the latter with simulated applications); no v1 workflow is complete across all clients. Read `docs/SPEC.md` before proposing or implementing behavior; it is the authoritative product specification. `docs/STATUS.md` is the implementation checklist (done / unverified / remaining) and must be updated with every milestone. `README.md` is the concise project introduction.
+Housekeeparr is in early implementation: the read-only foundation (milestone 1) and the policy/durable action foundation (milestone 2) are largely built; one write workflow (no-progress recovery, Sonarr/Radarr with qBittorrent 5.3.0, Deluge 2.2.0, rTorrent 0.9.8, or Transmission 4.0.6/4.1.4) is tested end to end, manually and through automatic dispatch (the latter with simulated applications); no v1 workflow is complete (metadata, preserved-data, partial-pack, and search workflows remain). Read `docs/SPEC.md` before proposing or implementing behavior; it is the authoritative product specification. `docs/STATUS.md` is the implementation checklist (done / unverified / remaining) and must be updated with every milestone. `README.md` is the concise project introduction.
 
 ## Stack
 
