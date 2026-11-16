@@ -4,8 +4,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/voidxela/housekeeparr/internal/adapter/arr"
 	"github.com/voidxela/housekeeparr/internal/domain"
 	"github.com/voidxela/housekeeparr/internal/store"
+	"github.com/voidxela/housekeeparr/internal/workflow"
 )
 
 // Outcome tracking bounds (implementation proposals): after noGrabAfter
@@ -25,7 +27,10 @@ const (
 // Only managers whose queue was read completely this cycle are evaluated,
 // so a failed read never moves an outcome. Absence of a grab is reported
 // as not observed, never as proof that no release exists.
-func (e *Engine) trackOutcomes(tx *store.Tx, freshManagers map[string]bool, now time.Time) error {
+//
+// The replacement search is followed separately, from the manager's command
+// list when it was read this cycle (see workflow.ObserveSearch).
+func (e *Engine) trackOutcomes(tx *store.Tx, freshManagers map[string]bool, commands map[string][]arr.Command, now time.Time) error {
 	open, err := tx.OpenOutcomes()
 	if err != nil {
 		return err
@@ -33,6 +38,10 @@ func (e *Engine) trackOutcomes(tx *store.Tx, freshManagers map[string]bool, now 
 	rowsBy := map[string][]store.QueueRecord{}
 	for _, o := range open {
 		before := o
+		searchChanged := false
+		if cmds, ok := commands[o.ManagerID]; ok {
+			searchChanged = workflow.ObserveSearch(&o, cmds, now)
+		}
 		switch {
 		case now.Sub(o.StartedAt) > outcomeWindow:
 			o.State = store.OutcomeUntracked
@@ -48,16 +57,17 @@ func (e *Engine) trackOutcomes(tx *store.Tx, freshManagers map[string]bool, now 
 			if err := e.advanceOutcome(tx, &o, rows, now); err != nil {
 				return err
 			}
-		default:
-			continue
 		}
-		if o.State != before.State || o.NewNativeID != before.NewNativeID || o.GrabVerified != before.GrabVerified {
+		if searchChanged || o.State != before.State || o.NewNativeID != before.NewNativeID || o.GrabVerified != before.GrabVerified {
 			o.CheckedAt = now
 			if err := tx.SaveOutcome(o); err != nil {
 				return err
 			}
 			if o.State != before.State {
 				e.log.Info("recovery outcome", "action", o.IntentID, "manager", o.ManagerID, "content", strings.Join(o.Content, ","), "state", o.State)
+			}
+			if o.Search.State != before.Search.State {
+				e.log.Info("replacement search", "action", o.IntentID, "manager", o.ManagerID, "content", strings.Join(o.Content, ","), "state", o.Search.State)
 			}
 		}
 	}

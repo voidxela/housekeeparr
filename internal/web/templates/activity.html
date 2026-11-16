@@ -6,7 +6,7 @@
   <h2 id="h-actions">Actions</h2>
   {{if .Actions}}<table class="table compact"><thead><tr><th scope="col">#</th><th scope="col">State</th><th scope="col">Workflow</th><th scope="col">Origin</th><th scope="col">Created</th><th scope="col">Steps</th><th scope="col">Explanation</th></tr></thead><tbody>
   {{range .Actions}}<tr><td>{{.ID}}</td><td><span class="pill">{{.State}}</span>{{if .ReviewRequired}} <strong>review required</strong>{{end}}</td><td>{{.Workflow}}</td><td>{{.Origin}}</td><td>{{clock .CreatedAt}}</td>
-  <td><ol class="plain small">{{range .Steps}}<li>{{.Op}}: {{.State}}{{if .Error}} — {{.Error}}{{end}}</li>{{end}}</ol></td><td>{{.Explanation}}{{$o := index $.Page.Outcomes .ID}}{{if $o.State}}<div class="small"><strong>Replacement:</strong> {{$o.State}}{{with $o.Note}} — {{.}}{{end}}</div>{{end}}</td></tr>{{end}}
+  <td><ol class="plain small">{{range .Steps}}<li>{{.Op}}: {{.State}}{{if .Error}} — {{.Error}}{{end}}</li>{{end}}</ol></td><td>{{.Explanation}}{{$o := index $.Page.Outcomes .ID}}{{if $o.State}}{{if and $o.Search.State (ne $o.Search.State "not_tracked")}}<div class="small"><strong>Replacement search:</strong> {{searchLabel $o.Search.State}}{{with $o.Search.Note}} — {{.}}{{end}}</div>{{end}}<div class="small"><strong>Replacement grab:</strong> {{$o.State}}{{with $o.Note}} — {{.}}{{end}}</div>{{end}}</td></tr>{{end}}
   </tbody></table>
   {{else}}{{template "empty" "No actions have been journaled."}}{{end}}
 </section>

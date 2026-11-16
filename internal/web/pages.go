@@ -23,6 +23,7 @@ var pageNames = []string{"overview", "attention", "finding", "downloads", "downl
 func (s *Server) funcs() template.FuncMap {
 	now := s.svc.Now
 	return template.FuncMap{
+		"searchLabel": app.SearchLabel,
 		"since": func(t time.Time) string {
 			if t.IsZero() {
 				return "never"

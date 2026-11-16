@@ -150,6 +150,17 @@ type Executor interface {
 	Observe(ctx context.Context, step store.Step) (Observation, error)
 }
 
+// OutcomeObserver is an optional Executor capability: right after a
+// verified recovery it observes what later polling would likely miss, the
+// manager's replacement search (managers drop finished commands from their
+// list a few minutes after they end). It must not write externally and must
+// return within a short bound; it only updates o.Search.
+type OutcomeObserver interface {
+	// now is the coordinator's clock, against which the outcome's times
+	// were recorded.
+	ObserveOutcome(ctx context.Context, o *store.RecoveryOutcome, now func() time.Time) (changed bool, err error)
+}
+
 // Gate supplies the global conditions evaluated for every execution.
 type Gate interface {
 	// Blockers returns unsatisfied prerequisites that are not external
@@ -498,7 +509,30 @@ func (c *Coordinator) run(ctx context.Context, id int64, p Proposal) (Result, er
 	if err != nil {
 		return Result{IntentID: id, State: store.IntentExecuting}, fmt.Errorf("%w: completion not recorded: %v", ErrJournal, err)
 	}
+	c.observeOutcome(jctx, id)
 	return Result{IntentID: id, State: store.IntentSucceeded, Detail: "every step verified"}, nil
+}
+
+// observeOutcome records what the executor can observe of the replacement
+// search right after a verified recovery. Failure to observe changes
+// nothing: the outcome stays unobserved and the engine keeps looking.
+func (c *Coordinator) observeOutcome(ctx context.Context, id int64) {
+	obs, ok := c.Executor.(OutcomeObserver)
+	if !ok {
+		return
+	}
+	os, err := c.Store.Outcomes(ctx, []int64{id})
+	if err != nil {
+		return
+	}
+	o, ok := os[id]
+	if !ok {
+		return
+	}
+	if changed, err := obs.ObserveOutcome(ctx, &o, c.now); err != nil || !changed {
+		return
+	}
+	_ = c.Store.Write(ctx, func(tx *store.Tx) error { return tx.SaveSearchOutcome(id, o.Search) })
 }
 
 // settle classifies a dispatch result and verifies the postcondition.
@@ -764,7 +798,17 @@ func trackOutcome(tx *store.Tx, id int64, steps []store.Step, now time.Time) err
 		default:
 			return nil
 		}
-		return tx.CreateOutcome(store.RecoveryOutcome{IntentID: id, ManagerID: tg.ManagerID, Content: content, OldDownloadID: tg.DownloadID, StartedAt: now})
+		// The replacement search is looked for from the dispatch of this
+		// manager request: the manager queues it in response.
+		since, err := tx.StepDispatchedAt(id, st.Seq)
+		if err != nil {
+			return err
+		}
+		if since == nil {
+			since = &now
+		}
+		return tx.CreateOutcome(store.RecoveryOutcome{IntentID: id, ManagerID: tg.ManagerID, Content: content, OldDownloadID: tg.DownloadID,
+			StartedAt: now, Search: store.SearchOutcome{Since: since}})
 	}
 	return nil
 }

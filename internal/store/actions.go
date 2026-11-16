@@ -233,6 +233,19 @@ func (t *Tx) BeginStep(id int64, seq int, now time.Time, baseline json.RawMessag
 	return nil
 }
 
+// StepDispatchedAt returns when a step was last dispatched, or nil.
+func (t *Tx) StepDispatchedAt(id int64, seq int) (*time.Time, error) {
+	var at sql.NullInt64
+	err := t.queryRow(`SELECT dispatched_at FROM action_steps WHERE intent_id=? AND seq=?`, id, seq).Scan(&at)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return ptrMS(at), nil
+}
+
 // FinishStep records a step's observed outcome. A pending step may be
 // finished directly only as skipped (never dispatched).
 func (t *Tx) FinishStep(id int64, seq int, to StepState, outcome json.RawMessage, errText string, now time.Time) error {

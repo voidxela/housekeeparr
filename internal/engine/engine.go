@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/voidxela/housekeeparr/internal/adapter"
+	"github.com/voidxela/housekeeparr/internal/adapter/arr"
 	"github.com/voidxela/housekeeparr/internal/config"
 	"github.com/voidxela/housekeeparr/internal/domain"
 	"github.com/voidxela/housekeeparr/internal/store"
@@ -299,6 +300,10 @@ type fetched struct {
 	transfer *domain.TransferSnapshot
 	queue    *domain.QueueSnapshot
 	health   *domain.HealthSnapshot
+	// commands is the manager's command list, read only while a recovery
+	// outcome's replacement search is unsettled; a failed read leaves it
+	// nil and fails nothing else.
+	commands []arr.Command
 	err      error
 	op       string
 	started  time.Time

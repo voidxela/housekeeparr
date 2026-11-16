@@ -4,6 +4,7 @@ package integration
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
@@ -324,6 +325,24 @@ func TestAutomaticRecovery(t *testing.T) {
 		}
 		after, hist, searches := verifyRecovered(t, tg.a, tg.mgr, tg.e.asEntry(), row, cats[tg.e.Hash], digest[tg.e.Hash], hist0[tg.e.Hash], start, tg.search)
 		t.Logf("%s: verified after automatic dispatch: history %v, torrent %s, replacement searches %+v", tg.e.Key, hist, after.NativeState, searches)
+	}
+	// The binary recorded each manager's replacement search as its own
+	// outcome.
+	st, err := store.Open(ctx, stateDir, store.Options{ReadOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	for _, in := range s.intents {
+		var subj struct {
+			NativeID string `json:"native_id"`
+		}
+		_ = json.Unmarshal(in.Subject, &subj)
+		name := "EpisodeSearch"
+		if strings.EqualFold(subj.NativeID, film.Hash) {
+			name = "MoviesSearch"
+		}
+		requireSearchOutcome(t, st, in.ID, name)
 	}
 }
 

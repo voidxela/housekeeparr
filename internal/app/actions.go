@@ -298,3 +298,24 @@ func presentAssociations(rows []store.QueueRecord) []policy.Association {
 	}
 	return out
 }
+
+// SearchLabel names a replacement-search state for people.
+func SearchLabel(state string) string {
+	switch state {
+	case store.SearchUnobserved:
+		return "not seen yet"
+	case store.SearchAccepted:
+		return "accepted (queued by the manager)"
+	case store.SearchRunning:
+		return "running"
+	case store.SearchCompleted:
+		return "completed"
+	case store.SearchFailed:
+		return "command failed"
+	case store.SearchNotObserved:
+		return "not observed"
+	case store.SearchEndUnverified:
+		return "accepted; end unverified"
+	}
+	return state
+}

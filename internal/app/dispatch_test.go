@@ -101,6 +101,8 @@ func newWorld(t *testing.T, mode string, acquisitions int) *world {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { w.st.Close() })
+	w.mgr.SetClock(w.clock.Now)
+	w.radarr.SetClock(w.clock.Now)
 	conns := &engine.Connections{Clients: []adapter.DownloadClient{w.client, w.client2}, Managers: []adapter.MediaManager{w.mgr, w.radarr},
 		Meta: map[string]engine.ConnMeta{
 			"sonarr": {ID: "sonarr", Name: "Sonarr", BaseURL: "http://127.0.0.1:8989", Kind: adapter.KindSonarr, Enabled: true,
@@ -194,6 +196,12 @@ func TestAutomaticRecoveryEndToEnd(t *testing.T) {
 	oc, _ := w.st.Outcomes(context.Background(), []int64{acts[0].ID})
 	if oc[acts[0].ID].State != store.OutcomeAwaitingGrab {
 		t.Fatalf("outcome %+v", oc)
+	}
+	// The manager-native replacement search was observed right after the
+	// recovery, as its own outcome (the manager's list drops it minutes
+	// later, before the next poll).
+	if s := oc[acts[0].ID].Search; s.State != store.SearchCompleted || s.Name != "EpisodeSearch" || !strings.Contains(s.Note, "not a grab") {
+		t.Fatalf("replacement search %+v", s)
 	}
 	// The manager grabs a replacement; it is recorded, and nothing else
 	// is sent for this content during later cycles.

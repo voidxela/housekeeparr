@@ -241,7 +241,14 @@ func cmdActions(args []string, out, errOut io.Writer) int {
 	w.Flush()
 	for _, in := range list {
 		if oc, ok := outcomes[in.ID]; ok {
-			fmt.Fprintf(out, "#%d replacement: %s", in.ID, oc.State)
+			if oc.Search.State != "" && oc.Search.State != store.SearchNotTracked {
+				fmt.Fprintf(out, "#%d replacement search: %s", in.ID, app.SearchLabel(oc.Search.State))
+				if oc.Search.Note != "" {
+					fmt.Fprintf(out, " — %s", oc.Search.Note)
+				}
+				fmt.Fprintln(out)
+			}
+			fmt.Fprintf(out, "#%d replacement grab: %s", in.ID, oc.State)
 			if oc.Note != "" {
 				fmt.Fprintf(out, " — %s", oc.Note)
 			}

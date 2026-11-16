@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/voidxela/housekeeparr/internal/adapter"
+	"github.com/voidxela/housekeeparr/internal/adapter/arr"
 	"github.com/voidxela/housekeeparr/internal/config"
 	"github.com/voidxela/housekeeparr/internal/domain"
 	"github.com/voidxela/housekeeparr/internal/fake"
@@ -818,5 +819,66 @@ func TestRecoveryOutcomesTrackedSeparately(t *testing.T) {
 	h.run(10, 10)
 	if o := state(); o.State != store.OutcomeCompleted || o.CompletedAt == nil || o.GrabbedAt == nil || o.ProgressAt == nil {
 		t.Fatalf("completion: %+v", o)
+	}
+}
+
+// The replacement search is followed from the manager's command list,
+// separately from the grab, and only while it is unsettled; a failed
+// command read changes nothing and does not fail the manager's read.
+func TestReplacementSearchFollowedFromCommandList(t *testing.T) {
+	h := newHarness(t, baseConfig)
+	h.cycle()
+	since := h.clock.Now()
+	if err := h.st.Write(ctx, func(tx *store.Tx) error {
+		return tx.CreateOutcome(store.RecoveryOutcome{IntentID: 9, ManagerID: "sonarr", Content: []string{"episode:101"}, OldDownloadID: hash,
+			StartedAt: since.Add(10 * time.Second), Search: store.SearchOutcome{Since: &since}})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	state := func() store.RecoveryOutcome {
+		t.Helper()
+		m, err := h.st.Outcomes(ctx, []int64{9})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m[9]
+	}
+	h.run(10, 10)
+	if o := state(); o.Search.State != store.SearchUnobserved || o.State != store.OutcomeAwaitingGrab {
+		t.Fatalf("nothing listed yet: %+v", o)
+	}
+	queued := since.Add(5 * time.Second)
+	search := arr.Command{ID: 77, Name: "EpisodeSearch", Status: "queued", Trigger: "unspecified", Queued: queued, EpisodeIDs: []int64{101}}
+	h.mgr.AddCommand(arr.Command{ID: 76, Name: "EpisodeSearch", Status: "queued", Queued: queued, EpisodeIDs: []int64{102}}) // other content
+	h.mgr.AddCommand(search)
+	h.run(10, 10)
+	if o := state(); o.Search.State != store.SearchAccepted || o.Search.CommandID == nil || *o.Search.CommandID != 77 {
+		t.Fatalf("accepted: %+v", o.Search)
+	}
+	// A failed command read changes nothing, and the manager is still read.
+	h.mgr.SetCommandsError(&adapter.Error{Class: adapter.ErrTransient, Op: "fake", Message: "down"})
+	rep := h.cycle()
+	for _, c := range rep.Connections {
+		if c.ID == "sonarr" && !c.OK {
+			t.Fatalf("a failed command read failed the manager read: %+v", c)
+		}
+	}
+	if o := state(); o.Search.State != store.SearchAccepted {
+		t.Fatalf("moved on a failed read: %+v", o.Search)
+	}
+	h.mgr.SetCommandsError(nil)
+	ended := queued.Add(2 * time.Second)
+	search.Status, search.Result, search.Ended, search.Message = "completed", "successful", &ended, "Episode search completed. 0 reports downloaded."
+	h.mgr.AddCommand(search)
+	h.run(10, 10)
+	o := state()
+	if o.Search.State != store.SearchCompleted || !strings.Contains(o.Search.Note, "0 reports downloaded") || !strings.Contains(o.Search.Note, "not a grab") {
+		t.Fatalf("completed: %+v", o.Search)
+	}
+	if o.State != store.OutcomeAwaitingGrab {
+		t.Fatalf("a completed search moved the grab outcome: %+v", o)
+	}
+	if need, _ := h.st.ManagersAwaitingSearch(ctx); len(need) != 0 {
+		t.Fatalf("command list still read after the search settled: %v", need)
 	}
 }

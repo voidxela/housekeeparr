@@ -39,6 +39,74 @@ type managerWrites struct {
 	removeErr   error
 	removeNoop  bool
 	unmonitored map[string]bool
+	// commands is the simulated command list; a blocklisting removal with
+	// redownload not skipped queues the manager-native search, as the
+	// released managers do (trigger "unspecified").
+	commands    []arr.Command
+	commandsErr error
+	searchState string // status of queued replacement searches (default "completed")
+	clock       func() time.Time
+}
+
+func (m *Manager) now() time.Time {
+	if m.w.clock != nil {
+		return m.w.clock()
+	}
+	return time.Now()
+}
+
+// SetClock sets the clock used for simulated command times.
+func (m *Manager) SetClock(now func() time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.w.clock = now
+}
+
+// SetReplacementSearchStatus sets the status given to replacement searches
+// the fake queues (for example "queued" or "failed"); "" means completed.
+func (m *Manager) SetReplacementSearchStatus(status string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.w.searchState = status
+}
+
+// SetCommandsError makes command-list reads fail.
+func (m *Manager) SetCommandsError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.w.commandsErr = err
+}
+
+// ClearCommands empties the simulated command list, as the released
+// managers do a few minutes after commands finish.
+func (m *Manager) ClearCommands() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.w.commands = nil
+}
+
+// AddCommand adds a command to the simulated list, replacing one with the
+// same ID.
+func (m *Manager) AddCommand(c arr.Command) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.w.commands {
+		if m.w.commands[i].ID == c.ID {
+			m.w.commands[i] = c
+			return
+		}
+	}
+	m.w.commands = append(m.w.commands, c)
+}
+
+// Commands returns the simulated command list.
+func (m *Manager) Commands(context.Context) ([]arr.Command, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.w.commandsErr != nil {
+		return nil, m.w.commandsErr
+	}
+	return append([]arr.Command{}, m.w.commands...), nil
 }
 
 // RemoveQueueItem removes a queue row as the released managers do for a
@@ -69,6 +137,20 @@ func (m *Manager) RemoveQueueItem(_ context.Context, queueID int64, f arr.Remove
 		}
 		m.w.nextID++
 		m.w.history = append(m.w.history, histEntry{HistoryEvent: arr.HistoryEvent{ID: m.w.nextID, EventType: event, Date: time.Now()}, downloadID: q.DownloadID})
+		if f.Blocklist && !f.SkipRedownload {
+			m.w.nextID++
+			at := m.now()
+			c := arr.Command{ID: m.w.nextID, Status: "completed", Result: "successful", Trigger: "unspecified", Queued: at, Started: &at, Ended: &at}
+			if m.w.searchState != "" {
+				c.Status = m.w.searchState
+			}
+			if q.MovieID > 0 {
+				c.Name, c.MovieIDs, c.Message = "MoviesSearch", []int64{q.MovieID}, "Completed search for 1 movies. 0 reports downloaded."
+			} else {
+				c.Name, c.EpisodeIDs, c.Message = "EpisodeSearch", []int64{q.EpisodeID}, "Episode search completed. 0 reports downloaded."
+			}
+			m.w.commands = append(m.w.commands, c)
+		}
 		return nil
 	}
 	return &adapter.Error{Class: adapter.ErrPermanent, Op: "fake.queue_remove", HTTPStatus: 404, Message: "no such queue item"}

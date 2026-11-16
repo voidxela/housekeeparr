@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/voidxela/housekeeparr/internal/adapter"
+	"github.com/voidxela/housekeeparr/internal/adapter/arr"
 	"github.com/voidxela/housekeeparr/internal/findings"
 	"github.com/voidxela/housekeeparr/internal/redact"
 	"github.com/voidxela/housekeeparr/internal/store"
@@ -42,7 +43,10 @@ func (e *Engine) Cycle(ctx context.Context, next *time.Time) CycleReport {
 		nextAttempt[r.ID] = r.NextAttemptAt
 	}
 
-	results := e.fetchAll(ctx, nextAttempt)
+	// Command lists are read only for managers with an unsettled
+	// replacement search; failing to find out reads none.
+	needCommands, _ := e.st.ManagersAwaitingSearch(ctx)
+	results := e.fetchAll(ctx, nextAttempt, needCommands)
 	var res findings.Result
 	err = e.st.Write(ctx, func(tx *store.Tx) error {
 		now := e.clock.Now()
@@ -103,7 +107,7 @@ func errorText(err error) string {
 }
 
 // fetchAll polls every enabled connection with bounded concurrency.
-func (e *Engine) fetchAll(ctx context.Context, nextAttempt map[string]*time.Time) []*fetched {
+func (e *Engine) fetchAll(ctx context.Context, nextAttempt map[string]*time.Time, needCommands map[string]bool) []*fetched {
 	sem := make(chan struct{}, e.cfg.Polling.MaxConcurrency)
 	var wg sync.WaitGroup
 	var out []*fetched
@@ -170,6 +174,15 @@ func (e *Engine) fetchAll(ctx context.Context, nextAttempt map[string]*time.Time
 			}
 			h.CollectedAt = e.clock.Now()
 			f.queue, f.health = &q, &h
+			if cr, ok := m.(interface {
+				Commands(context.Context) ([]arr.Command, error)
+			}); ok && needCommands[m.ID()] {
+				if cmds, err := cr.Commands(ctx); err == nil {
+					f.commands = cmds
+				} else {
+					e.log.Warn("could not read the manager's command list; the replacement search outcome is unchanged", "manager", m.ID(), "err", errorText(err))
+				}
+			}
 		})
 	}
 	wg.Wait()
@@ -316,12 +329,16 @@ func (e *Engine) evaluate(tx *store.Tx, results []*fetched, gone map[string][]st
 	}
 	// 1b. Outcomes of earlier recoveries, from managers read completely.
 	freshManagers := map[string]bool{}
+	commands := map[string][]arr.Command{}
 	for _, f := range results {
 		if f.queue != nil && f.err == nil && f.queue.Complete {
 			freshManagers[f.id] = true
 		}
+		if f.commands != nil && f.err == nil {
+			commands[f.id] = f.commands
+		}
 	}
-	if err := e.trackOutcomes(tx, freshManagers, now); err != nil {
+	if err := e.trackOutcomes(tx, freshManagers, commands, now); err != nil {
 		return total, err
 	}
 	// 2. Transfer diagnoses.

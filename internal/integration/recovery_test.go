@@ -265,6 +265,9 @@ func runRecovery(t *testing.T, a arrAPI, mgr recoveryManager, me managedEntry, s
 	}
 
 	after, hist, searches := verifyRecovered(t, a, mgr, e, *row, tr.Category, digest, hist0, start, searchName)
+	// Housekeeparr itself recorded the manager's replacement search as a
+	// separate outcome, right after the recovery.
+	requireSearchOutcome(t, st, res.IntentID, searchName)
 	// The local journal holds no lock and records the cooldown.
 	if h, _ := st.LockHolder(ctx, p.Locks[0]); h != 0 {
 		t.Error("lock still held after success")
@@ -346,4 +349,25 @@ func verifyRecovered(t *testing.T, a arrAPI, mgr recoveryManager, e entry, row d
 		t.Errorf("%T has no command reader", mgr)
 	}
 	return after, hist, searches
+}
+
+// requireSearchOutcome checks the replacement-search outcome Housekeeparr
+// recorded for an intent: the manager-native search was seen accepted,
+// running, or completed (it completes within seconds on these instances).
+func requireSearchOutcome(t *testing.T, st *store.Store, intentID int64, searchName string) {
+	t.Helper()
+	oc, err := st.Outcomes(context.Background(), []int64{intentID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := oc[intentID].Search
+	switch s.State {
+	case store.SearchAccepted, store.SearchRunning, store.SearchCompleted:
+	default:
+		t.Fatalf("action #%d: replacement search outcome %+v, want it observed", intentID, s)
+	}
+	if s.Name != searchName || s.CommandID == nil {
+		t.Fatalf("action #%d: replacement search outcome %+v, want %s", intentID, s, searchName)
+	}
+	t.Logf("action #%d: replacement search recorded: %s — %s", intentID, s.State, s.Note)
 }
