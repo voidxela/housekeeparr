@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/voidxela/housekeeparr/internal/action"
@@ -31,10 +32,14 @@ type Service struct {
 	cfg    *config.Config
 	now    func() time.Time
 	engine EngineStatus // nil when not running in the worker process
-	// executor performs action steps. It is nil in this build: no adapter
-	// has a write method, so manual actions are refused with their
-	// prerequisites. Tests set it through SetExecutor.
+	// executor performs action steps; without one, actions are refused
+	// with their prerequisites.
 	executor action.Executor
+	// execMu serialises every execution path (manual actions and
+	// automatic dispatch, each with its reconciliation), so one cannot
+	// reconcile the other's in-flight intent, and only one acquisition
+	// is in flight at a time (SPEC §9.1).
+	execMu sync.Mutex
 }
 
 // SetExecutor installs the action executor (tests and future workflows).
@@ -312,6 +317,8 @@ type FindingDetail struct {
 	FindingView
 	Events  []domain.FindingEvent `json:"events"`
 	History []domain.Finding      `json:"previous_occurrences,omitempty"`
+	// Automation is the latest automatic evaluation, if any.
+	Automation *store.AutomationEvaluation `json:"automation,omitempty"`
 }
 
 // ErrNotFound is returned for unknown IDs.
@@ -331,6 +338,9 @@ func (s *Service) Finding(ctx context.Context, id int64) (*FindingDetail, error)
 		return nil, err
 	}
 	if d.History, err = s.st.FindingHistory(ctx, *f, 10); err != nil {
+		return nil, err
+	}
+	if d.Automation, err = s.st.Evaluation(ctx, id); err != nil {
 		return nil, err
 	}
 	return d, nil

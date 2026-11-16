@@ -61,6 +61,10 @@ type Engine struct {
 	kind    string
 	version string
 
+	// afterCycle runs after every persisted cycle in Run, outside the
+	// cycle's transaction (automatic dispatch).
+	afterCycle func(ctx context.Context, rep CycleReport)
+
 	mu       sync.Mutex
 	probes   map[string]probeState
 	last     *CycleReport
@@ -75,10 +79,13 @@ type probeState struct {
 
 // ConnResult is the outcome of polling one connection in a cycle.
 type ConnResult struct {
-	ID         string        `json:"id"`
-	Kind       adapter.Kind  `json:"kind"`
-	Skipped    string        `json:"skipped,omitempty"` // reason when not attempted
-	OK         bool          `json:"ok"`
+	ID      string       `json:"id"`
+	Kind    adapter.Kind `json:"kind"`
+	Skipped string       `json:"skipped,omitempty"` // reason when not attempted
+	OK      bool         `json:"ok"`
+	// Complete is false when a successful read returned an incomplete
+	// listing.
+	Complete   bool          `json:"complete"`
 	ErrorClass string        `json:"error_class,omitempty"`
 	Error      string        `json:"error,omitempty"`
 	Duration   time.Duration `json:"duration"`
@@ -116,6 +123,21 @@ func New(ctx context.Context, o Options) (*Engine, error) {
 
 // RunID identifies this process's run.
 func (e *Engine) RunID() string { return e.runID }
+
+// OnCycle installs fn to run after each persisted cycle of Run.
+func (e *Engine) OnCycle(fn func(ctx context.Context, rep CycleReport)) { e.afterCycle = fn }
+
+// Fresh returns the connections read successfully (and, for listings,
+// completely) in rep.
+func (rep CycleReport) Fresh() map[string]bool {
+	out := map[string]bool{}
+	for _, c := range rep.Connections {
+		if c.OK && c.Complete {
+			out[c.ID] = true
+		}
+	}
+	return out
+}
 
 func (e *Engine) startRun(ctx context.Context) error {
 	now := e.clock.Now()
@@ -215,6 +237,8 @@ func (e *Engine) Run(ctx context.Context) error {
 			rep := e.Cycle(ctx, &next)
 			if rep.StoreError != "" {
 				e.log.Error("cycle could not be persisted; no findings were updated", "err", rep.StoreError)
+			} else if e.afterCycle != nil {
+				e.afterCycle(ctx, rep)
 			}
 			timer.Reset(time.Until(next))
 		}

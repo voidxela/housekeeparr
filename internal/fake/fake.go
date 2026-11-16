@@ -62,6 +62,7 @@ type Client struct {
 	partial   bool
 	probe     adapter.Probe
 	lists     int
+	stops     []string
 }
 
 // NewClient creates a fake qBittorrent-kind client.
@@ -160,6 +161,7 @@ type Manager struct {
 	healthErr error
 	partial   bool
 	reads     int
+	w         managerWrites
 }
 
 // NewManager creates a fake Sonarr-kind manager.

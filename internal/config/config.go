@@ -98,6 +98,7 @@ type LimitsConfig struct {
 	SuccessCooldown     *Duration `toml:"success_cooldown"`
 	RetainedTransfers   *int      `toml:"retained_transfers"`
 	RetainedGiB         *int64    `toml:"retained_gib"`
+	ActionsPerCycle     *int      `toml:"actions_per_cycle"`
 }
 
 // Limits returns the effective acquisition limits with provenance.
@@ -131,6 +132,10 @@ func (c *Config) Limits() policy.Limits {
 		l.RetainedTransfers = *c2.RetainedTransfers
 		set("retained_transfers", strconv.Itoa(l.RetainedTransfers))
 	}
+	if c2.ActionsPerCycle != nil {
+		l.ActionsPerCycle = *c2.ActionsPerCycle
+		set("actions_per_cycle", strconv.Itoa(l.ActionsPerCycle))
+	}
 	if c2.RetainedGiB != nil {
 		l.RetainedBytes = *c2.RetainedGiB << 30
 		set("retained_gib", strconv.FormatInt(*c2.RetainedGiB, 10))
@@ -154,6 +159,7 @@ func validateLimits(errf errFunc, cfg *Config) {
 		errf("automation.limits.acquisition_window", "must not exceed retention.audit_events, or pacing history would be pruned while still counted")
 	}
 	intIn("retained_transfers", l.RetainedTransfers, 1, 10000)
+	intIn("actions_per_cycle", l.ActionsPerCycle, 1, 10)
 	if g := cfg.Automation.Limits.RetainedGiB; g != nil && (*g < 0 || *g > 1<<20) {
 		errf("automation.limits.retained_gib", "must be between 0 (no byte ceiling) and 1048576")
 	}

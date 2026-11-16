@@ -177,9 +177,12 @@ var ErrNoExecutor = errors.New("this build has no write executor for the workflo
 // prerequisites as automation. It re-plans from current local state, so a
 // stale preview is never executed.
 func (s *Service) Act(ctx context.Context, findingID int64, actor Actor) (*ActionPreview, *action.Result, error) {
+	s.execMu.Lock()
+	defer s.execMu.Unlock()
 	// Settle anything a crash interrupted before planning new work, so a
 	// half-finished action holds its locks as uncertain rather than as
-	// executing forever.
+	// executing forever. Holding execMu, no action of this process is in
+	// flight.
 	if _, err := s.Reconcile(ctx); err != nil {
 		return nil, nil, fmt.Errorf("reconcile interrupted actions: %w", err)
 	}

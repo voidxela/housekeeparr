@@ -123,6 +123,13 @@ func printFinding(w io.Writer, d *app.FindingDetail) {
 	if f.ResolvedAt != nil {
 		fmt.Fprintf(w, "Resolved %s: %s\n", ts(f.ResolvedAt), f.Resolution)
 	}
+	if a := d.Automation; a != nil {
+		fmt.Fprintf(w, "\nAutomation (evaluated %s): %s — %s", ts(&a.EvaluatedAt), a.Result, a.Detail)
+		if a.NextAt != nil {
+			fmt.Fprintf(w, " (next eligible %s)", ts(a.NextAt))
+		}
+		fmt.Fprintln(w)
+	}
 	section := func(title string, items []string) {
 		if len(items) == 0 {
 			return

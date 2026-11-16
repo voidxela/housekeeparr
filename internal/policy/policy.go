@@ -123,14 +123,17 @@ type Limits struct {
 	RetainedTransfers int `json:"retained_transfers"`
 	// RetainedBytes optionally bounds their known logical size; 0 means
 	// no byte ceiling is configured.
-	RetainedBytes int64    `json:"retained_bytes"`
-	Sources       []Source `json:"sources"`
+	RetainedBytes int64 `json:"retained_bytes"`
+	// ActionsPerCycle bounds automatic actions dispatched after one
+	// observation cycle; they run one at a time.
+	ActionsPerCycle int      `json:"actions_per_cycle"`
+	Sources         []Source `json:"sources"`
 }
 
 // DefaultLimits returns the proposed limits.
 func DefaultLimits() Limits {
 	return Limits{Acquisitions: 20, AcquisitionWindow: 24 * time.Hour, ManagerAcquisitions: 20, ContentAttempts: 3, SuccessCooldown: 24 * time.Hour,
-		RetainedTransfers: 25}
+		RetainedTransfers: 25, ActionsPerCycle: 1}
 }
 
 // From returns where a limit setting came from.

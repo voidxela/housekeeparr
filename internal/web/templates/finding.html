@@ -43,6 +43,14 @@
 </section>
 {{end}}
 
+{{with $.Page.Automation}}
+<section class="card" aria-labelledby="h-auto">
+  <h2 id="h-auto">Automation</h2>
+  <p><span class="pill">{{.Result}}</span> evaluated {{clock .EvaluatedAt}}{{with .NextAt}}; next eligible {{clock .}}{{end}}{{if .IntentID}} — <a href="/activity">action #{{.IntentID}}</a>{{end}}</p>
+  <p class="small">{{.Detail}}</p>
+</section>
+{{end}}
+
 {{with $.Page.Preview}}{{with .Proposal}}
 <section class="card preview" aria-labelledby="h-preview">
   <h2 id="h-preview">Action preview: {{.Workflow}}</h2>

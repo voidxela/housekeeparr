@@ -265,8 +265,32 @@ func cmdRun(args []string, out, errOut io.Writer) int {
 			log.Error("could not record shutdown", "err", err)
 		}
 	}
+	// One service for the web interface and automatic dispatch, so manual
+	// and automatic execution are serialised by the same lock.
+	svc := app.New(st, cfg, nil, eng)
+	svc.SetExecutor(workflow.FromConnections(conns.Clients, conns.Managers))
+	dispatch := func(ctx context.Context, rep engine.CycleReport) {
+		r, err := svc.DispatchAutomatic(ctx, rep.Fresh())
+		switch {
+		case err != nil:
+			log.Error("automatic dispatch failed; nothing further was sent this cycle", "err", err)
+		case r.Skipped != "":
+			log.Debug("automatic dispatch skipped", "reason", r.Skipped)
+		default:
+			for _, e := range r.Evaluations {
+				log.Info("automatic evaluation", "finding", e.FindingID, "result", e.Result, "action", e.IntentID, "detail", e.Detail)
+			}
+			for scope, why := range r.Breakers {
+				log.Warn("automation held", "scope", scope, "reason", why)
+			}
+		}
+	}
+	eng.OnCycle(dispatch)
 	if *once {
 		rep := eng.Cycle(ctx, nil)
+		if rep.StoreError == "" {
+			dispatch(ctx, rep)
+		}
 		stopRun("one-shot cycle complete")
 		if o.json {
 			return writeJSON(out, rep)
@@ -286,8 +310,6 @@ func cmdRun(args []string, out, errOut io.Writer) int {
 		"connections", len(conns.Meta), "interval", cfg.Polling.Interval.Duration)
 	var srv *web.Server
 	if cfg.Web.Enabled && !*headless {
-		svc := app.New(st, cfg, nil, eng)
-		svc.SetExecutor(workflow.FromConnections(conns.Clients, conns.Managers))
 		srv, err = web.New(svc, web.Options{Listen: cfg.Web.Listen, Logger: log})
 		if err != nil {
 			fmt.Fprintln(errOut, "web:", err)

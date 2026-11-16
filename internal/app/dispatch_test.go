@@ -1,0 +1,300 @@
+package app_test
+
+import (
+	"context"
+	"io"
+	"log/slog"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/voidxela/housekeeparr/internal/action"
+	"github.com/voidxela/housekeeparr/internal/adapter"
+	"github.com/voidxela/housekeeparr/internal/adapter/arr"
+	"github.com/voidxela/housekeeparr/internal/app"
+	"github.com/voidxela/housekeeparr/internal/config"
+	"github.com/voidxela/housekeeparr/internal/domain"
+	"github.com/voidxela/housekeeparr/internal/engine"
+	"github.com/voidxela/housekeeparr/internal/fake"
+	"github.com/voidxela/housekeeparr/internal/policy"
+	"github.com/voidxela/housekeeparr/internal/store"
+	"github.com/voidxela/housekeeparr/internal/workflow"
+)
+
+// The automatic path end to end, deterministically: the real engine with
+// an injected clock diagnoses sustained no-progress from observations; the
+// real dispatcher, planner, coordinator, and workflow executor act on
+// simulated applications (internal/fake). No wall-clock stall window is
+// waited out. This establishes the pipeline's own behaviour, not any real
+// application's: that is what the disposable-instance runs are for.
+
+const (
+	gib   = int64(1) << 30
+	hashA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	hashB = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	hashC = "cccccccccccccccccccccccccccccccccccccccc"
+	hashD = "dddddddddddddddddddddddddddddddddddddddd"
+)
+
+var t0 = time.Date(2026, 11, 16, 8, 0, 0, 0, time.UTC)
+
+const autoConfig = `
+version = 1
+mode = "%MODE%"
+[automation.workflows]
+no_progress_recovery = true
+[automation.limits]
+acquisitions = %ACQ%
+acquisition_window = "1h"
+[polling]
+interval = "10m"
+jitter = "0s"
+[[sonarr]]
+id = "sonarr"
+url = "http://127.0.0.1:8989"
+api_key = "env:X"
+download_clients = { "qBittorrent" = "qbit" }
+[[qbittorrent]]
+id = "qbit"
+url = "http://127.0.0.1:8080"
+`
+
+type world struct {
+	t      *testing.T
+	clock  *fake.Clock
+	client *fake.Client
+	mgr    *fake.Manager
+	st     *store.Store
+	eng    *engine.Engine
+	svc    *app.Service
+}
+
+func newWorld(t *testing.T, mode string, acquisitions int) *world {
+	t.Helper()
+	src := strings.NewReplacer("%MODE%", mode, "%ACQ%", itoa(acquisitions)).Replace(autoConfig)
+	cfg, _, err := config.Parse([]byte(src), "/x/housekeeparr.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := &world{t: t, clock: fake.NewClock(t0), client: fake.NewClient("qbit"), mgr: fake.NewManager("sonarr")}
+	w.st, err = store.Open(context.Background(), t.TempDir(), store.Options{Now: w.clock.Now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { w.st.Close() })
+	conns := &engine.Connections{Clients: []adapter.DownloadClient{w.client}, Managers: []adapter.MediaManager{w.mgr},
+		Meta: map[string]engine.ConnMeta{
+			"sonarr": {ID: "sonarr", Name: "Sonarr", BaseURL: "http://127.0.0.1:8989", Kind: adapter.KindSonarr, Enabled: true,
+				SecretRef: "env:X", DownloadClients: cfg.Sonarr[0].DownloadClients},
+			"qbit": {ID: "qbit", Name: "qBittorrent", BaseURL: "http://127.0.0.1:8080", Kind: adapter.KindQBittorrent, Enabled: true},
+		}}
+	w.eng, err = engine.New(context.Background(), engine.Options{Config: cfg, Store: w.st, Conns: conns, Clock: w.clock,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), RunKind: "test", Version: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.svc = app.New(w.st, cfg, w.clock.Now, w.eng)
+	ex := workflow.FromConnections(conns.Clients, conns.Managers)
+	ex.Settle, ex.Poll = 50*time.Millisecond, 5*time.Millisecond
+	w.svc.SetExecutor(ex)
+	saved := action.Tested
+	action.Tested = []action.TestedWorkflow{{Workflow: policy.WorkflowNoProgressRecovery, Manager: adapter.KindSonarr, ManagerVersion: "0.0.0-fake",
+		Client: adapter.KindQBittorrent, ClientVersion: "0.0.0-fake"}}
+	t.Cleanup(func() { action.Tested = saved })
+	return w
+}
+
+func itoa(n int) string { return strconv.Itoa(n) }
+
+// stalled adds a public, no-progress download with its Sonarr row.
+func (w *world) stalled(hash string, queueID, episode int64) {
+	ts, _ := w.client.ListTransfers(context.Background())
+	all := append(ts.Transfers, fake.Transfer(hash, "Show.S01E0"+itoa(int(episode)), domain.StateDownloading, 2*gib, 10*gib, t0))
+	w.client.SetTransfers(all...)
+	snap, _ := w.mgr.Queue(context.Background())
+	w.mgr.SetQueue(append(snap.Items, fake.Episode(queueID, hash, "Show.S01E0"+itoa(int(episode)), "Show", 1, episode))...)
+}
+
+// run cycles every 10 minutes for the given duration, dispatching after
+// each persisted cycle exactly as the worker does.
+func (w *world) run(d time.Duration) []app.DispatchReport {
+	w.t.Helper()
+	var reps []app.DispatchReport
+	for end := w.clock.Now().Add(d); w.clock.Now().Before(end); {
+		w.clock.Advance(10 * time.Minute)
+		rep := w.eng.Cycle(context.Background(), nil)
+		if rep.StoreError != "" {
+			w.t.Fatal(rep.StoreError)
+		}
+		r, err := w.svc.DispatchAutomatic(context.Background(), rep.Fresh())
+		if err != nil {
+			w.t.Fatal(err)
+		}
+		reps = append(reps, r)
+	}
+	return reps
+}
+
+func (w *world) finding(hash string) domain.Finding {
+	w.t.Helper()
+	fs, _ := w.st.Findings(context.Background(), store.FindingFilter{Type: domain.FindingTransferStalled, ClientID: "qbit", NativeID: hash})
+	if len(fs) == 0 {
+		w.t.Fatalf("no stall finding for %s", hash)
+	}
+	return fs[0]
+}
+
+func TestAutomaticRecoveryEndToEnd(t *testing.T) {
+	w := newWorld(t, "automatic", 20)
+	w.stalled(hashA, 1, 1)
+	w.run(4 * time.Hour)
+	if r := w.mgr.Removals(); len(r) != 1 || r[0] != (arr.RemoveFlags{Blocklist: true}) {
+		t.Fatalf("removals %+v (want exactly one, every flag explicit, removeFromClient=false)", r)
+	}
+	if s := w.client.Stops(); len(s) != 1 || s[0] != hashA {
+		t.Fatalf("stops %v", s)
+	}
+	acts, _ := w.svc.Actions(context.Background(), 10)
+	if len(acts) != 1 || acts[0].Origin != "automatic" || acts[0].State != store.IntentSucceeded {
+		t.Fatalf("actions %+v", acts)
+	}
+	f := w.finding(hashA)
+	d, _ := w.svc.Finding(context.Background(), f.ID)
+	if d.Automation == nil || d.Automation.Result != store.EvalDispatched || d.Automation.IntentID != acts[0].ID {
+		t.Fatalf("finding automation %+v", d.Automation)
+	}
+	ret, _ := w.st.RetainedTransfers(context.Background(), false, 0)
+	if len(ret) != 1 || ret[0].NativeID != hashA {
+		t.Fatalf("retained %+v", ret)
+	}
+	oc, _ := w.st.Outcomes(context.Background(), []int64{acts[0].ID})
+	if oc[acts[0].ID].State != store.OutcomeAwaitingGrab {
+		t.Fatalf("outcome %+v", oc)
+	}
+	// The manager grabs a replacement; it is recorded, and nothing else
+	// is sent for this content during later cycles.
+	w.stalled(hashB, 2, 1)
+	w.client.Update(hashB, func(tr *domain.Transfer) { tr.VerifiedBytes = domain.KnownValue[int64](3 * gib) })
+	w.run(time.Hour)
+	if oc, _ := w.st.Outcomes(context.Background(), []int64{acts[0].ID}); oc[acts[0].ID].State != store.OutcomeGrabbed || oc[acts[0].ID].NewNativeID != hashB {
+		t.Fatalf("replacement outcome %+v", oc[acts[0].ID])
+	}
+	if len(w.mgr.Removals()) != 1 || len(w.client.Stops()) != 1 {
+		t.Fatalf("repeated writes: %v %v", w.mgr.Removals(), w.client.Stops())
+	}
+}
+
+func TestAutomaticDispatchDoesNotActWhenItMustNot(t *testing.T) {
+	cases := map[string]struct {
+		mode  string
+		setup func(w *world)
+	}{
+		"observe mode":  {"observe", func(w *world) { w.stalled(hashA, 1, 1) }},
+		"paused mode":   {"paused", func(w *world) { w.stalled(hashA, 1, 1) }},
+		"slow progress": {"automatic", func(w *world) { w.stalled(hashA, 1, 1) }},
+		"user paused": {"automatic", func(w *world) {
+			w.stalled(hashA, 1, 1)
+			w.client.Update(hashA, func(tr *domain.Transfer) { tr.StateClass, tr.NativeState = domain.StatePaused, "stoppedDL" })
+		}},
+		"queued": {"automatic", func(w *world) {
+			w.stalled(hashA, 1, 1)
+			w.client.Update(hashA, func(tr *domain.Transfer) { tr.StateClass, tr.NativeState = domain.StateQueued, "queuedDL" })
+		}},
+		"unmonitored content": {"automatic", func(w *world) {
+			w.stalled(hashA, 1, 1)
+			w.mgr.Unmonitor("episode:101")
+		}},
+		"manager down": {"automatic", func(w *world) {
+			w.stalled(hashA, 1, 1)
+			w.mgr.Fail(&adapter.Error{Class: adapter.ErrTransient, Op: "fake", Message: "down"})
+		}},
+		"correlated stalls on one client": {"automatic", func(w *world) {
+			w.stalled(hashA, 1, 1)
+			w.stalled(hashB, 2, 2)
+			w.stalled(hashC, 3, 3)
+		}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			w := newWorld(t, tc.mode, 20)
+			tc.setup(w)
+			if name == "slow progress" {
+				for i := 0; i < 24; i++ {
+					w.client.Update(hashA, func(tr *domain.Transfer) {
+						v, _ := tr.VerifiedBytes.Get()
+						tr.VerifiedBytes = domain.KnownValue(v + 1<<20)
+					})
+					w.run(10 * time.Minute)
+				}
+			} else {
+				w.run(4 * time.Hour)
+			}
+			if len(w.mgr.Removals())+len(w.client.Stops()) != 0 {
+				t.Fatalf("wrote: %v %v", w.mgr.Removals(), w.client.Stops())
+			}
+			switch name {
+			case "slow progress", "user paused", "queued":
+				// Not merely refused later: never diagnosed as a stall.
+				if fs, _ := w.st.Findings(context.Background(), store.FindingFilter{Type: domain.FindingTransferStalled}); len(fs) != 0 {
+					t.Fatalf("diagnosed: %+v", fs[0])
+				}
+			case "observe mode", "paused mode":
+				if d, _ := w.svc.Finding(context.Background(), w.finding(hashA).ID); d.Automation != nil {
+					t.Fatalf("evaluated outside automatic mode: %+v", d.Automation)
+				}
+			}
+			if name == "correlated stalls on one client" || name == "unmonitored content" {
+				d, _ := w.svc.Finding(context.Background(), w.finding(hashA).ID)
+				want := map[string]string{"correlated stalls on one client": store.EvalHeld, "unmonitored content": store.EvalRefused}[name]
+				if d.Automation == nil || d.Automation.Result != want {
+					t.Fatalf("automation %+v, want %s", d.Automation, want)
+				}
+			}
+		})
+	}
+}
+
+// Pacing defers eligible work with a visible time, then resumes it
+// oldest-first when the allowance returns.
+func TestPacingDefersAndResumesOldestFirst(t *testing.T) {
+	w := newWorld(t, "automatic", 1)
+	w.stalled(hashA, 1, 1)
+	w.run(30 * time.Minute)
+	w.stalled(hashB, 2, 2)
+	w.run(4 * time.Hour)
+	stops := w.client.Stops()
+	if len(stops) != 2 || stops[0] != hashA || stops[1] != hashB {
+		t.Fatalf("stops %v: want the older finding first, then the deferred one", stops)
+	}
+	// While deferred, the finding said when it would be eligible again.
+	evs, _, _ := w.st.Attempts(context.Background(), "pacing:global", 0)
+	if len(evs) != 2 || evs[0].At.Sub(evs[1].At) < time.Hour {
+		t.Fatalf("pacing history %+v: the second action did not wait for the window", evs)
+	}
+}
+
+// An accepted request whose effect is never observed is held, holds its
+// scope, and is never re-sent by later cycles.
+func TestUncertainOutcomeIsNotResentAndHoldsTheScope(t *testing.T) {
+	w := newWorld(t, "automatic", 20)
+	w.mgr.FailRemovals(&adapter.Error{Class: adapter.ErrUncertain, Op: "fake.queue_remove", Message: "timeout awaiting response"}, true)
+	w.stalled(hashA, 1, 1)
+	w.stalled(hashD, 4, 4)
+	w.run(5 * time.Hour)
+	if len(w.mgr.Removals()) != 1 || len(w.client.Stops()) != 0 {
+		t.Fatalf("removals %v stops %v", w.mgr.Removals(), w.client.Stops())
+	}
+	acts, _ := w.svc.Actions(context.Background(), 10)
+	if len(acts) != 1 || acts[0].State != store.IntentUncertain {
+		t.Fatalf("actions %+v", acts)
+	}
+	other := w.finding(hashD)
+	if strings.Contains(string(acts[0].Subject), hashD) {
+		other = w.finding(hashA)
+	}
+	d, _ := w.svc.Finding(context.Background(), other.ID)
+	if d.Automation == nil || d.Automation.Result != store.EvalHeld || !strings.Contains(d.Automation.Detail, "needs review") {
+		t.Fatalf("other finding not held by the uncertain action: %+v", d.Automation)
+	}
+}
