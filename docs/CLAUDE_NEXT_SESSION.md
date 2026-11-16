@@ -86,7 +86,8 @@ do not turn a choice of defaults into a prolonged blocker for other work.
    the harness's qBittorrent restart in `scripts/it/run.sh` uses no
    readiness check before stopping). Observation only; 4.x recovery stays
    refused. The `6507e87` automatic-test failure on 4.6.7 (slow cycles, no
-   diagnosis) did not recur; cycles now log their durations.
+   diagnosis) did not recur; cycles now log their durations. Failure log:
+   `~/.cache/hk-rtdiag/keep/qbt467-118f15c.log` (outside the repository).
 2. **Metadata recovery and preserved-data failure workflows** (SPEC §§5, 7,
    13.4 scenario 3): separate evidence, timeouts and capability gating;
    preserved-data handling must not rely on client state alone (see
@@ -97,9 +98,19 @@ do not turn a choice of defaults into a prolonged blocker for other work.
    instances, or an explicit plan for it; then the remaining v1 scope below
    (partial packs, searches and coverage, remote web/auth,
    packaging/security/performance).
-5. Housekeeparr-owned replacement searches (when a manager's "Redownload
+5. **Probe the redownload gating on a real instance**: set "Redownload
+   Failed" off (and, separately, the interactive-search variant with an
+   interactive grab) and expect a refusal before any request and no search
+   queued. The gating is source-derived so far.
+6. Housekeeparr-owned replacement searches (when a manager's "Redownload
    Failed" is off) are not implemented; such recoveries are refused. Decide
    whether v1 needs them (SPEC §7 step 5 allows either owner).
+
+Proposals awaiting a product decision (implemented, not approved): a
+workflow pause also blocks manual actions; recovery is refused when the
+manager would not redownload; the replacement-search constants (30 s
+post-recovery poll, 1-minute clock tolerance without a baseline, 1-hour
+follow window); and the existing `[automation.limits]` values.
 
 Process lesson: run the integration matrix from a git worktree pinned to the
 commit being recorded (`git worktree add --detach ~/.cache/hk-wt-run <sha>`):

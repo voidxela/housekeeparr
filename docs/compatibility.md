@@ -100,9 +100,9 @@ availability as unknown outside active downloading.
 Not exercised: the qBittorrent `error` state (distinct from `missingFiles`), queueing,
 checking states as stable observations, real peers or swarm counts, v2/hybrid
 torrents, authentication bypass, reverse-proxy base paths, TLS, large
-libraries, import completion, and manager correlation with any client other
-than qBittorrent. Series/movies in the manager library and grab history are
-exercised only by the managed-row probes below, with qBittorrent.
+libraries, and import completion. Manager correlation and managed grabs are
+exercised with each of the four clients as the managers' download client
+(`--manager-client`; see the probe, recovery, and automatic sections below).
 
 ## Missing-data (client error) semantics
 
@@ -123,7 +123,7 @@ running, recheck forced):
 
 | Client | after restart | after forced recheck |
 | --- | --- | --- |
-| qBittorrent 5.3.0, 4.6.7 | `missingFiles` → client error (verified 0) | `stalledDL` → **downloading**, verified 0, no error |
+| qBittorrent 5.3.0, 4.6.7 | `missingFiles` → client error (verified 0); not reproduced on 4.6.7 at `118f15c` (`stalledDL`, verified 0; undiagnosed harness failure) | `stalledDL` → **downloading**, verified 0, no error |
 | Transmission 4.0.6, 4.1.4 | `error = 3` → client error | `error = 3` → client error |
 | Deluge 2.2.0 | `Error` "Missing or invalid torrent data!" → client error | `Downloading`, verified 0, no error |
 | rTorrent 0.9.8 | stopped with local message → client error | stopped with local message → client error |
@@ -285,11 +285,10 @@ in the proposal comes from engine-written state and live re-fetches.
 The qBittorrent 5.3.0, Deluge 2.2.0, rTorrent 0.9.8, and Transmission 4.0.6/4.1.4 combinations above are registered in `action.Tested`; no other
 combination is eligible. qBittorrent 4.x does not report privacy, so
 recovery is refused there by the "public transfer" prerequisite (the test
-asserts this refusal). Not covered on real instances: engine-initiated
-(automatic) dispatch (implemented, tested only with simulated
-applications); the replacement's grab, progress and completion tracking
-(fixture-tested); search acceptance as an outcome tracked by Housekeeparr;
-retained-data and capacity limits (fixture-tested).
+asserts this refusal). Automatic dispatch and replacement-search observation are covered in
+the sections below. Not covered on real instances: the replacement's grab,
+progress and completion tracking, and retained-data and capacity limits
+(fixture-tested).
 
 ## Automatic dispatch runs
 
@@ -326,8 +325,9 @@ real instances.
 
 After a recovery, the manager-native redownload queues `EpisodeSearch` (one
 episode) or `MoviesSearch` with trigger `unspecified` and the content IDs in
-its body (released `RedownloadFailedDownloadService`, Sonarr `v4.0.20.3014`
-and Radarr `v6.4.4.10685`, confirmed on the instances above). It is skipped
+its body (trigger and body confirmed on the instances above). From released source
+(`RedownloadFailedDownloadService`, Sonarr `v4.0.20.3014`, Radarr
+`v6.4.4.10685`; not exercised on an instance with the settings off) it is skipped
 when `autoRedownloadFailed` is off, or for an interactively grabbed release
 when `autoRedownloadFailedFromInteractiveSearch` is off; recovery now
 requires those settings live before the manager write. The command list

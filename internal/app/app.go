@@ -145,7 +145,7 @@ type TransferCounts struct {
 // MilestoneLimitations are shown wherever operators look for actions.
 var MilestoneLimitations = []string{
 	"Observe mode (the default) never changes media managers or download clients. Outside it, writes are limited to workflows with a recorded " +
-		"real-instance test for the exact versions: today only no-progress recovery for Sonarr 4.0.20 or Radarr 6.4.4 with qBittorrent 5.3.0 or Deluge 2.2.0.",
+		"real-instance test for the exact versions: today only no-progress recovery for Sonarr 4.0.20 or Radarr 6.4.4 with qBittorrent 5.3.0, Transmission 4.0.6 or 4.1.4, Deluge 2.2.0, or rTorrent 0.9.8, and only when the manager redownloads failed grabs.",
 	"Metadata recovery, preserved-data failure handling, partial-pack handling, missing-content searches, and notifications are planned for v1 but not implemented yet.",
 	"Observation is validated only for the released versions listed in docs/compatibility.md; other versions are untested.",
 }

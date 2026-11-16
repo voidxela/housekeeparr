@@ -165,7 +165,7 @@ func (c *Client) Probe(ctx context.Context) (adapter.Probe, error) {
 		adapter.CapClientFileList:    {Support: adapter.NotImplemented},
 	}
 	p.Write = adapter.ReadOnlyWrites(adapter.CapTransferLabel)
-	p.Write[adapter.CapStopTransfer] = adapter.CapabilityStatus{Support: adapter.Supported, Note: "d.stop, retaining data (d.stop vs d.close semantics pending real-instance probing)"}
+	p.Write[adapter.CapStopTransfer] = adapter.CapabilityStatus{Support: adapter.Supported, Note: "d.stop, retaining data (tested: the download stays registered with its files and label; d.close is never sent)"}
 	p.Limitations = []string{
 		"rTorrent has no structured error state; a download rTorrent stopped with a non-tracker message is reported as a client error, and other error and tracker messages are shown as text only.",
 		"Piece availability is not collected, so stalls are never attributed to unavailable pieces.",

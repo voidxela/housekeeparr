@@ -250,6 +250,19 @@ func runRecovery(t *testing.T, a arrAPI, mgr recoveryManager, me managedEntry, s
 		t.Fatalf("proposal not eligible: %+v", p.Blockers())
 	}
 	ex := workflow.FromConnections(conns.Clients, conns.Managers)
+	// What the live check will see of the manager's redownload settings and
+	// this grab's release source (real values, logged as evidence).
+	if lv, err := ex.Live(ctx, *p); err == nil {
+		if lv.Redownload != nil {
+			ia := "not reported"
+			if lv.Redownload.FromInteractive != nil {
+				ia = fmt.Sprint(*lv.Redownload.FromInteractive)
+			}
+			t.Logf("live redownload: autoRedownloadFailed=%v fromInteractiveSearch=%s grab releaseSource=%q", lv.Redownload.Failed, ia, lv.Redownload.GrabSource)
+		} else {
+			t.Logf("live redownload not read: %s", lv.RedownloadErr)
+		}
+	}
 	co := &action.Coordinator{Store: st, Executor: ex, Actor: "integration"}
 	// A stale fingerprint between stored state and the live re-fetch would
 	// refuse here with ErrStale rather than send anything.

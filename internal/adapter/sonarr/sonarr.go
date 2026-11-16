@@ -67,7 +67,7 @@ func (c *Client) Probe(ctx context.Context) (adapter.Probe, error) {
 		adapter.CapImportHistory: {Support: adapter.NotImplemented, Note: "needed for partial season-pack handling; not used yet"},
 	}
 	p.Write = adapter.Capabilities{
-		adapter.CapFailGrab:      {Support: adapter.Supported, Note: "DELETE /api/v3/queue/{id} with every flag explicit; complete recovery workflow tested only with qBittorrent 5.3.0 and Deluge 2.2.0 (docs/compatibility.md)"},
+		adapter.CapFailGrab:      {Support: adapter.Supported, Note: "DELETE /api/v3/queue/{id} with every flag explicit; complete recovery workflow tested with qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, and rTorrent 0.9.8 (docs/compatibility.md)"},
 		adapter.CapDetachQueue:   {Support: adapter.Supported, Note: "same request with blocklist=false; durable only for rows with grab history"},
 		adapter.CapSearchCommand: {Support: adapter.NotImplemented, Note: "replacement searches are left to the manager (skipRedownload=false)"},
 	}
