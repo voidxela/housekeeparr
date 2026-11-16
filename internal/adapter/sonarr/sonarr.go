@@ -66,7 +66,11 @@ func (c *Client) Probe(ctx context.Context) (adapter.Probe, error) {
 		adapter.CapHealth:        {Support: adapter.Supported, Note: "/api/v3/health"},
 		adapter.CapImportHistory: {Support: adapter.NotImplemented, Note: "needed for partial season-pack handling; not used yet"},
 	}
-	p.Write = adapter.ReadOnlyWrites(adapter.CapFailGrab, adapter.CapDetachQueue, adapter.CapSearchCommand)
+	p.Write = adapter.Capabilities{
+		adapter.CapFailGrab:      {Support: adapter.Supported, Note: "DELETE /api/v3/queue/{id} with every flag explicit; complete recovery workflow tested only with qBittorrent 5.3.0 (docs/compatibility.md)"},
+		adapter.CapDetachQueue:   {Support: adapter.Supported, Note: "same request with blocklist=false; durable only for rows with grab history"},
+		adapter.CapSearchCommand: {Support: adapter.NotImplemented, Note: "replacement searches are left to the manager (skipRedownload=false)"},
+	}
 	p.Limitations = []string{"Import diagnostics are Sonarr's own messages; Housekeeparr does not yet verify import history or files."}
 	return p, nil
 }

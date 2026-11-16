@@ -53,7 +53,7 @@ testing decisions and implementation sequence.
 | Embedded state store, OS-level single-writer lock, read-only opens | done | SQLite (pure Go), WAL, `synchronous=FULL`, `flock`. Unix only; other platforms refuse to run as writer. |
 | Versioned forward migrations with pre-migration backup | done | v1 → v2 tested against a real v1 database. |
 | Bounded retention (observations, checks, resolved findings, audit) | done | Unresolved findings and transfers they reference are never pruned. |
-| Adapter contract: capabilities, classified errors, bounded HTTP transport, redaction | done | No adapter exposes an operational write method. |
+| Adapter contract: capabilities, classified errors, bounded HTTP transport, redaction | done | Write methods exist only for Sonarr/Radarr queue removal and qBittorrent stop (milestone 3). |
 | qBittorrent read adapter (WebUI API v2) | done | Observation validated against real qBittorrent 5.3.0 and 4.6.7 instances on 2026-11-15 (scope in [compatibility.md](compatibility.md)); captured, sanitized responses are contract fixtures. Other versions: contract-tested only. |
 | Sonarr read adapter (API v3; queue, health, status) | done | Observation validated against a real Sonarr 4.0.20.3014 instance on 2026-11-15 (unknown-series queue items only; scope in [compatibility.md](compatibility.md)). |
 | Radarr read adapter (API v3; queue, health, status) sharing the *arr v3 client with Sonarr | done | Observation validated against a real Radarr 6.4.4.10685 instance on 2026-11-15 (unknown-movie queue items only; scope in [compatibility.md](compatibility.md)); fixtures derived from released source at `v6.4.4.10685`. |

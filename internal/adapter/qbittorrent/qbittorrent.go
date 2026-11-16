@@ -211,7 +211,10 @@ func (c *Client) Probe(ctx context.Context) (adapter.Probe, error) {
 		adapter.CapInfohashV2:        v2,
 		adapter.CapClientFileList:    {Support: adapter.NotImplemented, Note: "available upstream (/torrents/files); not used yet"},
 	}
-	p.Write = adapter.ReadOnlyWrites(adapter.CapStopTransfer, adapter.CapTransferLabel)
+	p.Write = adapter.Capabilities{
+		adapter.CapStopTransfer:  {Support: adapter.Supported, Note: "torrents/stop (5.x) or torrents/pause (4.x), retaining data"},
+		adapter.CapTransferLabel: {Support: adapter.NotImplemented, Note: "not used by any workflow"},
+	}
 	p.Limitations = []string{
 		"Piece availability reflects connected peers only.",
 		"Tracker URLs, magnet links, and paths are deliberately not collected.",

@@ -111,7 +111,7 @@ const (
 	CapClientFileList    Capability = "client_file_list"
 )
 
-// Write capabilities (none are implemented in this milestone).
+// Write capabilities. Which adapters implement which is reported by Probe.
 const (
 	CapFailGrab      Capability = "fail_grab"      // manager: mark grab failed / blocklist
 	CapDetachQueue   Capability = "detach_queue"   // manager: remove queue association, keep data
@@ -205,11 +205,12 @@ type MediaManager interface {
 	Health(ctx context.Context) (domain.HealthSnapshot, error)
 }
 
-// ReadOnlyWrites returns the write capability set for this milestone.
+// ReadOnlyWrites marks write capabilities this build does not implement for
+// an adapter.
 func ReadOnlyWrites(caps ...Capability) Capabilities {
 	out := Capabilities{}
 	for _, c := range caps {
-		out[c] = CapabilityStatus{Support: NotImplemented, Note: "operational writes are disabled in this milestone"}
+		out[c] = CapabilityStatus{Support: NotImplemented, Note: "not implemented for this application in this build"}
 	}
 	return out
 }

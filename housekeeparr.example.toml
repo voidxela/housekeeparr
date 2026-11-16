@@ -7,9 +7,11 @@ version = 1
 # "observe" (default) reads and evaluates but never writes to managers or
 # clients. "paused" keeps visibility and stops new automation. "automatic"
 # permits automation ONLY for workflows that are separately enabled AND whose
-# hard safety prerequisites hold (including a recorded, tested write capability
-# for the exact application versions, which no workflow has yet), so in this
-# build "automatic" performs no writes.
+# hard safety prerequisites hold (including a recorded, tested write workflow
+# for the exact application versions). This build does not dispatch automatic
+# actions yet; manual actions (`housekeeparr act <id> --confirm`) need
+# "paused" or "automatic" and are tested only for no-progress recovery with
+# Sonarr 4.0.20 / Radarr 6.4.4 and qBittorrent 5.3.0.
 mode = "observe"
 
 [automation]

@@ -115,10 +115,9 @@ func TestV5ContractNormalization(t *testing.T) {
 	if p.Read[adapter.CapPrivacy].Support != adapter.Supported {
 		t.Fatal("privacy should be supported on 5.x")
 	}
-	for capName, st := range p.Write {
-		if st.Support != adapter.NotImplemented {
-			t.Fatalf("write capability %s must be not_implemented, got %s", capName, st.Support)
-		}
+	// Only stop is implemented; labels are not.
+	if p.Write[adapter.CapStopTransfer].Support != adapter.Supported || p.Write[adapter.CapTransferLabel].Support != adapter.NotImplemented || len(p.Write) != 2 {
+		t.Fatalf("write capabilities %+v", p.Write)
 	}
 	snap, err := c.ListTransfers(ctx)
 	if err != nil {

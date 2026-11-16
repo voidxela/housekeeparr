@@ -98,9 +98,14 @@ func TestProbe(t *testing.T) {
 	if p.App != "Sonarr" || p.Version != "4.0.20.3014" || p.Compatibility != adapter.CompatTested {
 		t.Fatalf("probe %+v", p)
 	}
-	for k, v := range p.Write {
-		if v.Support != adapter.NotImplemented {
-			t.Fatalf("write %s must be not_implemented", k)
+	want := map[adapter.Capability]adapter.Support{adapter.CapFailGrab: adapter.Supported, adapter.CapDetachQueue: adapter.Supported,
+		adapter.CapSearchCommand: adapter.NotImplemented}
+	if len(p.Write) != len(want) {
+		t.Fatalf("write capabilities %+v", p.Write)
+	}
+	for k, v := range want {
+		if p.Write[k].Support != v {
+			t.Fatalf("write %s: %s, want %s", k, p.Write[k].Support, v)
 		}
 	}
 }
