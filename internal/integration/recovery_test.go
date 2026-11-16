@@ -152,9 +152,13 @@ func runRecovery(t *testing.T, a arrAPI, mgr recoveryManager, me managedEntry, s
 	if mgr.Kind() == adapter.KindRadarr {
 		section, url_, keyEnv = "radarr", env(t, "HK_IT_RADARR_URL"), "HK_IT_RADARR_KEY"
 	}
+	// The managers' download client is whichever the harness selected
+	// (--manager-client); the workflow runs through that client's adapter.
+	dcMap, clientBlock := managerTOMLConfig(t)
+	clientID, clientKind := map[string]string{"qbittorrent": "qbit", "transmission": "tr", "deluge": "deluge", "rtorrent": "rt"}[managerClientKind()],
+		adapter.Kind(managerClientKind())
 	cfgSrc := "version = 1\n[polling]\njitter = \"0s\"\n[[" + section + "]]\nid = \"" + mgr.ID() + "\"\nurl = \"" + url_ +
-		"\"\napi_key = \"env:" + keyEnv + "\"\ndownload_clients = { \"qBittorrent\" = \"qbit\" }\n[[qbittorrent]]\nid = \"qbit\"\nurl = \"" +
-		env(t, "HK_IT_QBT_URL") + "\"\nusername = \"admin\"\npassword = \"env:HK_IT_QBT_PASS\"\n"
+		"\"\napi_key = \"env:" + keyEnv + "\"\n" + dcMap + "\n" + clientBlock
 	cfg, _, err := config.Parse([]byte(cfgSrc), filepath.Join(dir, "h.toml"))
 	if err != nil {
 		t.Fatal(err)
@@ -186,10 +190,10 @@ func runRecovery(t *testing.T, a arrAPI, mgr recoveryManager, me managedEntry, s
 				t.Fatalf("cycle %s: %s", c.ID, c.Error)
 			}
 		}
-		if stored, err = st.Transfer(ctx, "qbit", e.Hash); err != nil {
+		if stored, err = st.Transfer(ctx, clientID, e.Hash); err != nil {
 			t.Fatal(err)
 		}
-		if rows, err = st.QueueItems(ctx, store.QueueFilter{ClientID: "qbit", NativeID: e.Hash}); err != nil {
+		if rows, err = st.QueueItems(ctx, store.QueueFilter{ClientID: clientID, NativeID: e.Hash}); err != nil {
 			t.Fatal(err)
 		}
 		if stored != nil && len(rows) == 1 && rows[0].MatchStatus == store.MatchMatched {
@@ -204,7 +208,7 @@ func runRecovery(t *testing.T, a arrAPI, mgr recoveryManager, me managedEntry, s
 	recs, _ := st.Connections(ctx)
 	for _, c := range recs {
 		switch c.ID {
-		case "qbit":
+		case clientID:
 			cp = c.Probe
 		case mgr.ID():
 			mp = c.Probe
@@ -220,11 +224,11 @@ func runRecovery(t *testing.T, a arrAPI, mgr recoveryManager, me managedEntry, s
 		Finding:  domain.Finding{ID: 1, Type: domain.FindingTransferStalled, State: domain.FindingOpen},
 		Transfer: stored, Queue: rows,
 		Policy: policy.Effective{Mode: "automatic", Revision: "it", Automation: []policy.WorkflowPermission{{Workflow: policy.WorkflowNoProgressRecovery, Enabled: true, From: "integration test"}}},
-		Origin: action.OriginAutomatic, ClientKind: adapter.KindQBittorrent, ClientProbe: cp, ManagerKind: mgr.Kind(), ManagerProbe: mp,
+		Origin: action.OriginAutomatic, ClientKind: clientKind, ClientProbe: cp, ManagerKind: mgr.Kind(), ManagerProbe: mp,
 		PollInterval: 10 * time.Minute, Now: now,
 		// What this test establishes, for exactly these versions.
 		Tested: []action.TestedWorkflow{{Workflow: policy.WorkflowNoProgressRecovery, Manager: mgr.Kind(), ManagerVersion: strings.TrimPrefix(mp.Version, "v"),
-			Client: adapter.KindQBittorrent, ClientVersion: strings.TrimPrefix(cp.Version, "v")}},
+			Client: clientKind, ClientVersion: strings.TrimPrefix(cp.Version, "v")}},
 	}
 	p, np := action.Plan(in)
 	if np != nil {
