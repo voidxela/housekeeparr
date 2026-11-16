@@ -99,7 +99,20 @@ func TestPlanRefusals(t *testing.T) {
 		"content cooldown": {func(in *PlanInput) {
 			in.Cooldowns = map[string]store.CooldownRecord{"content:sonarr|episode:1": {Until: t0.Add(time.Hour), Reason: "action #2"}}
 		}, "not in cooldown"},
-		"no content id": {func(in *PlanInput) { in.Queue[0].Latest.EpisodeID = 0 }, "content identity known"},
+		"no content id":          {func(in *PlanInput) { in.Queue[0].Latest.EpisodeID = 0 }, "content identity known"},
+		"retained count ceiling": {func(in *PlanInput) { in.Retained = store.RetainedUsage{Count: 25} }, "retained-data ceiling"},
+		"retained bytes ceiling": {func(in *PlanInput) {
+			in.Limits = policy.DefaultLimits()
+			in.Limits.RetainedBytes = 100
+			in.Transfer.Latest.WantedBytes = domain.KnownValue[int64](60)
+			in.Retained = store.RetainedUsage{Count: 1, KnownBytes: 50}
+		}, "retained-data ceiling"},
+		"retained size unknown with a byte ceiling": {func(in *PlanInput) {
+			in.Limits = policy.DefaultLimits()
+			in.Limits.RetainedBytes = 1 << 40
+			in.Transfer.Latest.WantedBytes = domain.KnownValue[int64](60)
+			in.Retained = store.RetainedUsage{Count: 1, UnknownSize: 1}
+		}, "retained-data ceiling"},
 		"pack": {func(in *PlanInput) {
 			second := in.Queue[0]
 			second.QueueID, second.Latest.EpisodeID = 8, 2

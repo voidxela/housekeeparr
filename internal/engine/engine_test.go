@@ -727,3 +727,31 @@ download_clients = { "qBittorrent" = "qbit" }
 		}
 	}
 }
+
+// A retained transfer stays counted until a complete listing no longer has
+// it; an incomplete or failed listing never releases it.
+func TestRetainedTransferReleasedOnlyWhenGone(t *testing.T) {
+	h := newHarness(t, baseConfig)
+	h.client.SetTransfers(fake.Transfer(hash, "Example.Show.S01E01", domain.StatePaused, 2*gib, 10*gib, t0))
+	h.cycle()
+	if err := h.st.Write(ctx, func(tx *store.Tx) error {
+		return tx.RecordRetained(store.RetainedTransfer{ClientID: "qbit", NativeID: hash, IntentID: 1, RetainedAt: t0})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	h.client.Fail(&adapter.Error{Class: adapter.ErrTransient, Op: "fake", Message: "connection refused"})
+	h.run(10, 10)
+	if u, _ := h.st.RetainedUsage(ctx); u.Count != 1 {
+		t.Fatalf("released on a failed listing: %+v", u)
+	}
+	h.client.Fail(nil)
+	h.client.SetTransfers()
+	h.run(10, 10)
+	ret, _ := h.st.RetainedTransfers(ctx, true, 0)
+	if len(ret) != 1 || ret[0].ReleasedAt == nil || ret[0].ReleasedReason != "no longer listed by the client" {
+		t.Fatalf("retained %+v", ret)
+	}
+	if u, _ := h.st.RetainedUsage(ctx); u.Count != 0 {
+		t.Fatalf("usage %+v", u)
+	}
+}

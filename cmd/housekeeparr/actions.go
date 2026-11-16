@@ -366,3 +366,55 @@ func validContentKey(k string) bool {
 	_, _, ok := domain.ParseContentKey(k)
 	return ok
 }
+
+// cmdRetained lists transfers recovery stopped and kept with their data.
+// Housekeeparr never deletes them; cleanup happens in the client.
+func cmdRetained(args []string, out, errOut io.Writer) int {
+	o := newFlags("retained", errOut)
+	all := o.fs.Bool("all", false, "include transfers no longer retained")
+	if _, err := o.parse(args); err != nil {
+		return exitUsage
+	}
+	svc, done, code := readService(o)
+	if svc == nil {
+		return code
+	}
+	defer done()
+	list, u, err := svc.Retained(context.Background(), *all)
+	if err != nil {
+		fmt.Fprintln(errOut, err)
+		return exitFailure
+	}
+	l := svc.Limits()
+	if o.json {
+		return writeJSON(out, map[string]any{"retained": list, "usage": u, "limits": l})
+	}
+	fmt.Fprintf(out, "%d of %d retained transfers; known logical size %.1f GiB", u.Count, l.RetainedTransfers, float64(u.KnownBytes)/(1<<30))
+	if u.UnknownSize > 0 {
+		fmt.Fprintf(out, " (%d of unknown size)", u.UnknownSize)
+	}
+	if l.RetainedBytes > 0 {
+		fmt.Fprintf(out, "; byte ceiling %.1f GiB", float64(l.RetainedBytes)/(1<<30))
+	}
+	fmt.Fprintln(out, "\nLogical size is an estimate (shared files and hardlinks), not disk use. Housekeeparr never deletes these;")
+	fmt.Fprintln(out, "remove them in the client once you no longer need the partial data, and they are released at the next poll.")
+	if len(list) == 0 {
+		return exitOK
+	}
+	w := tw(out)
+	fmt.Fprintln(w, "\nRETAINED\tCLIENT\tTRANSFER\tCONTENT\tSIZE\tACTION\tRELEASED")
+	for _, r := range list {
+		size := "unknown"
+		if r.WantedBytes != nil {
+			size = fmt.Sprintf("%.1f GiB", float64(*r.WantedBytes)/(1<<30))
+		}
+		rel := ""
+		if r.ReleasedAt != nil {
+			rel = ts(r.ReleasedAt) + " " + r.ReleasedReason
+		}
+		name := nonEmptyStr(r.Name, r.NativeID)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t#%d\t%s\n", ts(&r.RetainedAt), r.ClientID, name, nonEmptyStr(r.ManagerID+"|"+r.Content, "-"), size, r.IntentID, rel)
+	}
+	w.Flush()
+	return exitOK
+}

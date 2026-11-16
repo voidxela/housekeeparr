@@ -259,6 +259,13 @@ func (e *Engine) persist(tx *store.Tx, results []*fetched, now time.Time) (map[s
 				return nil, nil, err
 			}
 			gone[f.id] = g
+			// Only a complete listing reports transfers gone, so a retained
+			// transfer is released only when the client no longer has it.
+			for _, t := range g {
+				if _, err := tx.ReleaseRetained(t.ClientID, t.NativeID, "no longer listed by the client", now); err != nil {
+					return nil, nil, err
+				}
+			}
 		}
 		if f.queue != nil {
 			if _, err := tx.SaveQueueSnapshot(*f.queue); err != nil {

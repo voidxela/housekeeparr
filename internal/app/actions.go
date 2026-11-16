@@ -135,6 +135,9 @@ func (s *Service) Preview(ctx context.Context, findingID int64, origin action.Or
 	}
 	in.Scope = sub
 	out.Policy = in.Policy
+	if in.Retained, err = s.st.RetainedUsage(ctx); err != nil {
+		return nil, err
+	}
 	if in.Locks, err = s.st.HeldLocks(ctx); err != nil {
 		return nil, err
 	}
@@ -296,3 +299,16 @@ func (s *Service) ResetAttempts(ctx context.Context, ref string, actor Actor, no
 		return tx.Audit(now, string(actor), "attempts.reset", ref+": "+note)
 	})
 }
+
+// Retained lists transfers recovery stopped and kept with their data.
+func (s *Service) Retained(ctx context.Context, all bool) ([]store.RetainedTransfer, store.RetainedUsage, error) {
+	list, err := s.st.RetainedTransfers(ctx, all, 0)
+	if err != nil {
+		return nil, store.RetainedUsage{}, err
+	}
+	u, err := s.st.RetainedUsage(ctx)
+	return list, u, err
+}
+
+// Limits returns the effective acquisition and retention limits.
+func (s *Service) Limits() policy.Limits { return s.cfg.Limits() }

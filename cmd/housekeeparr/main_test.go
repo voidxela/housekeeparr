@@ -260,6 +260,9 @@ func TestPreviewActionsAndActConfirmation(t *testing.T) {
 			t.Fatalf("preview omits limits: %d\n%s", code, out)
 		}
 	}
+	if code, out, _ := runCLI(t, "retained", "--config", cfg); code != exitOK || !strings.Contains(out, "0 of 25 retained transfers") {
+		t.Fatalf("retained: %d %s", code, out)
+	}
 	if code, out, _ := runCLI(t, "attempts", "--config", cfg); code != exitOK || !strings.Contains(out, "No acquisition attempts") {
 		t.Fatalf("attempts: %d %s", code, out)
 	}

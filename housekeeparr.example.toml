@@ -48,6 +48,13 @@ missing_search = false
 # After a verified recovery, the transfer and its content are not acted on
 # again for this long.
 # success_cooldown = "24h"
+#
+# Recovery stops a transfer and keeps it, with its data, in the client. At
+# these ceilings recovery stops until retained transfers are removed in the
+# client (`housekeeparr retained` lists them). Sizes are logical estimates;
+# free space is not measured.
+# retained_transfers = 25
+# retained_gib = 0               # 0: no byte ceiling
 
 [state]
 # Small writable directory for the embedded database and lock file.

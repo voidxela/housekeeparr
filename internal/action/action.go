@@ -445,7 +445,13 @@ func (c *Coordinator) run(ctx context.Context, id int64, p Proposal) (Result, er
 		out, derr := c.Executor.Dispatch(ctx, st)
 		state, detail, outcome := c.settle(jctx, st, out, derr)
 		if err := c.Store.Write(jctx, func(tx *store.Tx) error {
-			return tx.FinishStep(id, st.Seq, state, outcome, detail, c.now())
+			if err := tx.FinishStep(id, st.Seq, state, outcome, detail, c.now()); err != nil {
+				return err
+			}
+			if state == store.StepSucceeded {
+				return recordRetained(tx, id, st, &p.Planned, c.now())
+			}
+			return nil
 		}); err != nil {
 			// The outcome is not durable; startup reconciliation will
 			// observe this step, which is still recorded as dispatching.
@@ -618,7 +624,13 @@ func (c *Coordinator) Reconcile(ctx context.Context) (ReconcileReport, error) {
 				}
 				ev, _ := json.Marshal(obs)
 				if err := c.Store.Write(ctx, func(tx *store.Tx) error {
-					return tx.FinishStep(in.ID, s.Seq, to, ev, note, c.now())
+					if err := tx.FinishStep(in.ID, s.Seq, to, ev, note, c.now()); err != nil {
+						return err
+					}
+					if to == store.StepSucceeded {
+						return recordRetained(tx, in.ID, s, nil, c.now())
+					}
+					return nil
 				}); err != nil {
 					return rep, err
 				}
@@ -687,4 +699,34 @@ func (c *Coordinator) Review(ctx context.Context, id int64, to store.IntentState
 		}
 		return tx.Audit(now, actor, "action.reviewed", fmt.Sprintf("#%d → %s: %s", id, to, note))
 	})
+}
+
+// recordRetained records the transfer a verified, data-retaining stop
+// kept in the client (SPEC §7.1). Sizes come from the plan when known;
+// reconciliation after a crash has only the step target.
+func recordRetained(tx *store.Tx, id int64, st store.Step, pl *Planned, now time.Time) error {
+	if st.Op != "client.stop" {
+		return nil
+	}
+	var tg struct {
+		ClientID string `json:"client_id"`
+		NativeID string `json:"native_id"`
+	}
+	if err := json.Unmarshal(st.Target, &tg); err != nil || tg.ClientID == "" || tg.NativeID == "" {
+		// The step outcome must be recorded regardless; executors always
+		// target a transfer, so this only drops metadata for a malformed step.
+		return nil
+	}
+	r := store.RetainedTransfer{ClientID: tg.ClientID, NativeID: tg.NativeID, IntentID: id, RetainedAt: now}
+	if pl != nil && pl.ClientID == tg.ClientID && pl.NativeID == tg.NativeID {
+		r.Name, r.ManagerID = pl.Name, pl.ManagerID
+		r.Content = strings.Join(pl.Content, ",")
+		if v, ok := pl.Wanted.Get(); ok {
+			r.WantedBytes = &v
+		}
+		if v, ok := pl.Verified.Get(); ok {
+			r.VerifiedBytes = &v
+		}
+	}
+	return tx.RecordRetained(r)
 }

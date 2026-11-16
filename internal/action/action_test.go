@@ -141,7 +141,7 @@ func proposal(subject string) Proposal {
 		Locks: []string{"transfer:" + subject}, Fingerprint: "fp1", PolicyRevision: "p", ConfigRevision: "c",
 		Operations: []Operation{
 			{Op: "manager.queue.fail", Request: json.RawMessage(`{"removeFromClient":false,"blocklist":true,"skipRedownload":true,"changeCategory":false}`)},
-			{Op: "client.stop", Request: json.RawMessage(`{}`)},
+			{Op: "client.stop", Target: json.RawMessage(`{"client_id":"qbit","native_id":"aa"}`), Request: json.RawMessage(`{}`)},
 		},
 		Prerequisites: []Check{{Name: "eligible", Satisfied: true}},
 		Planned: Planned{ClientID: "qbit", NativeID: "aa", StateClass: domain.StateDownloading, Verified: domain.KnownValue[int64](10),
@@ -173,6 +173,12 @@ func TestExecuteSucceedsAndReleasesLocks(t *testing.T) {
 	}
 	if until, _, ok, _ := c.Store.Cooldown(ctx, "transfer:qbit|aa"); !ok || !until.Equal(t0.Add(time.Hour)) {
 		t.Fatalf("cooldown %v %v", until, ok)
+	}
+	// The verified stop retained the transfer with its planned size.
+	ret, _ := c.Store.RetainedTransfers(ctx, false, 0)
+	if len(ret) != 1 || ret[0].NativeID != "aa" || ret[0].IntentID != res.IntentID || ret[0].WantedBytes == nil || *ret[0].WantedBytes != 100 ||
+		ret[0].Content != "episode:1" {
+		t.Fatalf("retained %+v", ret)
 	}
 	if f.count("manager.queue.fail") != 1 || f.count("client.stop") != 1 {
 		t.Fatalf("sent %v", f.sent)

@@ -68,7 +68,9 @@ type PlanInput struct {
 	Cooldowns map[string]store.CooldownRecord
 	// Limits are the effective acquisition limits; zero means the
 	// proposed defaults.
-	Limits         policy.Limits
+	Limits policy.Limits
+	// Retained is the current retained-transfer usage (SPEC §7.1).
+	Retained       store.RetainedUsage
 	PollInterval   time.Duration
 	ConfigRevision string
 	Tested         []TestedWorkflow
@@ -250,6 +252,7 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 			Description: "Stop the torrent in the client, retaining it and its data, so it no longer occupies an active slot",
 		})
 		p.Effects = append(p.Effects, "the torrent is stopped and kept, with all downloaded data, in its current category")
+		add("retained-data ceiling", retainedOK(in, limits, t), true, retainedDetail(in, limits, t))
 	}
 	p.SideEffects = append(p.SideEffects,
 		"no file is deleted, moved, or renamed; the stopped transfer and its data stay in the client "+
@@ -298,7 +301,7 @@ func PolicyCheck(pol policy.Effective, wf policy.Workflow, origin Origin) Check 
 
 func planned(in PlanInput, cv, mv string, row *store.QueueRecord, present []store.QueueRecord) Planned {
 	t := in.Transfer
-	pl := Planned{ClientID: t.ClientID, NativeID: t.NativeID, StateClass: t.StateClass, Verified: t.Latest.VerifiedBytes,
+	pl := Planned{ClientID: t.ClientID, NativeID: t.NativeID, Name: t.Name, StateClass: t.StateClass, Verified: t.Latest.VerifiedBytes,
 		Wanted: t.Latest.WantedBytes, Private: t.Latest.Private, Category: t.Latest.Category, ClientVersion: cv}
 	if row != nil {
 		pl.ManagerID, pl.ManagerVersion, pl.QueueID, pl.DownloadID = row.ManagerID, mv, row.QueueID, row.DownloadID
@@ -361,3 +364,41 @@ func nonEmptyList(xs []string, def string) []string {
 	}
 	return xs
 }
+
+// retainedOK reports whether keeping one more stopped transfer stays
+// within the configured ceilings. With a byte ceiling, a retained transfer
+// of unknown size makes the total unknown, which is not treated as room.
+func retainedOK(in PlanInput, l policy.Limits, t *store.TransferRecord) bool {
+	if in.Retained.Count+1 > l.RetainedTransfers {
+		return false
+	}
+	if l.RetainedBytes > 0 {
+		size, known := t.Latest.WantedBytes.Get()
+		if !known || in.Retained.UnknownSize > 0 || in.Retained.KnownBytes+size > l.RetainedBytes {
+			return false
+		}
+	}
+	return true
+}
+
+func retainedDetail(in PlanInput, l policy.Limits, t *store.TransferRecord) string {
+	u := in.Retained
+	d := fmt.Sprintf("%d of %d retained transfers (limit from %s); known logical size %s", u.Count, l.RetainedTransfers,
+		l.From("retained_transfers"), gib(u.KnownBytes))
+	if u.UnknownSize > 0 {
+		d += fmt.Sprintf(", %d of unknown size", u.UnknownSize)
+	}
+	if l.RetainedBytes > 0 {
+		d += fmt.Sprintf("; byte ceiling %s (from %s)", gib(l.RetainedBytes), l.From("retained_gib"))
+		if _, known := t.Latest.WantedBytes.Get(); !known {
+			d += "; this transfer's size is unknown, so the ceiling cannot be shown to hold"
+		}
+	} else {
+		d += "; no byte ceiling is configured"
+	}
+	d += ". Shared files and hardlinks make logical size an estimate, not disk use; free space is not measured, so no free-space threshold is enforced." +
+		" At the ceiling, recovery stops until retained transfers are cleaned up outside Housekeeparr (see housekeeparr retained)"
+	return d
+}
+
+func gib(b int64) string { return fmt.Sprintf("%.1f GiB", float64(b)/(1<<30)) }

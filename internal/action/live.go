@@ -16,6 +16,7 @@ import (
 type Planned struct {
 	ClientID      string                `json:"client_id"`
 	NativeID      string                `json:"native_id"`
+	Name          string                `json:"name,omitempty"`
 	StateClass    domain.StateClass     `json:"state_class"`
 	Verified      domain.Signal[int64]  `json:"verified_bytes"`
 	Wanted        domain.Signal[int64]  `json:"wanted_bytes"`
