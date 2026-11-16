@@ -253,3 +253,43 @@ func TestForwardMigrationPreservesV2State(t *testing.T) {
 		t.Fatalf("expected one pre-migration backup, found %d", len(entries))
 	}
 }
+
+func TestPruneKeepsUncertainAndActiveActions(t *testing.T) {
+	s := openTest(t, t.TempDir())
+	done := create(t, s, testIntent("done"))
+	held := create(t, s, testIntent("held", "transfer:qbit|bb"))
+	active := create(t, s, testIntent("active", "transfer:qbit|cc"))
+	err := s.Write(ctx, func(tx *Tx) error {
+		if err := tx.SetIntentState(done, IntentCancelled, "x", t0); err != nil {
+			return err
+		}
+		if err := tx.SetIntentState(held, IntentExecuting, "", t0); err != nil {
+			return err
+		}
+		return tx.SetIntentState(held, IntentUncertain, "timeout", t0)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var res PruneResult
+	if err := s.Write(ctx, func(tx *Tx) error {
+		var err error
+		res, err = tx.Prune(t0.Add(365*24*time.Hour), Retention{Observations: time.Hour, ConnectionChecks: time.Hour, ResolvedFindings: time.Hour, AuditEvents: time.Hour})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	all, _ := s.Intents(ctx, IntentFilter{})
+	if res.Actions != 1 || len(all) != 2 {
+		t.Fatalf("pruned %d, left %d", res.Actions, len(all))
+	}
+	for _, id := range []int64{held, active} {
+		if in, err := s.Intent(ctx, id); err != nil || len(in.Locks) != 1 {
+			t.Fatalf("intent %d lost: %+v %v", id, in, err)
+		}
+	}
+	// Pruning never lowers the restore high-water mark.
+	if max, _ := s.maxIntentID(ctx); max != active {
+		t.Fatalf("high-water mark %d", max)
+	}
+}

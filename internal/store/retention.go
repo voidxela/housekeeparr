@@ -13,7 +13,7 @@ type Retention struct {
 
 // PruneResult counts removed rows.
 type PruneResult struct {
-	Observations, Checks, Findings, Transfers, QueueItems, Audit, Runs int64
+	Observations, Checks, Findings, Transfers, QueueItems, Audit, Runs, Actions int64
 }
 
 // Prune removes expired history.
@@ -51,6 +51,19 @@ func (t *Tx) Prune(now time.Time, r Retention) (PruneResult, error) {
 		},
 		func() error {
 			return run(&out.Audit, "DELETE FROM audit_events WHERE at < ?", ms(now.Add(-r.AuditEvents)))
+		},
+		func() error {
+			// Only finished actions expire; uncertain and active ones (and
+			// their locks) are never pruned. Steps and locks cascade.
+			return run(&out.Actions, `DELETE FROM action_intents WHERE state IN ('succeeded','failed','cancelled')
+				AND finished_at IS NOT NULL AND finished_at < ?`, ms(now.Add(-r.AuditEvents)))
+		},
+		func() error {
+			var n int64
+			if err := run(&n, "DELETE FROM action_budgets WHERE window_start < ?", ms(now.Add(-r.AuditEvents))); err != nil {
+				return err
+			}
+			return run(&n, "DELETE FROM action_cooldowns WHERE until < ?", ms(now))
 		},
 		func() error {
 			return run(&out.Runs, "DELETE FROM runs WHERE stopped_at IS NOT NULL AND stopped_at < ?", ms(now.Add(-r.AuditEvents)))
