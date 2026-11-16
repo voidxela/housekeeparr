@@ -253,4 +253,20 @@ func TestPreviewActionsAndActConfirmation(t *testing.T) {
 	if code, _, _ := runCLI(t, "restore-ack", "--config", cfg); code != exitUsage {
 		t.Fatalf("restore-ack without --confirm: %d", code)
 	}
+	// The preview shows every limit with its usage and provenance.
+	if !strings.Contains(out, "acquisition pacing, all managers") && !strings.Contains(out, "recovery attempts for") {
+		code, out, _ = runCLI(t, "preview", sid, "--config", cfg)
+		if !strings.Contains(out, "recovery attempts for") || !strings.Contains(out, "built-in proposed default") {
+			t.Fatalf("preview omits limits: %d\n%s", code, out)
+		}
+	}
+	if code, out, _ := runCLI(t, "attempts", "--config", cfg); code != exitOK || !strings.Contains(out, "No acquisition attempts") {
+		t.Fatalf("attempts: %d %s", code, out)
+	}
+	if code, _, errOut := runCLI(t, "attempts", "reset", "sonarr|episode:1", "--config", cfg); code != exitUsage || !strings.Contains(errOut, "note") {
+		t.Fatalf("reset without note: %d %s", code, errOut)
+	}
+	if code, _, errOut := runCLI(t, "attempts", "reset", "sonarr|abc|episode:1", "--note", "x", "--config", cfg); code != exitUsage {
+		t.Fatalf("reset with a release key: %d %s", code, errOut)
+	}
 }

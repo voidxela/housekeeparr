@@ -64,8 +64,11 @@ type PlanInput struct {
 	// Locks maps every currently held lock subject to its intent, and
 	// Cooldowns every recorded cooldown; the planner checks each subject
 	// the proposal would lock (the transfer and every affected content).
-	Locks          map[string]int64
-	Cooldowns      map[string]store.CooldownRecord
+	Locks     map[string]int64
+	Cooldowns map[string]store.CooldownRecord
+	// Limits are the effective acquisition limits; zero means the
+	// proposed defaults.
+	Limits         policy.Limits
 	PollInterval   time.Duration
 	ConfigRevision string
 	Tested         []TestedWorkflow
@@ -95,6 +98,10 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 		return nil, &NoPlan{Reason: "the affected transfer is no longer known locally"}
 	}
 	t := in.Transfer
+	limits := in.Limits
+	if limits.Acquisitions == 0 {
+		limits = policy.DefaultLimits()
+	}
 	ttl := in.PreviewTTL
 	if ttl <= 0 {
 		ttl = 5 * time.Minute
@@ -103,7 +110,7 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 		Workflow: string(wf), Origin: in.Origin, Subject: raw(map[string]string{"client_id": t.ClientID, "native_id": t.NativeID}),
 		Locks:          []string{TransferLock(t.ClientID, t.NativeID)},
 		PolicyRevision: in.Policy.Revision, ConfigRevision: in.ConfigRevision, Scope: in.Scope, LiveChecks: LiveChecks,
-		CreatedAt: in.Now, ExpiresAt: in.Now.Add(ttl), Cooldown: 24 * time.Hour,
+		CreatedAt: in.Now, ExpiresAt: in.Now.Add(ttl), Cooldown: limits.SuccessCooldown,
 	}
 	fid := in.Finding.ID
 	p.FindingID = &fid
@@ -248,11 +255,13 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 		"no file is deleted, moved, or renamed; the retained transfer counts toward retained-data tracking",
 		"a later search result, grab, and download progress are verified separately; a search that finds nothing is reported, not retried")
 	if row != nil {
-		key, _ := row.Latest.ContentKey()
-		p.Budgets = []BudgetClaim{
-			{Scope: "global:acquisition", Window: 24 * time.Hour, Limit: 20, Units: 1},
-			{Scope: ContentLock(row.ManagerID, key), Window: 7 * 24 * time.Hour, Limit: 3, Units: 1},
+		var keys []string
+		if key, ok := row.Latest.ContentKey(); ok {
+			keys = append(keys, key)
 		}
+		p.Budgets = acquisitionClaims(limits, row.ManagerID, keys)
+		p.SideEffects = append(p.SideEffects, fmt.Sprintf("one manager replacement search may query every enabled indexer in %s and grab a release; "+
+			"Housekeeparr counts it as one acquisition but cannot bound the manager's own requests", row.ManagerID))
 	}
 	p.Evidence = raw(map[string]any{"finding": in.Finding.ID, "finding_type": in.Finding.Type, "assessment": t.Assessment,
 		"transfer_state": t.StateClass, "native_state": t.Latest.NativeState, "verified_bytes": t.Latest.VerifiedBytes, "last_seen": t.LastSeen})

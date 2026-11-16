@@ -85,6 +85,67 @@ type Config struct {
 type AutomationConfig struct {
 	EmergencyStop bool            `toml:"emergency_stop"`
 	Workflows     map[string]bool `toml:"workflows"`
+	Limits        LimitsConfig    `toml:"limits"`
+}
+
+// LimitsConfig bounds acquisition-starting actions. Unset fields use the
+// proposed defaults in policy.DefaultLimits; none can be disabled.
+type LimitsConfig struct {
+	Acquisitions        *int      `toml:"acquisitions"`
+	AcquisitionWindow   *Duration `toml:"acquisition_window"`
+	ManagerAcquisitions *int      `toml:"manager_acquisitions"`
+	ContentAttempts     *int      `toml:"content_attempts"`
+	SuccessCooldown     *Duration `toml:"success_cooldown"`
+}
+
+// Limits returns the effective acquisition limits with provenance.
+func (c *Config) Limits() policy.Limits {
+	l := policy.DefaultLimits()
+	c2 := c.Automation.Limits
+	set := func(name, value string) {
+		l.Sources = append(l.Sources, policy.Source{Setting: name, Value: value, From: "config [automation.limits] " + name})
+	}
+	if c2.Acquisitions != nil {
+		l.Acquisitions = *c2.Acquisitions
+		set("acquisitions", strconv.Itoa(l.Acquisitions))
+	}
+	if c2.AcquisitionWindow != nil {
+		l.AcquisitionWindow = c2.AcquisitionWindow.Duration
+		set("acquisition_window", l.AcquisitionWindow.String())
+	}
+	if c2.ManagerAcquisitions != nil {
+		l.ManagerAcquisitions = *c2.ManagerAcquisitions
+		set("manager_acquisitions", strconv.Itoa(l.ManagerAcquisitions))
+	}
+	if c2.ContentAttempts != nil {
+		l.ContentAttempts = *c2.ContentAttempts
+		set("content_attempts", strconv.Itoa(l.ContentAttempts))
+	}
+	if c2.SuccessCooldown != nil {
+		l.SuccessCooldown = c2.SuccessCooldown.Duration
+		set("success_cooldown", l.SuccessCooldown.String())
+	}
+	return l
+}
+
+func validateLimits(errf errFunc, cfg *Config) {
+	l := cfg.Limits()
+	intIn := func(field string, v, lo, hi int) {
+		if v < lo || v > hi {
+			errf("automation.limits."+field, "must be between %d and %d (limits cannot be disabled)", lo, hi)
+		}
+	}
+	intIn("acquisitions", l.Acquisitions, 1, 1000)
+	intIn("manager_acquisitions", l.ManagerAcquisitions, 1, 1000)
+	intIn("content_attempts", l.ContentAttempts, 1, 20)
+	if l.AcquisitionWindow < time.Hour || l.AcquisitionWindow > 7*24*time.Hour {
+		errf("automation.limits.acquisition_window", "must be between 1h and 168h")
+	} else if l.AcquisitionWindow > cfg.Retention.AuditEvents.Duration {
+		errf("automation.limits.acquisition_window", "must not exceed retention.audit_events, or pacing history would be pruned while still counted")
+	}
+	if l.SuccessCooldown < 0 || l.SuccessCooldown > 30*24*time.Hour {
+		errf("automation.limits.success_cooldown", "must be between 0s and 720h")
+	}
 }
 
 // RuleConfig defines a scoped policy and/or automation rule.
@@ -339,6 +400,7 @@ func validate(cfg *Config, md toml.MetaData) []Problem {
 		errf("mode", "must be \"observe\", \"paused\", or \"automatic\"")
 	}
 	validateWorkflowMap(errf, "automation.workflows", cfg.Automation.Workflows)
+	validateLimits(errf, cfg)
 	if strings.TrimSpace(cfg.State.Dir) == "" {
 		errf("state.dir", "required")
 	}

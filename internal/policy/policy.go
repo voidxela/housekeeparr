@@ -99,3 +99,39 @@ type Effective struct {
 	Automation    []WorkflowPermission `json:"automation"`
 	Exclusions    []ExclusionMatch     `json:"exclusions,omitempty"`
 }
+
+// Limits bound acquisition-starting actions (SPEC §§7, 9.1, 10). Pacing
+// spreads eligible work across an installation and returns by itself;
+// content attempts stop repeated ineffective replacement of one episode or
+// movie and return only after review and an explicit reset. The default
+// values are implementation proposals, not validated product defaults.
+type Limits struct {
+	// Acquisitions is the most acquisition-starting actions, across all
+	// managers, within AcquisitionWindow.
+	Acquisitions      int           `json:"acquisitions"`
+	AcquisitionWindow time.Duration `json:"acquisition_window"`
+	// ManagerAcquisitions is the same limit for each manager connection.
+	ManagerAcquisitions int `json:"manager_acquisitions"`
+	// ContentAttempts is how many recovery attempts one episode or movie
+	// may have before review is required.
+	ContentAttempts int `json:"content_attempts"`
+	// SuccessCooldown keeps a recovered transfer and its content from
+	// being acted on again for this long.
+	SuccessCooldown time.Duration `json:"success_cooldown"`
+	Sources         []Source      `json:"sources"`
+}
+
+// DefaultLimits returns the proposed limits.
+func DefaultLimits() Limits {
+	return Limits{Acquisitions: 20, AcquisitionWindow: 24 * time.Hour, ManagerAcquisitions: 20, ContentAttempts: 3, SuccessCooldown: 24 * time.Hour}
+}
+
+// From returns where a limit setting came from.
+func (l Limits) From(setting string) string {
+	for _, s := range l.Sources {
+		if s.Setting == setting {
+			return s.From
+		}
+	}
+	return "built-in proposed default"
+}

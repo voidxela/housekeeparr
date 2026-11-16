@@ -166,8 +166,8 @@ func TestContentIdentitySurvivesReplacement(t *testing.T) {
 	if pa.Locks[1] != "content:sonarr|episode:1" || pa.Locks[1] != pb.Locks[1] {
 		t.Fatalf("content locks %v vs %v", pa.Locks, pb.Locks)
 	}
-	if pa.Budgets[1].Scope != pb.Budgets[1].Scope {
-		t.Fatalf("budgets %s vs %s", pa.Budgets[1].Scope, pb.Budgets[1].Scope)
+	if pa.Budgets[2].Scope != "attempts:sonarr|episode:1" || pa.Budgets[2].Scope != pb.Budgets[2].Scope {
+		t.Fatalf("attempt budgets %s vs %s", pa.Budgets[2].Scope, pb.Budgets[2].Scope)
 	}
 	if pa.Locks[0] == pb.Locks[0] {
 		t.Fatal("distinct transfers share a transfer lock")
@@ -189,5 +189,39 @@ func TestParseContentKey(t *testing.T) {
 		if _, _, ok := domain.ParseContentKey(k); ok {
 			t.Errorf("%s accepted", k)
 		}
+	}
+}
+
+func TestPlanUsesConfiguredLimits(t *testing.T) {
+	in := planInput()
+	p, _ := Plan(in)
+	def := policy.DefaultLimits()
+	if len(p.Budgets) != 3 || p.Budgets[0].Limit != def.Acquisitions || p.Budgets[2].Limit != def.ContentAttempts ||
+		p.Cooldown != def.SuccessCooldown || p.Budgets[0].From != "built-in proposed default" {
+		t.Fatalf("default budgets %+v cooldown %v", p.Budgets, p.Cooldown)
+	}
+	in.Limits = policy.Limits{Acquisitions: 50, AcquisitionWindow: 6 * time.Hour, ManagerAcquisitions: 10, ContentAttempts: 5, SuccessCooldown: time.Hour,
+		Sources: []policy.Source{{Setting: "content_attempts", From: "config [automation.limits] content_attempts"}}}
+	p, _ = Plan(in)
+	if p.Budgets[0].Limit != 50 || p.Budgets[0].Window != 6*time.Hour || p.Budgets[1].Limit != 10 || p.Budgets[2].Limit != 5 ||
+		p.Budgets[2].From != "config [automation.limits] content_attempts" || p.Cooldown != time.Hour {
+		t.Fatalf("configured budgets %+v cooldown %v", p.Budgets, p.Cooldown)
+	}
+	// Exhaustion is a visible prerequisite, explained by kind.
+	next := t0.Add(3 * time.Hour)
+	p.CheckBudgets(map[string]store.BudgetUsage{
+		"pacing:global":             {Used: 50, Limit: 50, NextAt: &next},
+		"pacing:manager:sonarr":     {Used: 1, Limit: 10},
+		"attempts:sonarr|episode:1": {Used: 5, Limit: 5},
+	})
+	var details []string
+	for _, b := range p.Blockers() {
+		details = append(details, b.Name+": "+b.Detail)
+	}
+	all := strings.Join(details, "\n")
+	if !strings.Contains(all, "50 of 50 used in the last 6h") || !strings.Contains(all, "not a judgement about this item") ||
+		!strings.Contains(all, "eligible again at "+next.Format(time.RFC3339)) || !strings.Contains(all, "5 of 5 recovery attempts used ever") ||
+		!strings.Contains(all, "attempts reset sonarr|episode:1") || strings.Contains(all, "pacing, sonarr") {
+		t.Fatalf("budget explanations:\n%s", all)
 	}
 }

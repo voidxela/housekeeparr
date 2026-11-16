@@ -9,6 +9,7 @@ import (
 
 	"github.com/voidxela/housekeeparr/internal/action"
 	"github.com/voidxela/housekeeparr/internal/app"
+	"github.com/voidxela/housekeeparr/internal/domain"
 	"github.com/voidxela/housekeeparr/internal/engine"
 	"github.com/voidxela/housekeeparr/internal/store"
 	"github.com/voidxela/housekeeparr/internal/workflow"
@@ -286,4 +287,82 @@ func cmdRestoreAck(args []string, out, errOut io.Writer) int {
 	}
 	fmt.Fprintln(out, "restore acknowledged; the journal marker now matches this database")
 	return exitOK
+}
+
+// cmdAttempts lists the attempt ledger, or resets one content's attempts
+// after review ("attempts reset <manager>|episode:<id> --note ...").
+func cmdAttempts(args []string, out, errOut io.Writer) int {
+	if len(args) > 0 && args[0] == "reset" {
+		o := newFlags("attempts reset", errOut)
+		note := o.fs.String("note", "", "what you reviewed before allowing more attempts (required)")
+		pos, err := o.parse(args[1:])
+		if err != nil {
+			return exitUsage
+		}
+		if len(pos) != 1 || strings.TrimSpace(*note) == "" {
+			fmt.Fprintln(errOut, "usage: housekeeparr attempts reset <manager-id>|episode:<id> --note \"what you checked\" (a note is required)")
+			return exitUsage
+		}
+		if _, key, _ := strings.Cut(pos[0], "|"); !strings.Contains(pos[0], "|") || !validContentKey(key) {
+			fmt.Fprintln(errOut, "content must be \"<manager-id>|episode:<id>\" or \"<manager-id>|movie:<id>\"")
+			return exitUsage
+		}
+		svc, done, code := writerService(o)
+		if svc == nil {
+			return code
+		}
+		defer done()
+		if err := svc.ResetAttempts(context.Background(), pos[0], app.ActorCLI, *note); err != nil {
+			fmt.Fprintln(errOut, err)
+			return exitUsage
+		}
+		fmt.Fprintf(out, "recovery attempts for %s reset; earlier attempts remain in the history\n", pos[0])
+		return exitOK
+	}
+	o := newFlags("attempts", errOut)
+	limit := o.fs.Int("limit", 50, "maximum rows to list")
+	pos, err := o.parse(args)
+	if err != nil {
+		return exitUsage
+	}
+	prefix := ""
+	if len(pos) == 1 {
+		prefix = "attempts:" + pos[0]
+	}
+	svc, done, code := readService(o)
+	if svc == nil {
+		return code
+	}
+	defer done()
+	atts, resets, err := svc.AttemptHistory(context.Background(), prefix, *limit)
+	if err != nil {
+		fmt.Fprintln(errOut, err)
+		return exitFailure
+	}
+	if o.json {
+		return writeJSON(out, map[string]any{"attempts": atts, "resets": resets})
+	}
+	if len(atts) == 0 {
+		fmt.Fprintln(out, "No acquisition attempts are recorded.")
+	} else {
+		w := tw(out)
+		fmt.Fprintln(w, "AT\tSCOPE\tACTION\tCOUNTED")
+		for _, a := range atts {
+			counted := "yes"
+			if a.ReleasedAt != nil {
+				counted = "no: " + a.ReleasedReason
+			}
+			fmt.Fprintf(w, "%s\t%s\t#%d\t%s\n", ts(&a.At), a.Scope, a.IntentID, counted)
+		}
+		w.Flush()
+	}
+	for _, r := range resets {
+		fmt.Fprintf(out, "reset %s at %s by %s: %s\n", r.Scope, ts(&r.At), r.Actor, r.Note)
+	}
+	return exitOK
+}
+
+func validContentKey(k string) bool {
+	_, _, ok := domain.ParseContentKey(k)
+	return ok
 }

@@ -27,6 +27,28 @@ preserved_data_failure = false
 partial_pack = false
 missing_search = false
 
+[automation.limits]
+# Bounds on actions that start an acquisition (manual and automatic alike).
+# None can be disabled. The values below are implementation proposals, not
+# validated product defaults; adjust them to your installation.
+#
+# Pacing spreads eligible work over time across the installation: when it is
+# used up, findings stay open and become eligible again as older actions
+# leave the rolling window. It says nothing about any one item.
+# acquisitions = 20              # all managers, per window
+# manager_acquisitions = 20      # each manager connection, per window
+# acquisition_window = "24h"     # rolling; at most 168h and retention.audit_events
+#
+# Content attempts stop repeated ineffective replacement of one episode or
+# movie. They do not return with time: after this many recovery attempts the
+# finding needs review, then `housekeeparr attempts reset <manager>|episode:<id>
+# --note "..."` allows more. Exhaustion never means no other release exists.
+# content_attempts = 3
+#
+# After a verified recovery, the transfer and its content are not acted on
+# again for this long.
+# success_cooldown = "24h"
+
 [state]
 # Small writable directory for the embedded database and lock file.
 # Relative paths resolve against this file's directory. Avoid network

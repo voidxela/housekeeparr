@@ -58,6 +58,7 @@ func commands() []command {
 		{"act", "run the previewed manual action through the coordinator: act <id> --confirm", cmdAct},
 		{"actions", "list journaled actions and holds (exit 1 if any need review)", cmdActions},
 		{"review", "resolve an uncertain action after checking: review <action-id> --as failed --note ...", cmdReview},
+		{"attempts", "list recovery attempts and pacing use; allow more after review: attempts reset <manager>|episode:<id> --note ...", cmdAttempts},
 		{"restore-ack", "accept a restored state database as authoritative: restore-ack --confirm", cmdRestoreAck},
 		{"check", "probe every configured connection now (read-only; does not change state)", cmdCheck},
 		{"config", "validate configuration and secret references: config validate", cmdConfig},

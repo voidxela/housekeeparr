@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -154,6 +155,35 @@ func TestPreviewAndActShareTheCoordinator(t *testing.T) {
 	pv, _ = svc.Preview(ctx, f.ID, action.OriginManual)
 	if !names(pv.Proposal.Blockers())["not in cooldown"] {
 		t.Fatalf("cooldown not applied: %v", pv.Proposal.Blockers())
+	}
+	// The preview reports the attempt just made against the content's
+	// allowance, and a reset after review starts it afresh while keeping
+	// the history.
+	content := pv.Proposal.Planned.ManagerID + "|" + pv.Proposal.Planned.Content[0]
+	attempts := func() string {
+		pv, _ := svc.Preview(ctx, f.ID, action.OriginManual)
+		for _, c := range pv.Proposal.Prerequisites {
+			if strings.HasPrefix(c.Name, "recovery attempts for "+content) {
+				return c.Detail
+			}
+		}
+		t.Fatalf("no attempts prerequisite in %+v", pv.Proposal.Prerequisites)
+		return ""
+	}
+	if d := attempts(); !strings.HasPrefix(d, "1 of 3 recovery attempts used ever") {
+		t.Fatalf("attempts detail %q", d)
+	}
+	if err := svc.ResetAttempts(ctx, content, app.ActorCLI, ""); err == nil {
+		t.Fatal("reset without a note")
+	}
+	if err := svc.ResetAttempts(ctx, content, app.ActorCLI, "checked the manager history"); err != nil {
+		t.Fatal(err)
+	}
+	if d := attempts(); !strings.HasPrefix(d, "0 of 3 recovery attempts used since the reset") {
+		t.Fatalf("attempts after reset %q", d)
+	}
+	if atts, resets, _ := svc.AttemptHistory(ctx, "attempts:", 0); len(atts) != 1 || len(resets) != 1 {
+		t.Fatalf("history %+v %+v", atts, resets)
 	}
 }
 

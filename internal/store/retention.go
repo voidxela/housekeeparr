@@ -60,7 +60,7 @@ func (t *Tx) Prune(now time.Time, r Retention) (PruneResult, error) {
 		},
 		func() error {
 			var n int64
-			if err := run(&n, "DELETE FROM action_budgets WHERE window_start < ?", ms(now.Add(-r.AuditEvents))); err != nil {
+			if err := pruneAttempts(run, &n, now, r.AuditEvents); err != nil {
 				return err
 			}
 			return run(&n, "DELETE FROM action_cooldowns WHERE until < ?", ms(now))
@@ -75,4 +75,16 @@ func (t *Tx) Prune(now time.Time, r Retention) (PruneResult, error) {
 		}
 	}
 	return out, nil
+}
+
+// pruneAttempts removes pacing reservations older than the retention
+// period (which validation keeps longer than any pacing window) and
+// attempt rows that predate their scope's latest reset. Attempts since the
+// latest reset are durable: they are the per-content retry history.
+func pruneAttempts(run func(*int64, string, ...any) error, n *int64, now time.Time, keep time.Duration) error {
+	if err := run(n, "DELETE FROM action_attempts WHERE scope LIKE 'pacing:%' AND at < ?", ms(now.Add(-keep))); err != nil {
+		return err
+	}
+	return run(n, `DELETE FROM action_attempts WHERE scope LIKE 'attempts:%' AND at < ?
+		AND at < (SELECT max(r.at) FROM action_budget_resets r WHERE r.scope = action_attempts.scope)`, ms(now.Add(-keep)))
 }

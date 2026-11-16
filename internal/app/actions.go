@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/voidxela/housekeeparr/internal/action"
 	"github.com/voidxela/housekeeparr/internal/adapter"
@@ -74,7 +75,7 @@ func (s *Service) Preview(ctx context.Context, findingID int64, origin action.Or
 		return nil, err
 	}
 	in := action.PlanInput{Finding: *f, Origin: origin, PollInterval: s.cfg.Polling.Interval.Duration,
-		ConfigRevision: s.cfg.Revision, Tested: action.Tested, Now: s.now()}
+		ConfigRevision: s.cfg.Revision, Tested: action.Tested, Now: s.now(), Limits: s.cfg.Limits()}
 	sub := policy.Subject{ClientID: f.Subject.ClientID, NativeID: f.Subject.NativeID}
 	if f.Subject.ClientID != "" && f.Subject.NativeID != "" {
 		if in.Transfer, err = s.st.Transfer(ctx, f.Subject.ClientID, f.Subject.NativeID); err != nil {
@@ -145,6 +146,15 @@ func (s *Service) Preview(ctx context.Context, findingID int64, origin action.Or
 		out.NoAction = np.Reason
 		return out, nil
 	}
+	usage := map[string]store.BudgetUsage{}
+	for _, b := range p.Budgets {
+		u, err := s.st.BudgetUsage(ctx, b.Budget(), b.Units, in.Now)
+		if err != nil {
+			return nil, err
+		}
+		usage[b.Scope] = u
+	}
+	p.CheckBudgets(usage)
 	if out.Journal.RestoreHold != nil {
 		p.Prerequisites = append(p.Prerequisites, action.Check{Name: "state matches the action journal", Hard: true, Detail: out.Journal.RestoreHold.Reason})
 	}
@@ -254,4 +264,35 @@ func (g gate) Blockers(ctx context.Context, p action.Proposal) []action.Check {
 		out = append(out, c)
 	}
 	return out
+}
+
+// AttemptHistory lists recorded acquisition attempts and resets whose
+// scope starts with prefix ("" for all), newest first.
+func (s *Service) AttemptHistory(ctx context.Context, prefix string, limit int) ([]store.Attempt, []store.BudgetReset, error) {
+	return s.st.Attempts(ctx, prefix, limit)
+}
+
+// ResetAttempts allows further recovery attempts for one episode or movie
+// ("<manager-id>|episode:<id>" or "<manager-id>|movie:<id>") after an
+// operator has reviewed why earlier replacements did not resolve it. The
+// earlier attempts remain recorded; nothing is sent.
+func (s *Service) ResetAttempts(ctx context.Context, ref string, actor Actor, note string) error {
+	mid, key, ok := strings.Cut(ref, "|")
+	if _, _, valid := domain.ParseContentKey(key); !ok || !valid || mid == "" {
+		return fmt.Errorf("content must be \"<manager-id>|episode:<id>\" or \"<manager-id>|movie:<id>\"")
+	}
+	if !s.cfg.HasManager(mid) {
+		return fmt.Errorf("unknown manager connection %q", mid)
+	}
+	if strings.TrimSpace(note) == "" {
+		return fmt.Errorf("a note describing what you reviewed is required")
+	}
+	scope := action.AttemptScope(mid, key)
+	now := s.now()
+	return s.st.Write(ctx, func(tx *store.Tx) error {
+		if err := tx.ResetBudget(scope, string(actor), note, now); err != nil {
+			return err
+		}
+		return tx.Audit(now, string(actor), "attempts.reset", ref+": "+note)
+	})
 }

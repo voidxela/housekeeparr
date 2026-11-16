@@ -254,20 +254,205 @@ func (t *Tx) FinishStep(id int64, seq int, to StepState, outcome json.RawMessage
 	return nil
 }
 
-// ReserveBudget consumes n units of scope's budget for the window starting
-// at windowStart, failing with ErrBudgetExhausted beyond limit.
-func (t *Tx) ReserveBudget(scope string, windowStart time.Time, limit, n int) error {
-	var used int
-	err := t.queryRow("SELECT used FROM action_budgets WHERE scope=? AND window_start=?", scope, ms(windowStart)).Scan(&used)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+// Budget kinds.
+const (
+	// BudgetPacing counts reservations within a rolling window; allowance
+	// returns as reservations age out.
+	BudgetPacing = "pacing"
+	// BudgetAttempts counts reservations since the scope's last explicit
+	// reset; it never returns by itself.
+	BudgetAttempts = "attempts"
+)
+
+// Budget identifies one limit: a scope counted by kind, against limit
+// units (within Window for pacing).
+type Budget struct {
+	Kind   string
+	Scope  string
+	Window time.Duration
+	Limit  int
+}
+
+// BudgetUsage is a budget's current consumption.
+type BudgetUsage struct {
+	Used  int `json:"used"`
+	Limit int `json:"limit"`
+	// Since is the start of what is counted: the window start for pacing,
+	// the last reset (zero if never reset) for attempts.
+	Since time.Time `json:"since"`
+	// NextAt is when enough pacing allowance returns for units more; nil
+	// when they fit now, or for an attempts budget (which needs a reset).
+	NextAt *time.Time `json:"next_at,omitempty"`
+}
+
+// Fits reports whether units more fit within the limit.
+func (u BudgetUsage) Fits(units int) bool { return u.Used+units <= u.Limit }
+
+func budgetUsage(ctx context.Context, q querier, b Budget, units int, now time.Time) (BudgetUsage, error) {
+	u := BudgetUsage{Limit: b.Limit}
+	switch b.Kind {
+	case BudgetPacing:
+		u.Since = now.Add(-b.Window)
+	case BudgetAttempts:
+		var at sql.NullInt64
+		if err := q.QueryRowContext(ctx, "SELECT max(at) FROM action_budget_resets WHERE scope=?", b.Scope).Scan(&at); err != nil {
+			return u, err
+		}
+		if at.Valid {
+			u.Since = fromMS(at.Int64)
+		}
+	default:
+		return u, fmt.Errorf("unknown budget kind %q", b.Kind)
+	}
+	rows, err := q.QueryContext(ctx, "SELECT at, units FROM action_attempts WHERE scope=? AND released_at IS NULL AND at > ? ORDER BY at",
+		b.Scope, ms(u.Since))
+	if err != nil {
+		return u, err
+	}
+	defer rows.Close()
+	type use struct {
+		at    int64
+		units int
+	}
+	var uses []use
+	for rows.Next() {
+		var x use
+		if err := rows.Scan(&x.at, &x.units); err != nil {
+			return u, err
+		}
+		uses = append(uses, x)
+		u.Used += x.units
+	}
+	if err := rows.Err(); err != nil {
+		return u, err
+	}
+	if b.Kind == BudgetPacing && !u.Fits(units) {
+		// Allowance returns as the oldest reservations leave the window.
+		excess := u.Used + units - u.Limit
+		for _, x := range uses {
+			excess -= x.units
+			if excess <= 0 {
+				next := fromMS(x.at).Add(b.Window)
+				u.NextAt = &next
+				break
+			}
+		}
+	}
+	return u, nil
+}
+
+// BudgetUsage returns a budget's consumption at now.
+func (s *Store) BudgetUsage(ctx context.Context, b Budget, units int, now time.Time) (BudgetUsage, error) {
+	return budgetUsage(ctx, s.r, b, units, now)
+}
+
+// BudgetExhaustedError reports a reservation beyond a budget's limit.
+type BudgetExhaustedError struct {
+	Budget Budget
+	Usage  BudgetUsage
+}
+
+func (e *BudgetExhaustedError) Error() string {
+	return fmt.Sprintf("%s: %s used %d of %d", ErrBudgetExhausted, e.Budget.Scope, e.Usage.Used, e.Usage.Limit)
+}
+
+func (e *BudgetExhaustedError) Unwrap() error { return ErrBudgetExhausted }
+
+// ReserveBudget records units against b for intent id, failing with a
+// *BudgetExhaustedError beyond the limit. Call it in the transaction that
+// creates the intent.
+func (t *Tx) ReserveBudget(id int64, b Budget, units int, now time.Time) error {
+	u, err := budgetUsage(t.ctx, t.tx, b, units, now)
+	if err != nil {
 		return err
 	}
-	if used+n > limit {
-		return fmt.Errorf("%w: %s used %d of %d", ErrBudgetExhausted, scope, used, limit)
+	if !u.Fits(units) {
+		return &BudgetExhaustedError{Budget: b, Usage: u}
 	}
-	_, err = t.exec(`INSERT INTO action_budgets(scope, window_start, used) VALUES(?, ?, ?)
-		ON CONFLICT(scope, window_start) DO UPDATE SET used=used+excluded.used`, scope, ms(windowStart), n)
+	_, err = t.exec("INSERT INTO action_attempts(intent_id, scope, units, at) VALUES(?, ?, ?, ?)", id, b.Scope, units, ms(now))
 	return err
+}
+
+// ReleaseBudget returns intent id's reservations. Call it only when no
+// request of the intent can have had an external effect: never sent, or
+// definitely refused before any effect. The rows are kept as history.
+func (t *Tx) ReleaseBudget(id int64, reason string, now time.Time) error {
+	_, err := t.exec("UPDATE action_attempts SET released_at=?, released_reason=? WHERE intent_id=? AND released_at IS NULL", ms(now), reason, id)
+	return err
+}
+
+// ResetBudget starts an attempts budget afresh after review. Earlier
+// attempts remain recorded.
+func (t *Tx) ResetBudget(scope, actor, note string, now time.Time) error {
+	_, err := t.exec("INSERT INTO action_budget_resets(scope, at, actor, note) VALUES(?, ?, ?, ?)", scope, ms(now), actor, note)
+	return err
+}
+
+// Attempt is one ledger row.
+type Attempt struct {
+	IntentID       int64      `json:"intent_id"`
+	Scope          string     `json:"scope"`
+	Units          int        `json:"units"`
+	At             time.Time  `json:"at"`
+	ReleasedAt     *time.Time `json:"released_at,omitempty"`
+	ReleasedReason string     `json:"released_reason,omitempty"`
+}
+
+// BudgetReset is one recorded reset.
+type BudgetReset struct {
+	Scope string    `json:"scope"`
+	At    time.Time `json:"at"`
+	Actor string    `json:"actor"`
+	Note  string    `json:"note"`
+}
+
+// Attempts lists ledger rows for scopes with the given prefix, newest
+// first, with the resets recorded for them.
+func (s *Store) Attempts(ctx context.Context, scopePrefix string, limit int) ([]Attempt, []BudgetReset, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	like := strings.NewReplacer("%", "\\%", "_", "\\_").Replace(scopePrefix) + "%"
+	rows, err := s.r.QueryContext(ctx, `SELECT intent_id, scope, units, at, released_at, COALESCE(released_reason, '') FROM action_attempts
+		WHERE scope LIKE ? ESCAPE '\' ORDER BY at DESC, id DESC LIMIT ?`, like, limit)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	var out []Attempt
+	for rows.Next() {
+		var a Attempt
+		var at int64
+		var rel sql.NullInt64
+		if err := rows.Scan(&a.IntentID, &a.Scope, &a.Units, &at, &rel, &a.ReleasedReason); err != nil {
+			return nil, nil, err
+		}
+		a.At = fromMS(at)
+		if rel.Valid {
+			t := fromMS(rel.Int64)
+			a.ReleasedAt = &t
+		}
+		out = append(out, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	rrows, err := s.r.QueryContext(ctx, `SELECT scope, at, actor, note FROM action_budget_resets WHERE scope LIKE ? ESCAPE '\' ORDER BY at DESC LIMIT ?`, like, limit)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rrows.Close()
+	var resets []BudgetReset
+	for rrows.Next() {
+		var r BudgetReset
+		var at int64
+		if err := rrows.Scan(&r.Scope, &at, &r.Actor, &r.Note); err != nil {
+			return nil, nil, err
+		}
+		r.At = fromMS(at)
+		resets = append(resets, r)
+	}
+	return out, resets, rrows.Err()
 }
 
 // SetCooldown records that subject must not be acted on before until.
@@ -275,16 +460,6 @@ func (t *Tx) SetCooldown(subject string, until time.Time, reason string) error {
 	_, err := t.exec(`INSERT INTO action_cooldowns(subject, until, reason) VALUES(?, ?, ?)
 		ON CONFLICT(subject) DO UPDATE SET until=excluded.until, reason=excluded.reason`, subject, ms(until), reason)
 	return err
-}
-
-// BudgetUsed returns consumption for scope in the window.
-func (s *Store) BudgetUsed(ctx context.Context, scope string, windowStart time.Time) (int, error) {
-	var used int
-	err := s.r.QueryRowContext(ctx, "SELECT used FROM action_budgets WHERE scope=? AND window_start=?", scope, ms(windowStart)).Scan(&used)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, nil
-	}
-	return used, err
 }
 
 // Cooldown returns the cooldown for subject, if one is recorded.

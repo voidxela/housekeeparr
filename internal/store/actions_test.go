@@ -117,24 +117,65 @@ func TestIntentTransitionsAndLockRelease(t *testing.T) {
 func TestBudgetsPersistAcrossRestart(t *testing.T) {
 	dir := t.TempDir()
 	s := openTest(t, dir)
-	win := t0.Truncate(24 * time.Hour)
+	pace := Budget{Kind: BudgetPacing, Scope: "pacing:manager:sonarr", Window: 24 * time.Hour, Limit: 2}
 	for i := 0; i < 2; i++ {
-		if err := s.Write(ctx, func(tx *Tx) error { return tx.ReserveBudget("manager:sonarr:search", win, 2, 1) }); err != nil {
+		at := t0.Add(time.Duration(i) * time.Hour)
+		if err := s.Write(ctx, func(tx *Tx) error { return tx.ReserveBudget(int64(i+1), pace, 1, at) }); err != nil {
 			t.Fatal(err)
 		}
 	}
 	s.Close()
 	s = openTest(t, dir)
-	err := s.Write(ctx, func(tx *Tx) error { return tx.ReserveBudget("manager:sonarr:search", win, 2, 1) })
-	if !errors.Is(err, ErrBudgetExhausted) {
+	now := t0.Add(2 * time.Hour)
+	err := s.Write(ctx, func(tx *Tx) error { return tx.ReserveBudget(3, pace, 1, now) })
+	var ex *BudgetExhaustedError
+	if !errors.As(err, &ex) || !errors.Is(err, ErrBudgetExhausted) || ex.Usage.Used != 2 {
 		t.Fatalf("budget after restart: %v", err)
 	}
-	if used, _ := s.BudgetUsed(ctx, "manager:sonarr:search", win); used != 2 {
-		t.Fatalf("used %d", used)
+	// Rolling, not aligned: allowance returns exactly when the oldest
+	// reservation leaves the window, and is reported in advance.
+	u, _ := s.BudgetUsage(ctx, pace, 1, now)
+	if u.Used != 2 || u.NextAt == nil || !u.NextAt.Equal(t0.Add(24*time.Hour)) {
+		t.Fatalf("usage %+v", u)
 	}
-	// A new window starts fresh.
-	if err := s.Write(ctx, func(tx *Tx) error { return tx.ReserveBudget("manager:sonarr:search", win.Add(24*time.Hour), 2, 1) }); err != nil {
+	if err := s.Write(ctx, func(tx *Tx) error { return tx.ReserveBudget(3, pace, 1, t0.Add(24*time.Hour+time.Second)) }); err != nil {
+		t.Fatalf("after the oldest aged out: %v", err)
+	}
+}
+
+func TestAttemptBudgetNeedsResetAndReleaseKeepsHistory(t *testing.T) {
+	s := openTest(t, t.TempDir())
+	b := Budget{Kind: BudgetAttempts, Scope: "attempts:sonarr|episode:9", Limit: 2}
+	for i := int64(1); i <= 3; i++ {
+		at := t0.Add(time.Duration(i) * 24 * time.Hour)
+		if err := s.Write(ctx, func(tx *Tx) error { return tx.ReserveBudget(i, b, 1, at) }); err != nil {
+			t.Fatal(err)
+		}
+		if i == 2 {
+			// Intent 2 was provably never sent: its unit returns.
+			if err := s.Write(ctx, func(tx *Tx) error { return tx.ReleaseBudget(2, "refused before any effect", at) }); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	// Attempts never age out: a year later, still exhausted.
+	later := t0.Add(365 * 24 * time.Hour)
+	if u, _ := s.BudgetUsage(ctx, b, 1, later); u.Fits(1) || u.Used != 2 || u.NextAt != nil {
+		t.Fatalf("attempts expired by time: %+v", u)
+	}
+	if err := s.Write(ctx, func(tx *Tx) error { return tx.ResetBudget(b.Scope, "alex", "checked the release", later) }); err != nil {
 		t.Fatal(err)
+	}
+	if u, _ := s.BudgetUsage(ctx, b, 1, later.Add(time.Second)); !u.Fits(1) || u.Used != 0 || !u.Since.Equal(later) {
+		t.Fatalf("after reset: %+v", u)
+	}
+	atts, resets, err := s.Attempts(ctx, "attempts:sonarr|", 0)
+	if err != nil || len(atts) != 3 || len(resets) != 1 || atts[1].ReleasedAt == nil || atts[1].IntentID != 2 {
+		t.Fatalf("history %+v %+v %v", atts, resets, err)
+	}
+	// Prefix matching is literal.
+	if atts, _, _ := s.Attempts(ctx, "attempts:sonarr|episode:%", 0); len(atts) != 0 {
+		t.Fatalf("wildcard matched %v", atts)
 	}
 }
 
@@ -315,8 +356,9 @@ func TestFailedOrCancelledIntentDoesNotBlockRetry(t *testing.T) {
 }
 
 // TestForwardMigrationV3ContentIdentity builds a schema-3 database with a
-// held release-specific content lock and cooldown, then opens it: the
-// release-independent subjects exist and block replacement releases.
+// held release-specific content lock, cooldown, and budget counters, then
+// opens it: the release-independent subjects exist and block replacement
+// releases, and attempt history is rebuilt from the journal.
 func TestForwardMigrationV3ContentIdentity(t *testing.T) {
 	dir := t.TempDir()
 	db, err := sql.Open("sqlite", "file:"+filepath.Join(dir, dbFile))
@@ -344,6 +386,7 @@ func TestForwardMigrationV3ContentIdentity(t *testing.T) {
 		 (1,1,'manager.queue.fail','` + target + `','{}','{}','uncertain'), (2,1,'manager.queue.fail','` + movie + `','{}','{}','succeeded')`,
 		`INSERT INTO action_locks(subject, intent_id, acquired_at) VALUES('transfer:qbit|aa',1,1),('content:sonarr|aa|episode:9',1,1)`,
 		`INSERT INTO action_cooldowns(subject, until, reason) VALUES('content:radarr|bb|movie:4',9999999999999,'action #2 (no_progress_recovery)')`,
+		`INSERT INTO action_budgets(scope, window_start, used) VALUES('global:acquisition',0,2),('content:sonarr|aa|episode:9',0,1)`,
 	} {
 		if _, err := db.Exec(q); err != nil {
 			t.Fatalf("build v3 database: %v", err)
@@ -363,6 +406,18 @@ func TestForwardMigrationV3ContentIdentity(t *testing.T) {
 	}
 	if until, reason, ok, _ := s.Cooldown(ctx, "content:radarr|movie:4"); !ok || until.Before(time.Now()) || reason == "" {
 		t.Fatalf("content cooldown not carried over: %v %v", until, ok)
+	}
+	// Schema 5 rebuilt attempt history from the journal, including the
+	// uncertain intent's dispatched request.
+	u, err := s.BudgetUsage(ctx, Budget{Kind: BudgetAttempts, Scope: "attempts:sonarr|episode:9", Limit: 3}, 1, time.Now())
+	if err != nil || u.Used != 1 {
+		t.Fatalf("content attempts after upgrade: %+v %v", u, err)
+	}
+	if u, _ := s.BudgetUsage(ctx, Budget{Kind: BudgetAttempts, Scope: "attempts:radarr|movie:4", Limit: 3}, 1, time.Now()); u.Used != 1 {
+		t.Fatalf("movie attempts after upgrade: %+v", u)
+	}
+	if atts, _, _ := s.Attempts(ctx, "pacing:", 0); len(atts) != 4 {
+		t.Fatalf("pacing history after upgrade: %+v", atts)
 	}
 	// Reviewing the held intent releases every subject, old and new.
 	err = s.Write(ctx, func(tx *Tx) error { return tx.SetIntentState(1, IntentFailed, "reviewed", time.Now()) })

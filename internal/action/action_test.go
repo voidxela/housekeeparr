@@ -261,15 +261,116 @@ func TestTimeoutReconciledByObservation(t *testing.T) {
 	}
 }
 
-func TestAcceptedButNotEffectiveFails(t *testing.T) {
+// An accepted request whose effect is not observed in time may still act
+// later (review 2026-11-16, decision 4): it is held, keeps its locks and
+// its budget reservation, and is never made retryable by itself.
+func TestAcceptedButNotEffectiveIsHeld(t *testing.T) {
 	c, f, _ := setup(t)
-	f.observe["manager.queue.fail"] = Observation{Verdict: NotHolds, Detail: "row tracked again after refresh"}
-	res, err := c.Execute(ctx, proposal("qbit|aa"))
-	if err != nil || res.State != store.IntentFailed || f.count("client.stop") != 0 {
+	f.observe["manager.queue.fail"] = Observation{Verdict: NotHolds, Detail: "row still tracked"}
+	rowGone := false
+	f.live = func(p Proposal) Live { return matching(p, rowGone) }
+	f.onDispatch = func(op string) { rowGone = rowGone || op == "manager.queue.fail" }
+	p := proposal("qbit|aa")
+	p.Budgets = []BudgetClaim{attemptClaim(2)}
+	res, err := c.Execute(ctx, p)
+	if err != nil || res.State != store.IntentUncertain || f.count("client.stop") != 0 {
 		t.Fatalf("execute: %+v %v sent %v", res, err, f.sent)
 	}
-	if h, _ := c.Store.LockHolder(ctx, "transfer:qbit|aa"); h != 0 {
-		t.Fatal("failed intent kept its lock")
+	if h, _ := c.Store.LockHolder(ctx, "transfer:qbit|aa"); h != res.IntentID {
+		t.Fatal("held intent released its lock")
+	}
+	// The effect shows up late; nothing is re-sent while held.
+	f.observe["manager.queue.fail"] = Observation{Verdict: Holds}
+	rowGone = false
+	if _, err := c.Execute(ctx, p); !errors.Is(err, ErrConflict) || f.count("manager.queue.fail") != 1 {
+		t.Fatalf("re-execution while held: %v sent %v", err, f.sent)
+	}
+	// An operator marks it failed: the key becomes reusable, but the
+	// attempt still counts, because review does not prove it was unsent.
+	if err := c.Review(ctx, res.IntentID, store.IntentFailed, "alex", "row still in queue"); err != nil {
+		t.Fatal(err)
+	}
+	if u, _ := c.Store.BudgetUsage(ctx, attemptClaim(2).Budget(), 1, t0); u.Used != 1 {
+		t.Fatalf("reviewed attempt refunded: %+v", u)
+	}
+	rowGone = false
+	res2, err := c.Execute(ctx, p)
+	if err != nil || res2.State != store.IntentSucceeded || f.count("manager.queue.fail") != 2 {
+		t.Fatalf("new manual action after review: %+v %v", res2, err)
+	}
+	if u, _ := c.Store.BudgetUsage(ctx, attemptClaim(2).Budget(), 1, t0); u.Used != 2 || u.Fits(1) {
+		t.Fatalf("attempts %+v", u)
+	}
+	// Both attempts are spent: a third is refused with an actionable reason.
+	rowGone = false
+	p3 := proposal("qbit|cc")
+	p3.Budgets = []BudgetClaim{attemptClaim(2)}
+	_, err = c.Execute(ctx, p3)
+	var ref *RefusedError
+	if !errors.As(err, &ref) || !strings.Contains(err.Error(), "housekeeparr attempts reset sonarr|episode:1") ||
+		!strings.Contains(err.Error(), "does not mean no other release exists") {
+		t.Fatalf("exhausted attempts: %v", err)
+	}
+}
+
+func attemptClaim(limit int) BudgetClaim {
+	return BudgetClaim{Kind: store.BudgetAttempts, Scope: AttemptScope("sonarr", "episode:1"), Label: "recovery attempts for sonarr|episode:1",
+		Limit: limit, Units: 1, From: "test"}
+}
+
+func pacingClaim(limit int) BudgetClaim {
+	return BudgetClaim{Kind: store.BudgetPacing, Scope: "pacing:global", Label: "acquisition pacing", Window: 24 * time.Hour, Limit: limit, Units: 1, From: "test"}
+}
+
+// Reservations return only when nothing can have taken effect.
+func TestBudgetReleasedOnlyWhenProvablyUnsent(t *testing.T) {
+	cases := map[string]struct {
+		setup    func(c *Coordinator, f *fakeExec) context.Context
+		released bool
+	}{
+		"definite refusal": {func(_ *Coordinator, f *fakeExec) context.Context {
+			f.dispatch["manager.queue.fail"] = func() (json.RawMessage, error) {
+				return nil, &adapter.Error{Class: adapter.ErrPermanent, HTTPStatus: 400}
+			}
+			return ctx
+		}, true},
+		"timeout": {func(_ *Coordinator, f *fakeExec) context.Context {
+			f.dispatch["manager.queue.fail"] = func() (json.RawMessage, error) {
+				return nil, &adapter.Error{Class: adapter.ErrUncertain}
+			}
+			f.observe["manager.queue.fail"] = Observation{Verdict: Unknown}
+			return ctx
+		}, false},
+		"held between steps": {func(_ *Coordinator, f *fakeExec) context.Context {
+			f.onDispatch = func(string) {
+				f.live = func(p Proposal) Live { l := matching(p, true); l.Transfer = nil; return l }
+			}
+			return ctx
+		}, false},
+		"succeeded": {func(*Coordinator, *fakeExec) context.Context { return ctx }, false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			c, f, _ := setup(t)
+			p := proposal("qbit|aa")
+			p.Budgets = []BudgetClaim{pacingClaim(5), attemptClaim(3)}
+			res, _ := c.Execute(tc.setup(c, f), p)
+			if res.IntentID == 0 {
+				t.Fatalf("not journaled: %+v", res)
+			}
+			want := 1
+			if tc.released {
+				want = 0
+			}
+			for _, b := range p.Budgets {
+				if u, _ := c.Store.BudgetUsage(ctx, b.Budget(), 1, t0); u.Used != want {
+					t.Fatalf("%s: %s used %d, want %d (intent %s)", name, b.Scope, u.Used, want, res.State)
+				}
+			}
+			if atts, _, _ := c.Store.Attempts(ctx, "", 0); len(atts) != 2 {
+				t.Fatalf("history not kept: %+v", atts)
+			}
+		})
 	}
 }
 
@@ -352,9 +453,12 @@ func TestCrashBeforeDispatchIsCancelledNotReplayed(t *testing.T) {
 	c, f, _ := setup(t)
 	p := proposal("qbit|aa")
 	err := c.Store.Write(ctx, func(tx *store.Tx) error {
-		_, err := tx.CreateIntent(store.Intent{Key: p.Key(), Workflow: p.Workflow, Origin: "automatic", Subject: p.Subject,
+		id, err := tx.CreateIntent(store.Intent{Key: p.Key(), Workflow: p.Workflow, Origin: "automatic", Subject: p.Subject,
 			Fingerprint: p.Fingerprint, Locks: p.Locks, Steps: []store.Step{{Op: "manager.queue.fail"}}}, t0)
-		return err
+		if err != nil {
+			return err
+		}
+		return tx.ReserveBudget(id, pacingClaim(5).Budget(), 1, t0)
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -365,6 +469,10 @@ func TestCrashBeforeDispatchIsCancelledNotReplayed(t *testing.T) {
 	}
 	if h, _ := c.Store.LockHolder(ctx, "transfer:qbit|aa"); h != 0 {
 		t.Fatal("cancelled intent kept its lock")
+	}
+	// Nothing was sent, so its reservation returns.
+	if u, _ := c.Store.BudgetUsage(ctx, pacingClaim(5).Budget(), 1, t0); u.Used != 0 {
+		t.Fatalf("unsent intent still counted: %+v", u)
 	}
 }
 
@@ -410,7 +518,7 @@ func TestRestoredDatabaseHoldsWrites(t *testing.T) {
 
 func TestBudgetPersistsAcrossRestart(t *testing.T) {
 	c, f, dir := setup(t)
-	claim := []BudgetClaim{{Scope: "global:acquisition", Window: 24 * time.Hour, Limit: 1, Units: 1}}
+	claim := []BudgetClaim{pacingClaim(1)}
 	p := proposal("qbit|aa")
 	p.Budgets = claim
 	if _, err := c.Execute(ctx, p); err != nil {
@@ -428,7 +536,8 @@ func TestBudgetPersistsAcrossRestart(t *testing.T) {
 	p2.Budgets = claim
 	_, err = c2.Execute(ctx, p2)
 	var ref *RefusedError
-	if !errors.As(err, &ref) || ref.Checks[0].Name != "budget" || f.count("manager.queue.fail") != 1 {
+	if !errors.As(err, &ref) || ref.Checks[0].Name != "acquisition pacing" || !strings.Contains(ref.Checks[0].Detail, "eligible again at 2026-11-16T12:00:00Z") ||
+		f.count("manager.queue.fail") != 1 {
 		t.Fatalf("budget after restart: %v sent %v", err, f.sent)
 	}
 }

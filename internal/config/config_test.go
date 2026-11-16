@@ -484,6 +484,24 @@ no_progress_recovery = false
 			contains: []string{"duplicate"},
 		},
 		{
+			name:     "limits cannot be disabled",
+			extra:    "\n[automation.limits]\nacquisitions = 0\n",
+			field:    "automation.limits.acquisitions",
+			contains: []string{"cannot be disabled"},
+		},
+		{
+			name:     "content attempts bounded",
+			extra:    "\n[automation.limits]\ncontent_attempts = 100\n",
+			field:    "automation.limits.content_attempts",
+			contains: []string{"between 1 and 20"},
+		},
+		{
+			name:     "pacing window bounded",
+			extra:    "\n[automation.limits]\nacquisition_window = \"30m\"\n",
+			field:    "automation.limits.acquisition_window",
+			contains: []string{"between 1h and 168h"},
+		},
+		{
 			name:     "legacy release-specific content key",
 			extra:    "\n[[override]]\ncontent = \"sonarr|0123abcd|episode:12\"\nreason = \"old\"\n",
 			field:    "override[0].content",
@@ -924,5 +942,23 @@ no_progress_recovery = false
 	}
 	if eff4.Revision == eff1.Revision {
 		t.Error("effective revision must change when matching rule automation changes")
+	}
+}
+
+func TestLimitsProvenance(t *testing.T) {
+	cfg, _, err := Parse([]byte("version = 1\n[automation.limits]\ncontent_attempts = 5\nacquisition_window = \"12h\"\n"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := cfg.Limits()
+	if l.ContentAttempts != 5 || l.AcquisitionWindow != 12*time.Hour || l.Acquisitions != policy.DefaultLimits().Acquisitions {
+		t.Fatalf("limits %+v", l)
+	}
+	if l.From("content_attempts") != "config [automation.limits] content_attempts" || l.From("acquisitions") != "built-in proposed default" {
+		t.Fatalf("sources %+v", l.Sources)
+	}
+	other, _, _ := Parse([]byte("version = 1\n[automation.limits]\ncontent_attempts = 4\n"), "")
+	if other.Revision == cfg.Revision {
+		t.Fatal("limits do not change the configuration revision")
 	}
 }

@@ -64,14 +64,6 @@ type Operation struct {
 	Description string          `json:"description"`
 }
 
-// BudgetClaim reserves units of a persistent budget.
-type BudgetClaim struct {
-	Scope  string        `json:"scope"`
-	Window time.Duration `json:"window"`
-	Limit  int           `json:"limit"`
-	Units  int           `json:"units"`
-}
-
 // Proposal is an evaluated, previewable action.
 type Proposal struct {
 	Workflow       string          `json:"workflow"`
@@ -286,31 +278,36 @@ func (c *Coordinator) Execute(ctx context.Context, p Proposal) (Result, error) {
 	}
 	var id int64
 	err = c.Store.Write(ctx, func(tx *store.Tx) error {
-		for _, b := range p.Budgets {
-			if err := tx.ReserveBudget(b.Scope, now.Truncate(b.Window), b.Limit, b.Units); err != nil {
-				return err
-			}
-		}
 		var err error
 		id, err = tx.CreateIntent(in, now)
 		if err != nil {
 			return err
 		}
+		for _, b := range p.Budgets {
+			if err := tx.ReserveBudget(id, b.Budget(), b.Units, now); err != nil {
+				var ex *store.BudgetExhaustedError
+				if errors.As(err, &ex) {
+					return &RefusedError{Err: ErrNotEligible, Checks: []Check{BudgetCheck(b, ex.Usage)}}
+				}
+				return err
+			}
+		}
 		return tx.Audit(now, c.actor(), "action.reserved", fmt.Sprintf("#%d %s (%s)", id, p.Workflow, p.Origin))
 	})
 	var held *store.LockHeldError
+	var refused *RefusedError
 	switch {
+	case errors.As(err, &refused):
+		return Result{}, refused
 	case errors.As(err, &held):
 		return Result{}, &RefusedError{Err: ErrConflict, Checks: []Check{{Name: "exclusive access", Detail: held.Error(), Hard: true}}}
-	case errors.Is(err, store.ErrBudgetExhausted):
-		return Result{}, &RefusedError{Err: ErrNotEligible, Checks: []Check{{Name: "budget", Detail: err.Error(), Hard: true}}}
 	case errors.Is(err, store.ErrDuplicateIntent):
 		return Result{}, &RefusedError{Err: ErrConflict, Checks: []Check{{Name: "not already attempted", Detail: "this action was already journaled for the same observed state", Hard: true}}}
 	case err != nil:
 		return Result{}, fmt.Errorf("%w: %v", ErrJournal, err)
 	}
 	if err := c.Store.NoteJournalHighWater(id); err != nil {
-		c.finish(ctx, id, store.IntentCancelled, "journal marker could not be written; cancelled before any request")
+		_ = c.unsent(ctx, id, store.IntentCancelled, "journal marker could not be written; cancelled before any request")
 		return Result{IntentID: id, State: store.IntentCancelled}, fmt.Errorf("%w: %v", ErrJournal, err)
 	}
 	return c.run(ctx, id, p)
@@ -355,6 +352,22 @@ func (c *Coordinator) actor() string {
 		return c.Actor
 	}
 	return "housekeeparr"
+}
+
+// unsent finishes an intent none of whose requests can have had an
+// external effect (never sent, or definitely refused), returning its
+// budget reservations. The ledger keeps the released rows as history.
+func (c *Coordinator) unsent(ctx context.Context, id int64, st store.IntentState, why string) error {
+	now := c.now()
+	return c.Store.Write(ctx, func(tx *store.Tx) error {
+		if err := tx.SetIntentState(id, st, why, now); err != nil {
+			return err
+		}
+		if err := tx.ReleaseBudget(id, why, now); err != nil {
+			return err
+		}
+		return tx.Audit(now, c.actor(), "action."+string(st), fmt.Sprintf("#%d: %s; budget reservations returned", id, why))
+	})
 }
 
 func (c *Coordinator) finish(ctx context.Context, id int64, st store.IntentState, why string) error {
@@ -405,7 +418,7 @@ func (c *Coordinator) run(ctx context.Context, id int64, p Proposal) (Result, er
 		})
 		if err != nil {
 			if i == 0 {
-				_ = c.finish(jctx, id, store.IntentCancelled, "journal write failed before the first request; nothing was sent")
+				_ = c.unsent(jctx, id, store.IntentCancelled, "journal write failed before the first request; nothing was sent")
 				return Result{IntentID: id, State: store.IntentCancelled}, fmt.Errorf("%w: %v", ErrJournal, err)
 			}
 			// Earlier steps took effect; leave the intent for reconciliation.
@@ -431,7 +444,9 @@ func (c *Coordinator) run(ctx context.Context, id int64, p Proposal) (Result, er
 				_ = c.finish(jctx, id, store.IntentUncertain, why)
 				return Result{IntentID: id, State: store.IntentUncertain, Detail: why}, nil
 			}
-			_ = c.finish(jctx, id, store.IntentFailed, why)
+			// Only a definite refusal fails a step (see settle), so the
+			// first request had no effect.
+			_ = c.unsent(jctx, id, store.IntentFailed, why+"; refused before any effect")
 			return Result{IntentID: id, State: store.IntentFailed, Detail: why}, nil
 		case store.StepUncertain:
 			c.skipRest(jctx, id, in.Steps[i+1:])
@@ -480,9 +495,11 @@ func (c *Coordinator) settle(ctx context.Context, st store.Step, out json.RawMes
 	case obs.Verdict == Holds:
 		return store.StepSucceeded, "", evidence
 	case obs.Verdict == NotHolds && derr == nil:
-		// Accepted but not effective (the queue-removal-of-unknown-rows
-		// case): a verified failure, not success.
-		return store.StepFailed, "accepted, but the expected effect was not observed: " + obs.Detail, evidence
+		// Accepted, but the effect was not observed within the observation
+		// window. That does not prove it never takes effect (an accepted
+		// acquisition may act later), so it is held, never made retryable.
+		return store.StepUncertain, "accepted, but the expected effect was not observed: " + obs.Detail +
+			"; a delayed effect cannot be ruled out", evidence
 	default:
 		msg := "expected effect not established: " + obs.Detail
 		if derr != nil {
@@ -509,7 +526,7 @@ func (c *Coordinator) stopEarly(ctx context.Context, id int64, i int, steps []st
 	bg := context.WithoutCancel(ctx)
 	c.skipRest(bg, id, steps[i:])
 	if i == 0 {
-		_ = c.finish(bg, id, store.IntentCancelled, why+"; nothing was sent")
+		_ = c.unsent(bg, id, store.IntentCancelled, why+"; nothing was sent")
 		return Result{IntentID: id, State: store.IntentCancelled, Detail: why}, ctx.Err()
 	}
 	why += "; earlier steps took effect, review required"
@@ -554,7 +571,7 @@ func (c *Coordinator) Reconcile(ctx context.Context) (ReconcileReport, error) {
 		}
 		if !dispatched {
 			c.skipRest(ctx, in.ID, in.Steps)
-			if err := c.finish(ctx, in.ID, store.IntentCancelled, "interrupted before any request was sent; not replayed"); err != nil {
+			if err := c.unsent(ctx, in.ID, store.IntentCancelled, "interrupted before any request was sent; not replayed"); err != nil {
 				return rep, err
 			}
 			rep.Cancelled = append(rep.Cancelled, in.ID)
