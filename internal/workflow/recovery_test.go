@@ -274,6 +274,14 @@ func TestLiveReadsEveryDecisionInput(t *testing.T) {
 	if bad := check(0); len(bad) != 0 {
 		t.Fatalf("unrelated manager outage blocks: %v", bad)
 	}
+	// But a readable non-owner holding a row for the torrent (matched by
+	// hash outside its mapping) still counts as another association.
+	other.queueErr = nil
+	other.rows = []domain.QueueItem{{DownloadID: "aa", QueueID: 3, ContentKind: "movie", MovieID: 4}}
+	if bad := check(0); len(bad) != 1 || bad[0] != "ownership unchanged" {
+		t.Fatalf("non-owner association ignored: %v", bad)
+	}
+	other.rows = nil
 	p.Planned.Owners = nil
 	other.queueErr = nil
 	// Before the stop, the failed row's absence is expected; its presence

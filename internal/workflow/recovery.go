@@ -187,22 +187,38 @@ func (r *Recovery) Live(ctx context.Context, p action.Proposal) (action.Live, er
 	if downloadID == "" {
 		downloadID = pl.NativeID
 	}
-	ids := pl.Owners
-	if len(ids) == 0 {
-		for id := range r.Managers {
-			ids = append(ids, id)
+	// Every readable manager is searched for rows for this download (a
+	// manager can match by hash alone, outside its download-client
+	// mapping), but only a failed read of a manager that could own the
+	// transfer (Planned.Owners; every manager when unset) blocks.
+	ids := make([]string, 0, len(r.Managers))
+	for id := range r.Managers {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range pl.Owners {
+		if _, ok := r.Managers[id]; !ok {
+			live.Unread = append(live.Unread, id)
 		}
-		sort.Strings(ids)
+	}
+	owner := func(id string) bool {
+		if len(pl.Owners) == 0 {
+			return true
+		}
+		for _, o := range pl.Owners {
+			if o == id {
+				return true
+			}
+		}
+		return false
 	}
 	for _, id := range ids {
-		m, ok := r.Managers[id]
-		if !ok {
-			live.Unread = append(live.Unread, id)
-			continue
-		}
+		m := r.Managers[id]
 		q, err := m.Queue(ctx)
 		if err != nil || !q.Complete {
-			live.Unread = append(live.Unread, id)
+			if owner(id) {
+				live.Unread = append(live.Unread, id)
+			}
 			continue
 		}
 		for _, it := range q.Items {
