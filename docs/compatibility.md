@@ -37,7 +37,7 @@ workflow.
 | 2026-11-15 (with restart/recheck missing-data fixtures, rTorrent `d.message` probe, `--manager-client`; harness extension by a delegated agent, reruns by Claude) | Linux aarch64, Go 1.27.4 | all four clients (qBittorrent 5.3.0, Transmission 4.0.6, Deluge 2.2.0, rTorrent 0.9.8) + Sonarr + Radarr | all passed |
 | 2026-11-15 (same) | Linux aarch64, Go 1.27.4 | qBittorrent 4.6.7 + Transmission 4.1.4 + Sonarr + Radarr | all passed |
 | 2026-11-15 (same) | Linux aarch64, Go 1.27.4 | managers' download client Transmission 4.0.6; Transmission 4.1.4; Deluge 2.2.0 | all passed, including all four managed-row variants on each manager |
-| 2026-11-15 (same) | Linux aarch64, Go 1.27.4 | managers' download client rTorrent 0.9.8 | first run: one failure, Radarr's replacement search for `skipRedownload=false` was not yet queued when checked (test took 510 s against about 82 s normally, host under load); rerun: all passed. The check now polls up to 60 s for the expected search (that change itself not yet exercised by a run) |
+| 2026-11-15 (same) | Linux aarch64, Go 1.27.4 | managers' download client rTorrent 0.9.8 | first run: one failure, Radarr's replacement search for `skipRedownload=false` was not yet queued when checked (test took 510 s against about 82 s normally, host under load); rerun: all passed. The check now polls up to 60 s for the expected search; a further run with the poll passed |
 
 What the suite exercised (`scripts/it/run.sh`, `internal/integration`):
 session login; version probe; listing of complete, half-complete (after
