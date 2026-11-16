@@ -1,51 +1,222 @@
 # Prompt for the next Claude session
 
-Continue implementing Housekeeparr through the complete approved v1 scope in `docs/SPEC.md`. First read `AGENTS.md`, the entire specification, `docs/STATUS.md`, `docs/compatibility.md`, and `docs/reviews/2026-11-15.md`. Treat the current implementation as a working but incomplete read-only foundation. Do the implementation and verification, not just planning. Preserve existing work and user data. Check the current working tree before editing; the review documents may be uncommitted.
+Continue implementing Housekeeparr through the complete approved v1 scope in
+`docs/SPEC.md`. Read `AGENTS.md`, the entire SPEC, `docs/STATUS.md`,
+`docs/compatibility.md`, and **`docs/reviews/2026-11-16.md`** before changing
+behavior. The earlier review `docs/reviews/2026-11-15.md` supplies background;
+its R1–R4 are fixed. Implement and verify concrete increments, not just plans.
 
-## User decisions already made
+Checkpoint reviewed: `73d37d5` on `dev`, initially clean and locally committed.
+The new review/handoff and documentation corrections may be uncommitted: check
+status and preserve them. The policy/action foundation largely exists; one
+manual no-progress execution sequence passes recorded real-instance tests for
+Sonarr 4.0.20.3014 and Radarr 6.4.4.10685 with qBittorrent 5.3.0. This does not
+complete recovery across clients or SPEC §13.4's full acceptance scenario.
 
-- System package installations needed for testing are approved. Use disposable local instances, synthetic data and private temporary directories; avoid enabling persistent package services or touching existing user configurations. Use the environment's required permission mechanism where necessary, but do not ask again whether package installation is wanted.
-- This machine is likely underpowered for Docker. Skip local Docker work for now and clearly retain its validation as outstanding; do not make it a blocker for other v1 work or claim the image was tested. Container support remains part of the product scope.
-- Transmission must support both 4.0.x and 4.1.x at minimum. Implement separate protocols only if necessary. Released 4.1.4 documentation says the legacy protocol is still supported in Transmission 4. Validate pinned releases of both branches first; deprecation alone does not justify two protocol implementations. Do not sacrifice 4.0 support. Update STATUS's unconditional JSON-RPC 2.0 requirement accordingly.
-- All four clients (Transmission, qBittorrent, Deluge, rTorrent) and both managers (Sonarr, Radarr) remain in v1 scope. Any proposed client demotion needs documented evidence and an explicit scope decision.
-- Keep commits focused and independently buildable, with subject-only messages and no co-author trailer. Do not change git identity merely to imitate another contributor.
+## Existing user authorization and constraints
 
-## Done so far (2026-11-15 sessions)
+- Continue independently within the approved specification. Preserve files,
+  user data, uncertainty, and the existing work. All four clients and both
+  managers remain v1 requirements. No client demotion without documented
+  evidence and an explicit scope decision. No implicit post-v1 work.
+- **Delegation remains authorized:** use the unsandboxed `agy` CLI with
+  `--dangerously-skip-permissions`, including the previously authorized model:
+  `agy --model gemini-4-hydrogen-high --dangerously-skip-permissions -p ...`.
+  Do not ask the user to re-authorize delegation. Give each delegate a precise
+  file-scoped brief in its own git worktree/branch; forbid commits, push, sudo,
+  credentials and real user data. Prefer a permitted temporary/workspace path
+  for the worktree. Obtain any execution permissions required by the host;
+  the flag does not override this environment's permission boundaries. Review
+  the diff and validate the integrated result. Delegate reports/source claims
+  are not compatibility evidence: one earlier claim that Sonarr's `malIds`
+  was optional was disproved by the released instance.
+- System package installations needed for testing are approved. Use disposable
+  instances and synthetic data, no persistent package services or changes to
+  user configuration. Follow the environment's execution permission mechanism.
+- Skip local Docker work on this underpowered host; leave validation explicitly
+  outstanding. Container support stays in scope. Do not block unrelated work.
+- Transmission must retain both 4.0.x and 4.1.x support. Legacy RPC is already
+  validated for observation on 4.0.6/4.1.4. Add a second protocol only if a
+  concrete tested workflow requires it; do not drop 4.0 due to deprecation.
+- Focused, independently buildable commits; subject-only messages, no co-author
+  trailer, no git identity changes to imitate another contributor. Do not push
+  without authorization.
 
-- R1–R4 fixed with regression tests; observation validated on real released instances of all six applications (see compatibility.md).
-- **Managed content with real grab history** (step 1's long pole): `internal/integration/standin` serves fictional metadata over HTTPS for the managers' hard-coded hosts (private `/etc/hosts` bind-mounted inside `unshare -rnm`; throwaway CA trusted through `SSL_CERT_FILE`, verified on both Sonarr's .NET 6 and Radarr's .NET 8) and a loopback Torznab indexer serving synthetic `.torrent`s. Managers grab through their own API; no database seeding. Removal semantics on managed rows are recorded and asserted for qBittorrent 5.3.0/4.6.7 as the managers' download client (compatibility.md "Managed rows with real grab history"). Gotchas: Sonarr needs `malIds`/`aniListIds` non-null; default quality-definition minimum sizes reject 4 MiB releases (relaxed via the manager API); Sonarr's first search after that change can use cached minimums (bounded retry).
-- **Step 2 foundation**: workflow permissions, scoped rules, overrides, exclusions with provenance (config); migration 0003 action journal with locks, persistent budgets, cooldowns, restore detection (`journal.hwm`); `internal/action` coordinator with fault tests; `action.Plan` recovery proposals; shared previews/manual actions in CLI (`preview`, `act`, `actions`, `review`, `restore-ack`) and web (finding page, `/api/v1/findings/{id}/preview`, Activity).
-- **Step 3 start**: first adapter write methods (`arr.RemoveQueueItem` with every flag explicit, `Blocklisted`, `HistoryEvents`; qBittorrent `Stop` using `stop` on 5.x and `pause` on 4.x), `internal/workflow.Recovery` executor with verification by observation, and `internal/integration/recovery_test.go` running the complete workflow through the coordinator on real instances. `action.Tested` decides eligibility; see STATUS for whether any combination is registered.
-- Delegation: the user authorised the `agy` CLI with Gemini Hydrogen (`agy --model gemini-4-hydrogen-high --dangerously-skip-permissions -p ...`), unsandboxed. Give it a file-scoped brief in a separate git worktree (`git worktree add -b agy/<topic> ../hk-agy-<topic> HEAD`), forbid commits/push/sudo, then review its diff and rerun verification before applying. It reports failures honestly but its source research needs verification against real instances (it claimed `malIds` was optional).
+## User's budget concern — retain this context
 
-## Next
+The user is concerned that an arbitrary recovery quota will leave stuck
+transfers hanging. SPEC §§7, 9.1 and 10 require bounded acquisition and retry
+controls, but do **not** approve the current hard-coded 20/day global or 3/week
+per-item values (or the 24-hour cooldown). They are implementation proposals.
+Explain the distinction between pacing eligible work across an installation
+and stopping repeated ineffective replacement attempts for the same content.
+An exhausted allowance must keep the finding visible with reason, scope,
+used/limit, next evaluation and an actionable control; it must not silently
+abandon the item or imply no alternative exists. Global deferral should resume
+fairly as allowance returns. SPEC §7 requires review or explicit later policy
+reset for repeated attempts reaching their budget. Any departure from that
+requirement, or numeric default, is a proposal, not already approved here.
+Do not remove all bounds or claim this user question authorized unlimited
+acquisition. Implement configuration/visibility and correct identity first;
+do not turn a choice of defaults into a prolonged blocker for other work.
 
-1. ~~Merge the delegated harness extension~~ done: `--manager-client`, restart/recheck missing-data fixtures, rTorrent `d.message` probe (findings in compatibility.md and STATUS).
-2. Extend the recovery workflow to the other clients: each needs a `Stop` that retains data and its own probe-backed semantics (Transmission `torrent-stop`, Deluge `core.pause_torrent`, rTorrent `d.stop`/`d.close`), and the managed-row probes with that client as the managers' download client. Register `action.Tested` entries only with a passing recorded run.
-3. Automatic dispatch from the engine (plan → coordinator for `OriginAutomatic`, at most one in flight, honouring budgets), post-action outcome tracking (search accepted, grab, progress as separate outcomes), configurable budgets, retention of terminal intents, metadata recovery and preserved-data workflows (qBittorrent/Deluge cannot rely on client state for missing data).
+## Immediate work, in priority order
 
-Known gaps: pinned Debian packages are aarch64-only; client checking states are fixture-tested only; web previews not yet reviewed in a real browser.
+1. **Fix review R5: live checks before each consequential step.** Current
+   Refetch ignores privacy/content changes and does not read monitoring or
+   relevant health; the coordinator calls it only before the first write.
+   Add fresh applicable safety checks, all affected ownership/scope checks,
+   monitoring/content and health/circuit-breaker evidence, policy/mode/stop
+   checks and decision-relevant version/capability checks. Check again before
+   each write. Step-aware checks must allow the expected effects of preceding
+   steps (e.g. intentional queue removal); simply repeating the initial
+   fingerprint would reject a valid second step. If progress/completion,
+   recheck, user pause or a conflicting association appears between fail and
+   stop, hold the partial workflow visibly rather than stopping blindly.
+   Start with failing deterministic regressions; see review reproduction.
+2. **Fix R6: real content identity.** QueueItemKey includes download ID and is
+   wrongly reused for content locks/budgets/overrides/exclusions. Replacement
+   releases for one episode/movie must share a stable manager+content key,
+   distinct from release attempt and physical transfer identity. Check all
+   content locks/cooldowns in preview and execution, including multi-item
+   scope. Preserve attempt history; add a forward migration/upgrade test if
+   durable schema/data changes are needed.
+3. **Close R7 and retry/verification gaps before automatic dispatch.** Make
+   budgets/cooldowns configurable, preview their actual remaining allowance,
+   explain exhaustion and next steps, persist attempts across replacements and
+   restarts, and distinguish pacing from per-item intervention. Define safe
+   reservation release for provably unsent requests. Verify current-action
+   blocklist/history evidence against a baseline, not old matching entries.
+   Audit accepted-but-not-yet-effective → failed → reusable idempotency key:
+   an observation timeout cannot establish that an accepted acquisition had
+   no effect. Keep partial, delayed and ambiguous outcomes held for review.
+4. **Extend no-progress recovery through the other clients.** Their
+   manager-client managed-row probes already passed: do not rebuild that
+   prerequisite from scratch. Implement/test data-preserving Stop and live
+   safety verification for Transmission (`torrent-stop`, both branches),
+   Deluge (`core.pause_torrent`), rTorrent (probe `d.stop`/`d.close` before
+   choosing). Extend `recovery_test.go` and the harness's required-test list:
+   it currently runs full recovery only for qBittorrent. Add registry entries
+   only with a passing recorded full workflow run; probing removal alone
+   does not establish recovery compatibility. Correct rTorrent stale-message
+   diagnosis before relying on it for preserved-data recovery; user pause
+   must never be mistaken for permission to act.
+5. **Complete a vertical automatic-recovery slice.** Add engine scheduling
+   through the shared planner/coordinator, bounded conflicting work and fair
+   selection, scoped circuit breakers, retained transfer records/capacity
+   gates, and post-action search/grab/progress outcomes. Gate dispatch on
+   these prerequisites. Use an injected clock for sustained engine diagnosis
+   through dispatch; do not wait 90 real minutes. Then prove the automatic
+   path with disposable instances without overstating supplied diagnosis.
 
-## Then complete v1 in dependency order
+Delegate independent adapter implementations or bounded regression/config
+work while retaining ownership of shared coordinator/identity changes. Avoid
+multiple delegates editing the same core files. Integrate small completed
+slices and review each diff; don't wait for a large combined rewrite.
 
-1. **Compatibility and read-only closure.** (Client/manager observation done; see above.) Expand beyond unknown-series Sonarr queue rows to representative managed content/import cases. Validate safe workflow semantics from released source and disposable instances, including automatic removal/redownload side effects. Explicitly set every consequential flag. Record every run before updating `TestedVersions`; never convert synthetic fixtures into compatibility claims. Preserve source files and client registration/seeding as required. Never use public torrents or real user data.
-2. **Policy and durable action foundation before operational writes.** Add observe-only/controlled-auto/paused modes, explicit per-workflow permissions, exclusions/scoped rules/item overrides with provenance, hard prerequisites, manual and automatic previews, and shared CLI/web services. Implement durable intent/step journaling, conflict locks, persistent budgets/cooldowns, pre-write re-fetch, uncertain-outcome holds, startup/restore reconciliation, and stop/pause behavior. No writes with an unwritable store. Add fault tests for accepted-then-timed-out requests, crashes between journal/network/commit, concurrent manual changes, partial steps, restored databases and shared ownership. Never blindly retry acquisition requests.
-3. **Recovery.** Prove one complete manager/client preservation workflow, then extend through Sonarr, Radarr and all four clients. Cover no-progress, metadata and preserved-data failure handling. Keep private/unknown privacy observation-only by default. Exactly one replacement-search owner. Verify queue, blocklist, client state/registration, preserved files, command acceptance, grab and progress separately. Keep retained transfer records and capacity gates durable.
-4. **Sonarr partial packs.** Implement positive settled-import and coverage evidence using history, episode/file state and supported client evidence. Preserve imported/source files, torrent and seeding. Clear only the stale association through a tested operation; no category migration workaround. Search only still-missing monitored released episodes in bounded batches. Check that association clearance survives refresh. Ambiguous extraction, identity, mapping or ownership must stop writes with a useful explanation.
-5. **Search and release hardening.** Implement bounded proactive missing searches, durable budgets, source-coverage findings independent of results, notifications, retained-data/capacity tracking, web authentication and documented remote exposure, full headless controls, and polished accessible UI with browser validation. Keep actions and policy identical across CLI and web. Finish compact bounded observation storage with forward migration/backup tests. Publish small and large reference workloads and numeric CPU/memory/API/storage/startup/UI budgets on documented hardware. Validate systemd where available, perform a security review and complete release documentation. Local Docker validation is explicitly deferred, not reported as passed.
+## Review recommendations on Claude's five decisions
 
-Use SPEC §13.4's ten acceptance scenarios as the completion checklist. Do not implement post-v1 audits, general rules execution, remediation or Lidarr implicitly. Do not call v1 complete while required workflows or preservation tests remain missing. If the session cannot finish everything, leave a precise tested checkpoint and remaining tasks rather than quietly reducing scope.
+These are review recommendations/interpretations; they are not new user
+approvals or silent amendments to the authoritative spec.
 
-## Race detector: reviewed, no supported native fix on this host
+- Observe forbids all operational writes (§6). Paused stops automation;
+  intentional confirmed manual work is a reasonable interpretation. An
+  automation-disabled workflow may support a one-off manual action, clearly
+  explained, but workflow pause, exclusions, global stop and hard safety
+  prerequisites must remain effective. Document and test the full matrix.
+- Exact-version write registration is appropriate based on recorded tests;
+  fix runtime safeguards before expanding registration/dispatch. Preserve
+  observe-by-default and confirmation for deliberate manual effects.
+- Composite blocklist evidence is necessary when no hash is returned, but is
+  not guaranteed identity. Add baseline/event correlation and collision tests;
+  uncertain stays uncertain, with no broad blocklist cleanup or invented TTL.
+- Retry after cancellation/refusal is reasonable only when no external effect
+  is established possible, with fresh checks and retained history. Never
+  translate a delayed or ambiguous acquisition into a blind retry.
+- Hard-coded quotas are not final product policy. See the user's concern and
+  R6/R7 above; expose deferred work and avoid arbitrary silent abandonment.
 
-The review reproduced `go test -race ./...` failing before tests: `Found 39 - Supported 48`, with Go 1.27.4 on Linux ARM64. An address-space probe confirmed high mappings unavailable. This is the Go TSan/kernel layout mismatch, not missing gcc, a project race report, or a reason to disable instrumentation. Upstream's Go ARM64 mapping still lacks 39-bit support; C/C++ TSan support differs.
+## Preserve established evidence
 
-Use a supported native amd64 CI runner or compatible ARM64 host/kernel for `go test -race ./...`, fix any actual races and record the result. Add CI if appropriate, but distinguish writing a workflow from observing a successful run. Do not spend this session changing host-wide ASLR, patching out TSan guards, installing Docker as a workaround, or claiming the local race suite passed. A kernel/VM change is beyond the approved package-install scope. No emulation workaround was validated by the review.
+- Stand-in metadata/Torznab runs inside loopback-only `unshare -rnm` with a
+  private hosts file and throwaway CA trusted via SSL_CERT_FILE. Both managers
+  add/grab fictional content through their API; never edit their databases.
+- Managed rows: explicit removeFromClient=false retains torrent/data even
+  with removeFailedDownloads on. Blocklist and ignore removal remain durable
+  after refresh. skipRedownload=false triggers manager-native replacement;
+  do not also issue a Housekeeparr search. These probes passed with all four
+  clients (Transmission 4.0.6 and 4.1.4). Unknown-content rows return after
+  refresh and do not establish usable recovery semantics.
+- Current recovery test plans from engine-written state, but supplies the
+  qualified stall diagnosis. Production sequence: fail/blocklist with every
+  flag explicit, then stop while retaining data. Independent checks establish
+  durable queue removal, failure/blocklist evidence, stopped registration,
+  byte-identical payload and queued manager search. They do not establish a
+  replacement grab or successful download. qBittorrent 4.6.7 refusal for
+  unknown privacy is tested; don't relax privacy to expand the matrix.
+- Restart exposes missing data on qBittorrent/Deluge; forced recheck can make
+  the same loss look like a fresh download at zero. Complete/seeding alone
+  doesn't prove data exists. rTorrent local d.message can remain stale after
+  user stop/start. Preserve these limitations in diagnosis and explanations.
+- Native race detector is blocked by this host's 39-bit VMA layout. Use a
+  supported native CI runner/host and record an actual run, not just a workflow
+  file. Don't repeat the known failure after every commit, patch TSan guards,
+  change ASLR/kernel settings, or install Docker to attempt to change VMA.
 
-## Verification and reporting
+## Validation cadence — velocity is an explicit concern
 
-Use `~/.local/go/bin` if Go is absent from PATH. Run build, vet, gofmt, full uncached tests, the CGO-disabled binary build, relevant integration/preservation tests, and race tests on a supported runner. Sandbox loopback restrictions are environmental: request the required execution permission and rerun rather than weakening tests. Verify examples and CLI exit codes; use a browser for frontend behavior and accessibility. Never edit a committed migration; add a new one and test upgrading the prior schema.
+- During edits: format changed Go files and run targeted tests for touched
+  packages/behaviors. Cached tests are useful feedback; don't force uncached
+  whole-repository runs per edit or per docs commit. Test meaningful safety
+  boundaries, not implementation trivia.
+- Per coherent shared change/milestone: run build, vet, formatting, full
+  uncached Go tests once on the integrated tree and a CGO-disabled binary
+  build. Broaden/repeat only for new changes, failures or unresolved concerns.
+  On this review's run the full unit/contract suite completed with the slowest
+  package about 15 seconds; the real-instance matrix/builds are the expensive
+  layer. Seek permission for sandbox socket restrictions, not test rewrites.
+- Per ready adapter: one selected client/version with both managers. Example:
+  `scripts/it/run.sh --clients deluge --manager-client deluge --managers sonarr,radarr`.
+  Transmission needs separate 4.0.6 and 4.1.4 runs. Reuse pinned checksum-verified
+  caches; avoid concurrent heavy suites on this host. Initial Transmission
+  compilation (~15 minutes) is a cache cost, not a per-edit requirement.
+- Shared executor/harness changes: run the affected matrix as a bounded batch
+  before marking the milestone complete. Adapter-local changes need affected
+  combinations first; unrelated unchanged combinations retain dated evidence.
+  Do not rerun every older version after documentation or UI-only changes.
+- Use bounded polling with early success for real readiness/postconditions,
+  not fixed sleeps or arbitrary longer waits. Retain failure artifacts,
+  inspect causes, and report any flake. Never hide failures behind rerun-until-
+  green or claim a skipped required workflow passed. Never weaken isolation,
+  explicit flags, preservation checks or ambiguous-outcome handling for speed.
+- Browser-check a ready web slice once, including stale/error, confirmation
+  and accessibility behavior. Leave Docker, unsupported-host race checks and
+  real systemd validation explicit; they don't block independent feature work.
+- Record exact commands, results, tested HEAD and limits in compatibility and
+  STATUS at milestones. Don't repeat benchmarks without a performance change.
 
-The review independently passed the existing uncached suite and the qBittorrent 5.3.0/Sonarr observation harness; see the review and compatibility logs for any additional reruns. It did not validate write workflows, Docker, systemd runtime, all historical commits or the claimed performance numbers.
+Review validation at `73d37d5`: targeted tests and the full uncached Go suite
+passed (full suite outside sandbox for loopback fixture sockets); three review
+Go-overlay tests deliberately failed, confirming R5/R6. No expensive instance
+matrix rerun was needed for this documentation/code review. See review report
+for build/vet/format results. Don't mistake passing existing tests for closure
+of the newly reproduced defects.
 
-For each milestone, report concrete behavior delivered, exact checks run and their outcomes, known limitations and next work. Clearly separate implemented, fixture-tested, real-instance-tested, deferred and unimplemented. Persist evidence and documentation as you go. Continue independently within these decisions; ask only for genuinely missing product decisions or a required permission the environment has not granted.
+## Remaining v1 after this slice
+
+Finish no-progress, metadata and preserved-data workflows for both managers
+and all four clients; durable retained-data/capacity controls; Sonarr partial
+packs with positive settled-import/coverage evidence and safe association
+clearance preserving imports/files/torrent/seeding; bounded targeted and
+proactive missing searches; source-coverage findings separate from zero
+results; notifications; authenticated remote web use and polished accessible
+UI; complete headless operation; security/packaging/performance/retention
+acceptance and release documentation. Owner-lock refusal for CLI mutations
+is permitted by SPEC §10; routing through the owner is a usability improvement,
+not a reason to redesign the writer model before delivering recovery.
+
+Use all ten SPEC §13.4 scenarios as the completion checklist. Update STATUS,
+README and compatibility evidence at actual milestones. Never edit committed
+migrations. If work spans sessions, leave a precise tested checkpoint and next
+concrete tasks, preserving full v1 scope. Report implemented, fixture-tested,
+real-instance-tested, deferred and unimplemented separately.

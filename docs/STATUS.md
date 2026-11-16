@@ -43,6 +43,19 @@ address-space limitation; a supported runner is still required.
 [Next-session prompt](CLAUDE_NEXT_SESSION.md) records the user-approved
 testing decisions and implementation sequence.
 
+## Independent follow-up review — 2026-11-16
+
+[Review and decision dispositions](reviews/2026-11-16.md) at `73d37d5`
+confirmed progress but reproduced two safety gaps: live checks omit privacy
+and content changes and run only before the first write (R5); content
+locks/budgets/overrides use a release-dependent identity (R6). Budget
+configuration, preview visibility and exhaustion semantics remain incomplete
+(R7). Milestone 2 remains in progress; fix these before expanding writes or
+enabling automatic dispatch. Existing unit/contract tests pass, but three
+review overlay tests fail as expected. No new real-instance matrix run was
+performed. [Handoff](CLAUDE_NEXT_SESSION.md) includes all five decision
+reviews, retained agy authorization and tiered validation to improve velocity.
+
 ## Milestone 1 — read-only foundation (in progress)
 
 | Area | Status | Notes |
@@ -81,8 +94,8 @@ table is exercised with fakes, plus the real-instance recovery runs.
 | Scoped rules (`[[rule]]`, priority, match on client/category/manager/privacy), item overrides (`[[override]]` by transfer or content, reason required), exclusions (`[[exclude]]`, per workflow) with provenance in every effective setting | done | Equal-priority rules with possibly overlapping matchers and conflicting values are validation errors. The effective revision covers settings, permissions, exclusions, mode, and emergency stop. Implemented by a delegated agent (Gemini via `agy`) in an isolated worktree, reviewed, and applied as one commit. |
 | Action journal: migration 0003 (intents, steps, locks, budgets, cooldowns), upgrade test from a real v2 database | done | Intent, steps, locks, and budget reservation are committed in one transaction before any request; each step is committed as `dispatching` before it is sent. Uncertain intents keep their locks until reviewed. Budgets persist across restart. |
 | Restore detection | done | A journal high-water marker beside the database (`journal.hwm`, fsynced) detects a restored or replaced database; writes are held until `housekeeparr restore-ack --confirm`. |
-| Action coordinator (`internal/action`) | done | Gate and prerequisites, preview expiry, pre-write re-fetch compared with the preview fingerprint, journaled dispatch, postcondition verification by observation, conservative error classification (only unauthorized/unsupported/rate-limited/4xx count as refused; a timeout or malformed 2xx response is uncertain), no blind retry, partial-workflow holds, graceful stop that persists the current step, startup `Reconcile` that observes but never re-sends, and operator `Review`. Fault tests: accepted-then-timed-out, timeout reconciled by observation, accepted-but-not-effective, partial failure, crash between network and commit, crash before dispatch, stop between steps, unwritable store, restored database, budget across restart, duplicate execution. |
-| Recovery planner (`action.Plan`) | done (fixture-tested) | Proposal for stalled, metadata-timeout, and client-error findings with every prerequisite stated: tested workflow for the exact versions, finding active, fresh evidence, qualified diagnosis, applicable state (never paused/queued/checking), known-public privacy, exactly one matched manager association, no lock, no cooldown, policy. Operations carry every flag explicitly, using the managed-row semantics recorded in compatibility.md (`removeFromClient=false&blocklist=true&skipRedownload=false&changeCategory=false`: the manager owns the replacement search), then a client stop that retains data. Budget limits (20/day global, 3/week per content item) are hard-coded proposals; making them configuration is *remaining*. |
+| Action coordinator (`internal/action`) | implemented; safety closure remaining (R5) | Gate and prerequisites, preview expiry, pre-write re-fetch compared with the preview fingerprint, journaled dispatch, postcondition verification by observation, conservative error classification (only unauthorized/unsupported/rate-limited/4xx count as refused; a timeout or malformed 2xx response is uncertain), no blind retry, partial-workflow holds, graceful stop that persists the current step, startup `Reconcile` that observes but never re-sends, and operator `Review`. Fault tests: accepted-then-timed-out, timeout reconciled by observation, accepted-but-not-effective, partial failure, crash between network and commit, crash before dispatch, stop between steps, unwritable store, restored database, budget across restart, duplicate execution. |
+| Recovery planner (`action.Plan`) | implemented; gaps R5–R7 | Proposal for stalled, metadata-timeout, and client-error findings with every prerequisite stated: tested workflow for the exact versions, finding active, fresh evidence, qualified diagnosis, applicable state (never paused/queued/checking), known-public privacy, exactly one matched manager association, no lock, no cooldown, policy. Operations carry every flag explicitly, using the managed-row semantics recorded in compatibility.md (`removeFromClient=false&blocklist=true&skipRedownload=false&changeCategory=false`: the manager owns the replacement search), then a client stop that retains data. Budget limits (20/day global, nominally 3/week per content item) are hard-coded proposals; configuration and exhaustion visibility are *remaining*. Review R6 found that the supposed content key includes the download ID, so replacements do not share the intended retry allowance/content lock. Review R5 found incomplete live safety checks; these are not closed foundation requirements. |
 | Shared previews and manual actions | done | `housekeeparr preview <id> [--automatic] [--json]`, `act <id> --confirm`, `actions`, `review <id> --as … --note …`, `restore-ack --confirm`; web finding page shows the same preview, with an action form (confirmation required) only when eligible; `GET /api/v1/findings/{id}/preview`; Activity lists journaled actions and restore holds. `run` reports holds and actions that need review at start-up. Not yet reviewed in a real browser. |
 | Retention of terminal intents | done | Succeeded/failed/cancelled intents, expired cooldowns, and old budget windows are pruned after the audit-event retention; uncertain and active intents and their locks never are, and pruning never lowers the restore high-water mark. |
 | Routing CLI mutations through a running worker | remaining | `act`, `review`, and `restore-ack` need the writer lock (exit 3 while the worker runs), like `ack`. |
@@ -97,8 +110,8 @@ table is exercised with fakes, plus the real-instance recovery runs.
 | Automatic dispatch from the engine | remaining | Nothing invokes the coordinator automatically yet, even in `automatic` mode. |
 | Replacement outcome tracking (search accepted, grab, progress as separate outcomes) | remaining | The workflow verifies its own steps and that the manager queued a search; what follows is not tracked yet. |
 | Metadata recovery, preserved-data failure handling | remaining | Planner proposals exist; no tested workflow. Missing data on qBittorrent/Deluge is not visible in client state. |
-| Transmission, Deluge, rTorrent recovery | remaining | Needs each client's `Stop` and the managed-row probes with that client as the managers' download client (delegated harness work in progress). |
-| Retained-data and capacity limits | remaining | Recovery retains the stopped transfer; its size is not yet tracked against ceilings. |
+| Transmission, Deluge, rTorrent recovery | remaining | Managed-row probes passed with all four clients, including both Transmission branches; each still needs its own `Stop` and full Housekeeparr recovery workflow run before registration. |
+| Retained-data and capacity limits | remaining | Recovery retains the stopped transfer; its size is not yet tracked against ceilings. Preview text claiming retained-data accounting or subsequent outcome verification describes intended behavior, not implemented tracking. |
 
 ## Remaining v1 scope (not started unless noted)
 
@@ -134,8 +147,10 @@ table is exercised with fakes, plus the real-instance recovery runs.
   keeps the torrent running in its category with data intact, even with
   `removeFailedDownloads=true`; `skipRedownload=false` makes the manager
   queue its own replacement search at once. The torrent is not stopped by
-  the manager, so separation is a separate client step. Other clients as the
-  managers' download client are not yet probed.
+  the manager, so separation is a separate client step. The same managed-row
+  removal probes passed with Transmission 4.0.6/4.1.4, Deluge 2.2.0 and
+  rTorrent 0.9.8 as the managers' client; full Housekeeparr recovery remains
+  untested there.
 - **Queue removal of rows without grab history is accepted but not durable.**
   Sonarr 4.0.20 and Radarr 6.4.4 return HTTP 200 to `DELETE /api/v3/queue/{id}`
   (ignore and blocklist paths, every flag explicit), but the row is tracked

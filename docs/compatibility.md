@@ -129,16 +129,15 @@ stale message remains. Diagnosis must treat rTorrent local messages as
 possibly stale.
 
 libtorrent-based clients do not notice missing payload until they read it,
-so a "complete" state is not evidence that the data still exists. Missing
-files after a client restart or a forced recheck have not been exercised yet.
+so a "complete" state is not evidence that the data still exists.
 Preserved-data failure handling must not rely on client state alone for
 qBittorrent and Deluge.
 
 ## Workflow-semantics probes
 
 Harness-side requests to disposable instances (`internal/integration/probe_test.go`,
-run after the observation tests); Housekeeparr adapters still have no write
-methods. Released `QueueController.RemoveAction` (Sonarr `v4.0.20.3014`,
+run after the observation tests). These probes are distinct from the
+Housekeeparr recovery executor runs below. Released `QueueController.RemoveAction` (Sonarr `v4.0.20.3014`,
 Radarr `v6.4.4.10685`) defaults `removeFromClient` to **true**, so every flag
 is sent explicitly.
 
