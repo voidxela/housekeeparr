@@ -116,12 +116,21 @@ func rawOrEmpty(b json.RawMessage) string {
 // CreateIntent journals a reserved intent, its pending steps, and its locks.
 // It fails without side effects if the key exists or any lock is held.
 func (t *Tx) CreateIntent(in Intent, now time.Time) (int64, error) {
-	var n int
-	if err := t.queryRow("SELECT count(*) FROM action_intents WHERE idem_key=?", in.Key).Scan(&n); err != nil {
-		return 0, err
-	}
-	if n > 0 {
+	var prevID int64
+	var prevState string
+	err := t.queryRow("SELECT id, state FROM action_intents WHERE idem_key=?", in.Key).Scan(&prevID, &prevState)
+	switch {
+	case err == nil && (IntentState(prevState) == IntentFailed || IntentState(prevState) == IntentCancelled):
+		// Nothing of a failed or cancelled attempt took effect, so it does
+		// not block a new one (cooldowns and budgets govern repetition).
+		// Keep its history under a retired key.
+		if _, err := t.exec("UPDATE action_intents SET idem_key=? WHERE id=?", fmt.Sprintf("%s~%d", in.Key, prevID), prevID); err != nil {
+			return 0, err
+		}
+	case err == nil:
 		return 0, ErrDuplicateIntent
+	case !errors.Is(err, sql.ErrNoRows):
+		return 0, err
 	}
 	for _, sub := range in.Locks {
 		var holder int64

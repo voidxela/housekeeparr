@@ -293,3 +293,23 @@ func TestPruneKeepsUncertainAndActiveActions(t *testing.T) {
 		t.Fatalf("high-water mark %d", max)
 	}
 }
+
+func TestFailedOrCancelledIntentDoesNotBlockRetry(t *testing.T) {
+	s := openTest(t, t.TempDir())
+	first := create(t, s, testIntent("same", "transfer:qbit|aa"))
+	if err := s.Write(ctx, func(tx *Tx) error { return tx.SetIntentState(first, IntentCancelled, "nothing sent", t0) }); err != nil {
+		t.Fatal(err)
+	}
+	second := create(t, s, testIntent("same", "transfer:qbit|aa"))
+	if second == first {
+		t.Fatal("no new intent")
+	}
+	if old, _ := s.Intent(ctx, first); old.Key != "same~1" || old.State != IntentCancelled {
+		t.Fatalf("history of the first attempt %+v", old)
+	}
+	// An active (or uncertain) intent still blocks.
+	err := s.Write(ctx, func(tx *Tx) error { _, err := tx.CreateIntent(testIntent("same"), t0); return err })
+	if !errors.Is(err, ErrDuplicateIntent) {
+		t.Fatalf("active intent did not block: %v", err)
+	}
+}
