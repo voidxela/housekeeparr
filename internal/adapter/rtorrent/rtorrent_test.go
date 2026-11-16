@@ -83,6 +83,12 @@ func TestContract(t *testing.T) {
 	if err != nil || p.Version != "0.16.28" || p.APIVersion != "libtorrent 0.16.6" || p.Compatibility != adapter.CompatUntested {
 		t.Fatalf("%+v %v", p, err)
 	}
+	if st := p.Write[adapter.CapStopTransfer]; st.Support != adapter.Supported || !strings.Contains(st.Note, "d.stop") {
+		t.Fatalf("stop capability: %+v", st)
+	}
+	if p.Write[adapter.CapTransferLabel].Support != adapter.NotImplemented || len(p.Write) != 2 {
+		t.Fatalf("write capabilities: %+v", p.Write)
+	}
 	snap, err := c.ListTransfers(ctx)
 	if err != nil || len(snap.Transfers) != 8 {
 		t.Fatalf("%d %v", len(snap.Transfers), err)

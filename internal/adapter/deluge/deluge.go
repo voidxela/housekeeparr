@@ -1,7 +1,7 @@
-// Package deluge is a read-only adapter for Deluge 2.x through the
-// deluge-web JSON API (POST /json). The daemon's own rencode/TLS protocol is
-// deliberately not supported. deluge-web must already be connected to a
-// daemon; Housekeeparr never changes the web session's daemon connection.
+// Package deluge is an adapter for Deluge 2.x through the deluge-web JSON API
+// (POST /json). The daemon's own rencode/TLS protocol is deliberately not
+// supported. deluge-web must already be connected to a daemon; Housekeeparr
+// never changes the web session's daemon connection.
 package deluge
 
 import (
@@ -59,8 +59,20 @@ func (c *Client) ID() string         { return c.id }
 func (c *Client) Kind() adapter.Kind { return adapter.KindDeluge }
 
 // allowed lists the only JSON API methods this adapter may call. auth.login
-// creates a web session; it changes nothing in the daemon.
-var allowed = map[string]bool{"auth.login": true, "web.connected": true, "daemon.get_version": true, "core.get_torrents_status": true}
+// creates a web session; it changes nothing in the daemon. writeMethods marks
+// methods whose timeout could leave an external mutation in doubt.
+var (
+	allowed = map[string]bool{
+		"auth.login":               true,
+		"web.connected":            true,
+		"daemon.get_version":       true,
+		"core.get_torrents_status": true,
+		"core.pause_torrent":       true,
+	}
+	writeMethods = map[string]bool{
+		"core.pause_torrent": true,
+	}
+)
 
 type rpcError struct {
 	Message string `json:"message"`
@@ -78,7 +90,7 @@ const errNotAuthenticated = 1
 func (c *Client) rawCall(ctx context.Context, method string, params []any, out any) (*rpcError, error) {
 	op := "deluge." + method
 	if !allowed[method] {
-		return nil, &adapter.Error{Class: adapter.ErrUnsupported, Op: op, Message: "method not permitted in this milestone"}
+		return nil, &adapter.Error{Class: adapter.ErrUnsupported, Op: op, Message: "method not permitted"}
 	}
 	c.seq++
 	// deluge-web unpacks params with *params, so an empty call must send
@@ -87,7 +99,7 @@ func (c *Client) rawCall(ctx context.Context, method string, params []any, out a
 		params = []any{}
 	}
 	body, _ := json.Marshal(map[string]any{"method": method, "params": params, "id": c.seq})
-	resp, err := c.http.Do(ctx, httpx.Request{Op: op, Method: http.MethodPost, Path: "/json",
+	resp, err := c.http.Do(ctx, httpx.Request{Op: op, Method: http.MethodPost, Path: "/json", Write: writeMethods[method],
 		Header: http.Header{"Content-Type": {"application/json"}}, Body: bytes.NewReader(body)})
 	if err != nil {
 		return nil, err
@@ -137,12 +149,18 @@ func (c *Client) call(ctx context.Context, method string, params []any, out any)
 		if rerr == nil {
 			return nil
 		}
-		if rerr.Code == errNotAuthenticated && attempt == 0 {
-			c.loggedIn = false
-			if err := c.login(ctx); err != nil {
-				return err
+		if rerr.Code == errNotAuthenticated {
+			if attempt == 0 {
+				// deluge-web returns error code 1 ("Not authenticated") before
+				// dispatching the RPC method, so nothing was executed and
+				// re-logging in and resending once is safe even for writes.
+				c.loggedIn = false
+				if err := c.login(ctx); err != nil {
+					return err
+				}
+				continue
 			}
-			continue
+			return &adapter.Error{Class: adapter.ErrUnauthorized, Op: "deluge." + method, Message: "session could not be re-established"}
 		}
 		return &adapter.Error{Class: adapter.ErrPermanent, Op: "deluge." + method, Message: redact.Truncate(redact.String(rerr.Message), 200)}
 	}
@@ -198,7 +216,8 @@ func (c *Client) Probe(ctx context.Context) (adapter.Probe, error) {
 		adapter.CapInfohashV2:        {Support: adapter.NotSupported, Note: "torrent id is the v1 infohash"},
 		adapter.CapClientFileList:    {Support: adapter.NotImplemented},
 	}
-	p.Write = adapter.ReadOnlyWrites(adapter.CapStopTransfer, adapter.CapTransferLabel)
+	p.Write = adapter.ReadOnlyWrites(adapter.CapTransferLabel)
+	p.Write[adapter.CapStopTransfer] = adapter.CapabilityStatus{Support: adapter.Supported, Note: "core.pause_torrent, retaining data"}
 	p.Limitations = []string{
 		"Requires deluge-web to stay connected to the daemon.",
 		"Piece availability reflects connected peers only; zero is indistinguishable from not computed.",
@@ -397,4 +416,12 @@ func normalize(clientID string, s status) domain.Transfer {
 		t.Private = domain.KnownValue(*s.Private)
 	}
 	return t
+}
+
+// Stop pauses one torrent via core.pause_torrent, retaining the torrent
+// registration and all of its data. Deluge 2.x pause_torrent takes a list of
+// torrent IDs as its single positional parameter. It is a write: a timeout is
+// an uncertain outcome. Callers verify the effect by listing.
+func (c *Client) Stop(ctx context.Context, nativeID string) error {
+	return c.call(ctx, "core.pause_torrent", []any{[]string{nativeID}}, nil)
 }

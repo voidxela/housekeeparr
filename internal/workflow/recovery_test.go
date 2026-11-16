@@ -10,9 +10,12 @@ import (
 	"github.com/voidxela/housekeeparr/internal/action"
 	"github.com/voidxela/housekeeparr/internal/adapter"
 	"github.com/voidxela/housekeeparr/internal/adapter/arr"
+	"github.com/voidxela/housekeeparr/internal/adapter/deluge"
 	"github.com/voidxela/housekeeparr/internal/adapter/qbittorrent"
 	"github.com/voidxela/housekeeparr/internal/adapter/radarr"
+	"github.com/voidxela/housekeeparr/internal/adapter/rtorrent"
 	"github.com/voidxela/housekeeparr/internal/adapter/sonarr"
+	"github.com/voidxela/housekeeparr/internal/adapter/transmission"
 	"github.com/voidxela/housekeeparr/internal/domain"
 	"github.com/voidxela/housekeeparr/internal/store"
 )
@@ -22,6 +25,9 @@ var (
 	_ Manager = (*sonarr.Client)(nil)
 	_ Manager = (*radarr.Client)(nil)
 	_ Client  = (*qbittorrent.Client)(nil)
+	_ Client  = (*transmission.Client)(nil)
+	_ Client  = (*deluge.Client)(nil)
+	_ Client  = (*rtorrent.Client)(nil)
 )
 
 type fakeManager struct {

@@ -95,6 +95,12 @@ func TestContract406(t *testing.T) {
 	if p.App != "Transmission" || p.Version != "4.0.6 (38c164933e)" || p.Compatibility != adapter.CompatTested || len(p.Limitations) != 2 {
 		t.Fatalf("%+v", p)
 	}
+	if st := p.Write[adapter.CapStopTransfer]; st.Support != adapter.Supported || !strings.Contains(st.Note, "torrent-stop") {
+		t.Fatalf("stop capability: %+v", st)
+	}
+	if p.Write[adapter.CapTransferLabel].Support != adapter.NotImplemented || len(p.Write) != 2 {
+		t.Fatalf("write capabilities: %+v", p.Write)
+	}
 	if f.conflict.Load() != 1 {
 		t.Fatalf("expected exactly one 409 handshake, got %d", f.conflict.Load())
 	}

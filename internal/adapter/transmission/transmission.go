@@ -1,7 +1,8 @@
-// Package transmission is a read-only adapter for the Transmission RPC
-// interface. It uses the legacy (pre-JSON-RPC) protocol, which Transmission
-// 3.x and 4.0 speak natively and 4.1 still accepts as deprecated. Only the
-// read methods session-get and torrent-get are ever sent.
+// Package transmission is an adapter for the Transmission RPC interface.
+// It uses the legacy (pre-JSON-RPC) protocol, which Transmission 3.x and 4.0
+// speak natively and 4.1 still accepts as deprecated. Only the read methods
+// session-get and torrent-get and the data-preserving write method
+// torrent-stop are ever sent.
 package transmission
 
 import (
@@ -72,20 +73,24 @@ func New(o Options) (*Client, error) {
 func (c *Client) ID() string         { return c.id }
 func (c *Client) Kind() adapter.Kind { return adapter.KindTransmission }
 
-// readMethods are the only RPC methods this adapter may send.
-var readMethods = map[string]bool{"session-get": true, "torrent-get": true}
+// readMethods and writeMethods are the only RPC methods this adapter may send.
+var (
+	readMethods  = map[string]bool{"session-get": true, "torrent-get": true}
+	writeMethods = map[string]bool{"torrent-stop": true}
+)
 
 type response struct {
 	Result    string          `json:"result"`
 	Arguments json.RawMessage `json:"arguments"`
 }
 
-// call sends one read-only RPC, completing the CSRF session handshake
-// (HTTP 409 with X-Transmission-Session-Id) at most once.
+// call sends one RPC, completing the CSRF session handshake (HTTP 409 with
+// X-Transmission-Session-Id) at most once.
 func (c *Client) call(ctx context.Context, method string, args any, out any) error {
 	op := "transmission." + method
-	if !readMethods[method] {
-		return &adapter.Error{Class: adapter.ErrUnsupported, Op: op, Message: "write methods are not permitted in this milestone"}
+	isWrite := writeMethods[method]
+	if !readMethods[method] && !isWrite {
+		return &adapter.Error{Class: adapter.ErrUnsupported, Op: op, Message: "method not permitted"}
 	}
 	body, err := json.Marshal(map[string]any{"method": method, "arguments": args})
 	if err != nil {
@@ -101,8 +106,11 @@ func (c *Client) call(ctx context.Context, method string, args any, out any) err
 		if c.auth != "" {
 			h.Set("Authorization", c.auth)
 		}
-		resp, err := c.http.Do(ctx, httpx.Request{Op: op, Method: http.MethodPost, Path: c.rpcPath, Header: h, Body: bytes.NewReader(body)})
+		resp, err := c.http.Do(ctx, httpx.Request{Op: op, Method: http.MethodPost, Path: c.rpcPath, Write: isWrite, Header: h, Body: bytes.NewReader(body)})
 		if ae, ok := err.(*adapter.Error); ok && ae.HTTPStatus == http.StatusConflict && resp != nil && attempt == 0 {
+			// HTTP 409 (missing or stale X-Transmission-Session-Id) is
+			// Transmission's CSRF rejection before dispatching the RPC method:
+			// nothing was applied, so resending once with the new id is safe.
 			c.session = resp.Header.Get("X-Transmission-Session-Id")
 			if c.session == "" {
 				return &adapter.Error{Class: adapter.ErrPermanent, Op: op, Message: "HTTP 409 without a session id (is this a Transmission RPC endpoint?)"}
@@ -119,8 +127,10 @@ func (c *Client) call(ctx context.Context, method string, args any, out any) err
 		if r.Result != "success" {
 			return &adapter.Error{Class: adapter.ErrPermanent, Op: op, Message: "RPC result: " + redact.Truncate(redact.String(r.Result), 160)}
 		}
-		if err := json.Unmarshal(r.Arguments, out); err != nil {
-			return httpx.Malformed(op, err)
+		if out != nil {
+			if err := json.Unmarshal(r.Arguments, out); err != nil {
+				return httpx.Malformed(op, err)
+			}
 		}
 		return nil
 	}
@@ -181,7 +191,8 @@ func (c *Client) Probe(ctx context.Context) (adapter.Probe, error) {
 		adapter.CapInfohashV2:        {Support: adapter.NotSupported, Note: "hashString is the v1 infohash"},
 		adapter.CapClientFileList:    {Support: adapter.NotImplemented},
 	}
-	p.Write = adapter.ReadOnlyWrites(adapter.CapStopTransfer, adapter.CapTransferLabel)
+	p.Write = adapter.ReadOnlyWrites(adapter.CapTransferLabel)
+	p.Write[adapter.CapStopTransfer] = adapter.CapabilityStatus{Support: adapter.Supported, Note: "torrent-stop (legacy RPC), retaining data"}
 	p.Limitations = append(p.Limitations, "Piece availability reflects connected peers only.", "Tracker URLs and paths are never requested.")
 	return p, nil
 }
@@ -373,4 +384,12 @@ func normalize(clientID string, r *torrent) (domain.Transfer, error) {
 		t.Private = domain.KnownValue(*r.IsPrivate)
 	}
 	return t, nil
+}
+
+// Stop stops one torrent via torrent-stop, retaining the torrent registration
+// and all of its data. It is a write: a timeout is an uncertain outcome.
+// Transmission accepts unknown ids without error, so callers verify the effect
+// by listing.
+func (c *Client) Stop(ctx context.Context, nativeID string) error {
+	return c.call(ctx, "torrent-stop", map[string]any{"ids": []string{nativeID}}, nil)
 }

@@ -1,9 +1,9 @@
-// Package rtorrent is a read-only adapter for rTorrent's XML-RPC interface.
+// Package rtorrent is an adapter for rTorrent's XML-RPC interface.
 //
 // Supported transport: XML-RPC over HTTP(S), as exposed by an SCGI gateway
 // (for example nginx `scgi_pass`, or ruTorrent's /RPC2), with optional HTTP
 // basic authentication. Raw SCGI sockets are deliberately not supported.
-// Only the read methods listed in `allowed` are ever sent.
+// Only the methods listed in `allowed` are ever sent.
 package rtorrent
 
 import (
@@ -65,12 +65,23 @@ func (c *Client) Kind() adapter.Kind { return adapter.KindRTorrent }
 
 // allowed are the only methods this adapter may call. d.multicall2 is read
 // only because every command it is given comes from the fixed `fields` list.
-var allowed = map[string]bool{"system.client_version": true, "system.library_version": true, "d.multicall2": true}
+// writeMethods marks methods whose timeout could leave an external mutation in doubt.
+var (
+	allowed = map[string]bool{
+		"system.client_version":  true,
+		"system.library_version": true,
+		"d.multicall2":           true,
+		"d.stop":                 true,
+	}
+	writeMethods = map[string]bool{
+		"d.stop": true,
+	}
+)
 
 func (c *Client) call(ctx context.Context, method string, params ...string) (any, error) {
 	op := "rtorrent." + method
 	if !allowed[method] {
-		return nil, &adapter.Error{Class: adapter.ErrUnsupported, Op: op, Message: "method not permitted in this milestone"}
+		return nil, &adapter.Error{Class: adapter.ErrUnsupported, Op: op, Message: "method not permitted"}
 	}
 	h := http.Header{"Content-Type": {"text/xml"}, "Accept": {"text/xml"}}
 	if c.auth != "" {
@@ -78,7 +89,7 @@ func (c *Client) call(ctx context.Context, method string, params ...string) (any
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	resp, err := c.http.Do(ctx, httpx.Request{Op: op, Method: http.MethodPost, Path: c.rpcPath, Header: h, Body: bytes.NewReader(encodeCall(method, params))})
+	resp, err := c.http.Do(ctx, httpx.Request{Op: op, Method: http.MethodPost, Path: c.rpcPath, Write: writeMethods[method], Header: h, Body: bytes.NewReader(encodeCall(method, params))})
 	if err != nil {
 		return nil, err
 	}
@@ -153,7 +164,8 @@ func (c *Client) Probe(ctx context.Context) (adapter.Probe, error) {
 		adapter.CapInfohashV2:        {Support: adapter.NotSupported},
 		adapter.CapClientFileList:    {Support: adapter.NotImplemented},
 	}
-	p.Write = adapter.ReadOnlyWrites(adapter.CapStopTransfer, adapter.CapTransferLabel)
+	p.Write = adapter.ReadOnlyWrites(adapter.CapTransferLabel)
+	p.Write[adapter.CapStopTransfer] = adapter.CapabilityStatus{Support: adapter.Supported, Note: "d.stop, retaining data (d.stop vs d.close semantics pending real-instance probing)"}
 	p.Limitations = []string{
 		"rTorrent has no structured error state; a download rTorrent stopped with a non-tracker message is reported as a client error, and other error and tracker messages are shown as text only.",
 		"Piece availability is not collected, so stalls are never attributed to unavailable pieces.",
@@ -306,4 +318,16 @@ func normalize(clientID string, c []any) (domain.Transfer, error) {
 		t.Private = domain.UnknownValue[bool]("privacy unknown until metadata is acquired")
 	}
 	return t, nil
+}
+
+// Stop stops one download via d.stop ONLY (never d.close, d.erase, or
+// anything that removes or closes files), keeping the download registered with
+// its data. It is a write: a timeout is an uncertain outcome. Callers verify
+// the effect by listing.
+//
+// Note: d.stop vs d.close semantics still need real-instance probing (not yet
+// verified against a live rTorrent instance).
+func (c *Client) Stop(ctx context.Context, nativeID string) error {
+	_, err := c.call(ctx, "d.stop", nativeID)
+	return err
 }

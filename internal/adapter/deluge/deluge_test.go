@@ -112,6 +112,12 @@ func TestContract211(t *testing.T) {
 	if err != nil || p.App != "Deluge" || p.Version != "2.1.1" || p.Compatibility != adapter.CompatUntested {
 		t.Fatalf("%+v %v", p, err)
 	}
+	if st := p.Write[adapter.CapStopTransfer]; st.Support != adapter.Supported || !strings.Contains(st.Note, "core.pause_torrent") {
+		t.Fatalf("stop capability: %+v", st)
+	}
+	if p.Write[adapter.CapTransferLabel].Support != adapter.NotImplemented || len(p.Write) != 2 {
+		t.Fatalf("write capabilities: %+v", p.Write)
+	}
 	snap, err := c.ListTransfers(ctx)
 	if err != nil || len(snap.Transfers) != 9 || !snap.Complete {
 		t.Fatalf("%d %v", len(snap.Transfers), err)
