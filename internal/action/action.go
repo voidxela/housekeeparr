@@ -153,7 +153,7 @@ type Executor interface {
 // OutcomeObserver is an optional Executor capability: right after a
 // verified recovery it observes what later polling would likely miss, the
 // manager's replacement search (managers drop finished commands from their
-// list a few minutes after they end). It must not write externally and must
+// list some time after they end; the retention is not established). It must not write externally and must
 // return within a short bound; it only updates o.Search.
 type OutcomeObserver interface {
 	// now is the coordinator's clock, against which the outcome's times

@@ -478,7 +478,9 @@ func (c *Client) Redownload(ctx context.Context) (RedownloadSettings, error) {
 
 // Command is one entry of the manager's command list (GET /api/v3/command).
 // The list holds queued and running commands and recently finished ones;
-// Sonarr and Radarr drop finished commands from it after a few minutes, so
+// Sonarr and Radarr eventually drop finished commands from it (a periodic
+// cleanup; finished commands were still listed seven minutes later on the
+// tested versions, but the exact retention is not established), so
 // absence of a finished command is not evidence that it never ran.
 type Command struct {
 	ID         int64      `json:"id"`

@@ -79,7 +79,7 @@ func (m *Manager) SetCommandsError(err error) {
 }
 
 // ClearCommands empties the simulated command list, as the released
-// managers do a few minutes after commands finish.
+// managers eventually do after commands finish.
 func (m *Manager) ClearCommands() {
 	m.mu.Lock()
 	defer m.mu.Unlock()

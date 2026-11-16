@@ -84,7 +84,7 @@ func ObserveSearch(o *store.RecoveryOutcome, cmds []arr.Command, now time.Time) 
 	case match == nil && now.Sub(since) > SearchFollowWindow:
 		s.State = store.SearchNotObserved
 		s.Note = "no search for this content was seen in the manager's command list within " + SearchFollowWindow.String() +
-			"; managers drop finished commands after a few minutes, so this is not evidence that no search ran (check the manager's history)"
+			"; managers eventually drop finished commands from that list, so this is not evidence that no search ran (check the manager's history)"
 	case match == nil:
 		s.State = store.SearchUnobserved
 		s.Note = "no matching search seen in the manager's command list yet"
