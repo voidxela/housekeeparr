@@ -9,7 +9,9 @@ import (
 
 	"github.com/voidxela/housekeeparr/internal/action"
 	"github.com/voidxela/housekeeparr/internal/app"
+	"github.com/voidxela/housekeeparr/internal/engine"
 	"github.com/voidxela/housekeeparr/internal/store"
+	"github.com/voidxela/housekeeparr/internal/workflow"
 )
 
 // writerService opens the state store for writing (refusing with exit 3
@@ -130,6 +132,20 @@ func cmdAct(args []string, out, errOut io.Writer) int {
 		return code
 	}
 	defer done()
+	// The executor needs live connections; secrets are resolved only here.
+	secrets, probs := svc.Config().ResolvedSecrets(nil)
+	for _, p := range probs {
+		if p.Severity == "error" {
+			fmt.Fprintln(errOut, p.String())
+			return exitUsage
+		}
+	}
+	conns, err := engine.Build(svc.Config(), secrets)
+	if err != nil {
+		fmt.Fprintln(errOut, err)
+		return exitUsage
+	}
+	svc.SetExecutor(workflow.FromConnections(conns.Clients, conns.Managers))
 	pv, res, err := svc.Act(context.Background(), id, app.ActorCLI)
 	if errors.Is(err, app.ErrNotFound) {
 		fmt.Fprintf(errOut, "finding %d not found\n", id)

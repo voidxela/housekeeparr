@@ -20,6 +20,7 @@ import (
 	"github.com/voidxela/housekeeparr/internal/engine"
 	"github.com/voidxela/housekeeparr/internal/store"
 	"github.com/voidxela/housekeeparr/internal/web"
+	"github.com/voidxela/housekeeparr/internal/workflow"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
@@ -272,6 +273,7 @@ func cmdRun(args []string, out, errOut io.Writer) int {
 	var srv *web.Server
 	if cfg.Web.Enabled && !*headless {
 		svc := app.New(st, cfg, nil, eng)
+		svc.SetExecutor(workflow.FromConnections(conns.Clients, conns.Managers))
 		srv, err = web.New(svc, web.Options{Listen: cfg.Web.Listen, Logger: log})
 		if err != nil {
 			fmt.Fprintln(errOut, "web:", err)
