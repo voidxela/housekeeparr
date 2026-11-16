@@ -31,6 +31,10 @@ type Planned struct {
 	// Content lists the manager content keys (episode:<id>, movie:<id>)
 	// the association is for, sorted.
 	Content []string `json:"content,omitempty"`
+	// Owners are the managers that could own this transfer (configured to
+	// use its client, or unmapped); their queues are read before every
+	// write. Empty means every manager.
+	Owners []string `json:"owners,omitempty"`
 }
 
 // fingerprint digests the identity-relevant planned facts. It feeds the
@@ -61,8 +65,8 @@ type Live struct {
 	// Transfer is nil when the client no longer lists the transfer.
 	Transfer      *domain.Transfer `json:"transfer,omitempty"`
 	ClientVersion string           `json:"client_version"`
-	// Associations are the queue rows, in every manager Housekeeparr can
-	// read, whose download ID is the transfer's.
+	// Associations are the queue rows, in every manager that could own the
+	// transfer (Planned.Owners), whose download ID is the transfer's.
 	Associations []domain.QueueItem `json:"associations"`
 	// Unread names managers whose queue could not be read completely, so
 	// an association there cannot be ruled out.

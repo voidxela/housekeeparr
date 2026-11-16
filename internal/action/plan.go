@@ -69,6 +69,9 @@ type PlanInput struct {
 	// Limits are the effective acquisition limits; zero means the
 	// proposed defaults.
 	Limits policy.Limits
+	// Owners are the managers that could own the transfer (see
+	// Planned.Owners).
+	Owners []string
 	// Retained is the current retained-transfer usage (SPEC §7.1).
 	Retained       store.RetainedUsage
 	PollInterval   time.Duration
@@ -302,7 +305,7 @@ func PolicyCheck(pol policy.Effective, wf policy.Workflow, origin Origin) Check 
 func planned(in PlanInput, cv, mv string, row *store.QueueRecord, present []store.QueueRecord) Planned {
 	t := in.Transfer
 	pl := Planned{ClientID: t.ClientID, NativeID: t.NativeID, Name: t.Name, StateClass: t.StateClass, Verified: t.Latest.VerifiedBytes,
-		Wanted: t.Latest.WantedBytes, Private: t.Latest.Private, Category: t.Latest.Category, ClientVersion: cv}
+		Wanted: t.Latest.WantedBytes, Private: t.Latest.Private, Category: t.Latest.Category, ClientVersion: cv, Owners: in.Owners}
 	if row != nil {
 		pl.ManagerID, pl.ManagerVersion, pl.QueueID, pl.DownloadID = row.ManagerID, mv, row.QueueID, row.DownloadID
 		var rows []domain.QueueItem

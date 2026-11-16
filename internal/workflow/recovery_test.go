@@ -268,6 +268,13 @@ func TestLiveReadsEveryDecisionInput(t *testing.T) {
 	if bad := check(0); len(bad) != 1 || bad[0] != "ownership unchanged" {
 		t.Fatalf("unread manager: %v", bad)
 	}
+	// A manager not configured for this client cannot own the transfer, so
+	// its outage does not block.
+	p.Planned.Owners = []string{"sonarr"}
+	if bad := check(0); len(bad) != 0 {
+		t.Fatalf("unrelated manager outage blocks: %v", bad)
+	}
+	p.Planned.Owners = nil
 	other.queueErr = nil
 	// Before the stop, the failed row's absence is expected; its presence
 	// is not, and manager health no longer matters.

@@ -135,6 +135,7 @@ func (s *Service) Preview(ctx context.Context, findingID int64, origin action.Or
 	}
 	in.Scope = sub
 	out.Policy = in.Policy
+	in.Owners = s.cfg.ManagersFor(f.Subject.ClientID)
 	if in.Retained, err = s.st.RetainedUsage(ctx); err != nil {
 		return nil, err
 	}

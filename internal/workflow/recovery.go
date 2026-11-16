@@ -158,8 +158,8 @@ func (r *Recovery) queueRow(ctx context.Context, managerID, downloadID string) (
 }
 
 // Live re-reads everything action.Revalidate compares: the transfer and
-// client version; every readable manager's queue rows for the transfer's
-// download ID; and, for the planned manager, its version, health, and the
+// client version; the queue rows for the transfer's download ID in every
+// manager that could own it (all managers when the plan names none); and, for the planned manager, its version, health, and the
 // content's existence and monitoring. Failure to read the transfer is an
 // error; other gaps are recorded so that the checks fail closed with a
 // specific explanation.
@@ -187,13 +187,20 @@ func (r *Recovery) Live(ctx context.Context, p action.Proposal) (action.Live, er
 	if downloadID == "" {
 		downloadID = pl.NativeID
 	}
-	ids := make([]string, 0, len(r.Managers))
-	for id := range r.Managers {
-		ids = append(ids, id)
+	ids := pl.Owners
+	if len(ids) == 0 {
+		for id := range r.Managers {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
 	}
-	sort.Strings(ids)
 	for _, id := range ids {
-		q, err := r.Managers[id].Queue(ctx)
+		m, ok := r.Managers[id]
+		if !ok {
+			live.Unread = append(live.Unread, id)
+			continue
+		}
+		q, err := m.Queue(ctx)
 		if err != nil || !q.Complete {
 			live.Unread = append(live.Unread, id)
 			continue

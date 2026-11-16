@@ -962,3 +962,37 @@ func TestLimitsProvenance(t *testing.T) {
 		t.Fatal("limits do not change the configuration revision")
 	}
 }
+
+func TestManagersFor(t *testing.T) {
+	cfg, _, err := Parse([]byte(`version = 1
+[[sonarr]]
+id = "sonarr"
+url = "http://127.0.0.1:8989"
+api_key = "env:X"
+download_clients = { "qBittorrent" = "qbit" }
+[[radarr]]
+id = "radarr"
+url = "http://127.0.0.1:7878"
+api_key = "env:X"
+download_clients = { "Transmission" = "tr" }
+[[radarr]]
+id = "radarr4k"
+url = "http://127.0.0.1:7879"
+api_key = "env:X"
+[[qbittorrent]]
+id = "qbit"
+url = "http://127.0.0.1:8080"
+[[transmission]]
+id = "tr"
+url = "http://127.0.0.1:9091"
+`), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(cfg.ManagersFor("qbit"), ","); got != "radarr4k,sonarr" {
+		t.Fatalf("qbit owners %s (an unmapped manager may own any client's transfers)", got)
+	}
+	if got := strings.Join(cfg.ManagersFor("tr"), ","); got != "radarr,radarr4k" {
+		t.Fatalf("tr owners %s", got)
+	}
+}

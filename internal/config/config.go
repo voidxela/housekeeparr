@@ -1099,6 +1099,26 @@ func (c *Config) HasClient(id string) bool {
 	return false
 }
 
+// ManagersFor returns the managers that could own a transfer in clientID:
+// those whose download_clients mapping names it, and those with no
+// mapping at all (their rows are correlated by hash alone).
+func (c *Config) ManagersFor(clientID string) []string {
+	var out []string
+	for _, list := range [][]ManagerConfig{c.Sonarr, c.Radarr} {
+		for _, m := range list {
+			uses := len(m.DownloadClients) == 0
+			for _, id := range m.DownloadClients {
+				uses = uses || id == clientID
+			}
+			if uses {
+				out = append(out, m.ID)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 func (c *Config) hasManager(id string) bool {
 	for _, m := range c.Sonarr {
 		if m.ID == id {

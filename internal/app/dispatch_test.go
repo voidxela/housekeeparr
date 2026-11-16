@@ -55,19 +55,29 @@ id = "sonarr"
 url = "http://127.0.0.1:8989"
 api_key = "env:X"
 download_clients = { "qBittorrent" = "qbit" }
+[[radarr]]
+id = "radarr"
+url = "http://127.0.0.1:7878"
+api_key = "env:X"
+download_clients = { "qBittorrent" = "qbit2" }
 [[qbittorrent]]
 id = "qbit"
 url = "http://127.0.0.1:8080"
+[[qbittorrent]]
+id = "qbit2"
+url = "http://127.0.0.1:8081"
 `
 
 type world struct {
-	t      *testing.T
-	clock  *fake.Clock
-	client *fake.Client
-	mgr    *fake.Manager
-	st     *store.Store
-	eng    *engine.Engine
-	svc    *app.Service
+	t       *testing.T
+	clock   *fake.Clock
+	client  *fake.Client
+	client2 *fake.Client
+	mgr     *fake.Manager
+	radarr  *fake.Manager
+	st      *store.Store
+	eng     *engine.Engine
+	svc     *app.Service
 }
 
 func newWorld(t *testing.T, mode string, acquisitions int) *world {
@@ -77,17 +87,21 @@ func newWorld(t *testing.T, mode string, acquisitions int) *world {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w := &world{t: t, clock: fake.NewClock(t0), client: fake.NewClient("qbit"), mgr: fake.NewManager("sonarr")}
+	w := &world{t: t, clock: fake.NewClock(t0), client: fake.NewClient("qbit"), client2: fake.NewClient("qbit2"),
+		mgr: fake.NewManager("sonarr"), radarr: fake.NewRadarr("radarr")}
 	w.st, err = store.Open(context.Background(), t.TempDir(), store.Options{Now: w.clock.Now})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { w.st.Close() })
-	conns := &engine.Connections{Clients: []adapter.DownloadClient{w.client}, Managers: []adapter.MediaManager{w.mgr},
+	conns := &engine.Connections{Clients: []adapter.DownloadClient{w.client, w.client2}, Managers: []adapter.MediaManager{w.mgr, w.radarr},
 		Meta: map[string]engine.ConnMeta{
 			"sonarr": {ID: "sonarr", Name: "Sonarr", BaseURL: "http://127.0.0.1:8989", Kind: adapter.KindSonarr, Enabled: true,
 				SecretRef: "env:X", DownloadClients: cfg.Sonarr[0].DownloadClients},
-			"qbit": {ID: "qbit", Name: "qBittorrent", BaseURL: "http://127.0.0.1:8080", Kind: adapter.KindQBittorrent, Enabled: true},
+			"radarr": {ID: "radarr", Name: "Radarr", BaseURL: "http://127.0.0.1:7878", Kind: adapter.KindRadarr, Enabled: true,
+				SecretRef: "env:X", DownloadClients: cfg.Radarr[0].DownloadClients},
+			"qbit":  {ID: "qbit", Name: "qBittorrent", BaseURL: "http://127.0.0.1:8080", Kind: adapter.KindQBittorrent, Enabled: true},
+			"qbit2": {ID: "qbit2", Name: "qBittorrent 2", BaseURL: "http://127.0.0.1:8081", Kind: adapter.KindQBittorrent, Enabled: true},
 		}}
 	w.eng, err = engine.New(context.Background(), engine.Options{Config: cfg, Store: w.st, Conns: conns, Clock: w.clock,
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), RunKind: "test", Version: "test"})
@@ -99,8 +113,10 @@ func newWorld(t *testing.T, mode string, acquisitions int) *world {
 	ex.Settle, ex.Poll = 50*time.Millisecond, 5*time.Millisecond
 	w.svc.SetExecutor(ex)
 	saved := action.Tested
-	action.Tested = []action.TestedWorkflow{{Workflow: policy.WorkflowNoProgressRecovery, Manager: adapter.KindSonarr, ManagerVersion: "0.0.0-fake",
-		Client: adapter.KindQBittorrent, ClientVersion: "0.0.0-fake"}}
+	action.Tested = []action.TestedWorkflow{
+		{Workflow: policy.WorkflowNoProgressRecovery, Manager: adapter.KindSonarr, ManagerVersion: "0.0.0-fake", Client: adapter.KindQBittorrent, ClientVersion: "0.0.0-fake"},
+		{Workflow: policy.WorkflowNoProgressRecovery, Manager: adapter.KindRadarr, ManagerVersion: "0.0.0-fake", Client: adapter.KindQBittorrent, ClientVersion: "0.0.0-fake"},
+	}
 	t.Cleanup(func() { action.Tested = saved })
 	return w
 }
@@ -296,5 +312,31 @@ func TestUncertainOutcomeIsNotResentAndHoldsTheScope(t *testing.T) {
 	d, _ := w.svc.Finding(context.Background(), other.ID)
 	if d.Automation == nil || d.Automation.Result != store.EvalHeld || !strings.Contains(d.Automation.Detail, "needs review") {
 		t.Fatalf("other finding not held by the uncertain action: %+v", d.Automation)
+	}
+}
+
+// An unreadable manager holds only work that depends on it: a manager
+// configured for another client cannot own this client's transfers.
+// (Managers sharing one client fail closed on each other's outage, because
+// the unreadable one could own the transfer.)
+func TestManagerOutageBlocksOnlyItsScope(t *testing.T) {
+	w := newWorld(t, "automatic", 20)
+	w.stalled(hashA, 1, 1)
+	w.client2.SetTransfers(fake.Transfer(hashB, "Film.2020", domain.StateDownloading, 2*gib, 10*gib, t0))
+	w.radarr.SetQueue(fake.Movie(1, hashB, "Film.2020", "Film", 2020))
+	w.run(30 * time.Minute)
+	w.radarr.Fail(&adapter.Error{Class: adapter.ErrTransient, Op: "fake", Message: "down"})
+	w.run(4 * time.Hour)
+	if s := w.client.Stops(); len(s) != 1 || s[0] != hashA {
+		t.Fatalf("stops %v: want the Sonarr download despite the Radarr outage", s)
+	}
+	if len(w.radarr.Removals()) != 0 || len(w.client2.Stops()) != 0 {
+		t.Fatalf("acted on Radarr's download while Radarr was unreadable: %v %v", w.radarr.Removals(), w.client2.Stops())
+	}
+	// Once Radarr answers again, its download is acted on too.
+	w.radarr.Fail(nil)
+	w.run(30 * time.Minute)
+	if len(w.radarr.Removals()) != 1 || len(w.client2.Stops()) != 1 {
+		t.Fatalf("after recovery: radarr %v stops %v", w.radarr.Removals(), w.client2.Stops())
 	}
 }
