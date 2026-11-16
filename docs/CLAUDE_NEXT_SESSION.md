@@ -6,23 +6,24 @@ Continue implementing Housekeeparr through the complete approved v1 scope in
 behavior. The earlier review `docs/reviews/2026-11-15.md` supplies background;
 its R1–R4 are fixed. Implement and verify concrete increments, not just plans.
 
-Checkpoint: `dev` at `dc2b726` (code last changed at `725f96b`; session of
-2026-11-16, 35 commits after `73d37d5`, not pushed). Validation at `725f96b`: build, vet, gofmt, full
-uncached Go suite, CGO-disabled binary; real instances: qBittorrent 5.3.0 and
-Deluge 2.2.0 each with Sonarr 4.0.20.3014 + Radarr 6.4.4.10685 (all passed,
-including both recovery workflows); rTorrent 0.9.8 at `b8d3313` (recovery
-passed, run failed on the `errored-recheck` fixture). Not run: Transmission,
-browser check, race detector (host limitation), Docker, real automatic
-dispatch.
-Review R5–R7 are fixed and recorded in `docs/STATUS.md` ("R5–R7 closure");
-the qBittorrent 5.3.0 + Sonarr/Radarr recovery runs pass on the changed
-executor. Since then the session added retained-transfer records and
-ceilings, replacement outcome tracking, data-preserving `Stop` for the other
-three clients (adapter + fixtures only), the generalised recovery integration
-test, and automatic dispatch with circuit breakers (simulated-application
-acceptance tests only). Read STATUS for exactly what is real-instance-tested,
-fixture-tested, and remaining. This still does not complete recovery across
-clients or SPEC §13.4 scenario 1 on real instances.
+Checkpoint: `dev` at CHECKPOINT (session of 2026-11-16, second; 7b0d1d0..HEAD,
+not pushed). Real-instance matrix at `118f15c` from a worktree pinned to that
+commit (all five registered combinations passed, including both recovery
+workflows, the automatic test and exact search attribution; qBittorrent 4.6.7
+failed only on the `errored-restart` observation fixture, undiagnosed); later commits change only
+operator controls (attempts view/reset, workflow pause; local, inert unless
+used), wording, and docs, and passed the full Go suite. Not run: browser
+check, race detector (host limitation), Docker, the daemon loop with default
+windows on real instances.
+
+No-progress recovery is now real-instance-tested and registered for Sonarr
+4.0.20.3014 and Radarr 6.4.4.10685 with **all four clients** (qBittorrent
+5.3.0, Transmission 4.0.6 and 4.1.4, Deluge 2.2.0, rTorrent 0.9.8), manual
+and automatic dispatch; search acceptance is tracked as its own outcome.
+Read STATUS ("Session of 2026-11-16 (second)") for exactly what changed,
+including a fixed diagnosis defect (scoped rules/overrides were ignored by
+diagnosis) and a new prerequisite (the manager must redownload failed
+grabs).
 
 ## Existing user authorization and constraints
 
@@ -78,27 +79,32 @@ do not turn a choice of defaults into a prolonged blocker for other work.
 
 ## Immediate work, in priority order
 
-1. **Real-instance runs of the other clients' recovery.** The recovery
-   integration test now runs through `--manager-client` and is required.
-   Deluge 2.2.0 passed and is registered. rTorrent 0.9.8: both recovery
-   workflows passed at `b8d3313`, but the run failed on the pre-existing
-   `errored-recheck` observation fixture (reported seeding instead of an
-   error; see compatibility.md). Diagnose that fixture first (do not rerun
-   until green), then register rTorrent only after a clean run. Then
-   Transmission 4.0.6 and 4.1.4 (`--tr`; first build ~15 minutes each). Inspect each failure before changing code. Probe rTorrent `d.stop`
-   versus `d.close` (registration, files, state mapping, stale `d.message`)
-   before relying on it; user pause must never be mistaken for permission.
-   Add `action.Tested` entries only for recorded passing runs, and record
-   every run in compatibility.md.
-2. **Real-instance automatic path.** Drive `DispatchAutomatic` against
-   disposable instances (diagnosis may be supplied by writing a qualified
-   assessment, stated as such); do not overstate a supplied diagnosis.
-3. **Recovery remainder:** search acceptance from manager command history as
-   its own outcome; metadata recovery and preserved-data failure workflows;
-   a web view and reset control for attempts (CLI exists; retained transfers are on Activity); a separate
-   per-workflow pause control; status/notification of deferrals.
-4. Then continue the remaining v1 scope below (partial packs, searches and
-   coverage, notifications, remote web/auth, packaging/security/performance).
+1. **qBittorrent 4.6.7 `errored-restart` fixture** failed at `118f15c`
+   (`stalledDL`, verified 0, instead of `missingFiles` after the restart;
+   passed on 2026-11-15). Diagnose before rerunning, as was done for the
+   rTorrent race (hypothesis only: restart before fastresume was persisted;
+   the harness's qBittorrent restart in `scripts/it/run.sh` uses no
+   readiness check before stopping). Observation only; 4.x recovery stays
+   refused. The `6507e87` automatic-test failure on 4.6.7 (slow cycles, no
+   diagnosis) did not recur; cycles now log their durations.
+2. **Metadata recovery and preserved-data failure workflows** (SPEC §§5, 7,
+   13.4 scenario 3): separate evidence, timeouts and capability gating;
+   preserved-data handling must not rely on client state alone (see
+   compatibility "Missing-data semantics", including the rTorrent hash-race).
+3. **Notifications and deferral status** (SPEC §11.2): exhausted attempts,
+   pacing deferrals, circuit breakers, paused workflows.
+4. **Scenario 1 end to end**: the daemon loop with default windows on real
+   instances, or an explicit plan for it; then the remaining v1 scope below
+   (partial packs, searches and coverage, remote web/auth,
+   packaging/security/performance).
+5. Housekeeparr-owned replacement searches (when a manager's "Redownload
+   Failed" is off) are not implemented; such recoveries are refused. Decide
+   whether v1 needs them (SPEC §7 step 5 allows either owner).
+
+Process lesson: run the integration matrix from a git worktree pinned to the
+commit being recorded (`git worktree add --detach ~/.cache/hk-wt-run <sha>`):
+each probe is its own `go test` invocation and compiles the current tree.
+`/tmp` is RAM-backed on this host; keep large synthetic files on disk.
 
 Numeric limits remain proposals (`[automation.limits]`); see the budget
 concern section. Exhausted attempts need `housekeeparr attempts reset`.
@@ -136,8 +142,9 @@ approvals or silent amendments to the authoritative spec.
   do not also issue a Housekeeparr search. These probes passed with all four
   clients (Transmission 4.0.6 and 4.1.4). Unknown-content rows return after
   refresh and do not establish usable recovery semantics.
-- Current recovery test plans from engine-written state, but supplies the
-  qualified stall diagnosis. Production sequence: fail/blocklist with every
+- The manual recovery test plans from engine-written state but supplies the
+  qualified stall diagnosis; the automatic test does not (the engine
+  diagnoses under transfer-scoped overrides). Production sequence: fail/blocklist with every
   flag explicit, then stop while retaining data. Independent checks establish
   durable queue removal, failure/blocklist evidence, stopped registration,
   byte-identical payload and queued manager search. They do not establish a

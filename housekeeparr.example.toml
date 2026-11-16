@@ -10,8 +10,9 @@ version = 1
 # observation cycle, ONLY for workflows that are separately enabled AND whose
 # hard safety prerequisites hold (including a recorded, tested write workflow
 # for the exact application versions). Today that is no-progress recovery
-# with Sonarr 4.0.20 / Radarr 6.4.4 and qBittorrent 5.3.0 or Deluge 2.2.0. Each automatic
-# decision is shown on the finding (`housekeeparr finding <id>`).
+# with Sonarr 4.0.20 / Radarr 6.4.4 and qBittorrent 5.3.0, Transmission 4.0.6 /
+# 4.1.4, Deluge 2.2.0, or rTorrent 0.9.8. Each automatic decision is shown on
+# the finding (`housekeeparr finding <id>`).
 mode = "observe"
 
 [automation]

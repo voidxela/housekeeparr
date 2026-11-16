@@ -49,6 +49,11 @@ workflow.
 | 2026-11-16 (`7b0d1d0` + the fixture fix committed as `1f24634`, `--clients rtorrent --manager-client rtorrent --managers sonarr,radarr`) | Linux aarch64, Go 1.27.4 | rTorrent 0.9.8 + Sonarr 4.0.20.3014 + Radarr 6.4.4.10685 (isolated) | **all passed**: every observation assertion (`errored`, `errored-restart` and `errored-recheck` all client errors), the `d.message` probe, all probes, and both recovery workflows through rTorrent |
 | 2026-11-16 (`dff2166`, `--clients transmission --manager-client transmission --managers sonarr,radarr --tr 4.0.6`) | Linux aarch64, Go 1.27.4 | Transmission 4.0.6 + Sonarr 4.0.20.3014 + Radarr 6.4.4.10685 (isolated) | first run: both recovery workflows **refused safely** before any request ("transfer is complete"): Transmission 4 treats the pre-existing half payload under its final file name as complete when the manager adds it, without hashing. Harness fix `c26f83a`: the recovery test forces `torrent-verify` on the disposable daemon and requires a downloading state. Rerun: **all passed**, including both recovery workflows |
 | 2026-11-16 (`dff2166` + `c26f83a`, same with `--tr 4.1.4`) | Linux aarch64, Go 1.27.4 | Transmission 4.1.4 + Sonarr + Radarr (isolated) | **all passed**, including both recovery workflows, over the legacy RPC |
+| 2026-11-16 (exploratory, working tree after `f0721bb`; not a recorded commit) | Linux aarch64, Go 1.27.4 | qBittorrent 5.3.0 + Sonarr + Radarr | first run of `TestAutomaticRecovery`: **failed** (no finding in 13 cycles) because diagnosis ignored transfer-scoped overrides, a product defect fixed in `f0721bb`; second run passed (one dispatch per pass, independent checks held). Exploratory only: the tree changed during the run |
+| 2026-11-16 (`6507e87`, pinned worktree, six combinations) | Linux aarch64, Go 1.27.4 | qBittorrent 5.3.0, Deluge 2.2.0, rTorrent 0.9.8, Transmission 4.0.6, Transmission 4.1.4, each as the managers' client, + Sonarr + Radarr | **all passed**, including both recovery workflows and the automatic test, but the direct recovery tests' recorded replacement search was the harness's own earlier **manual** grab search (for example command 42, "1 reports downloaded", instead of 45, trigger `unspecified`): the time-based matcher's one-minute tolerance reached back to it. Not used as search evidence; fixed in `118f15c` (command-ID baseline) and the tests now require the independently identified command |
+| 2026-11-16 (`6507e87`, same matrix) | Linux aarch64, Go 1.27.4 | qBittorrent 4.6.7 + Sonarr + Radarr | **failed**: `TestAutomaticRecovery` saw no qualified diagnosis for either grab within 5 minutes (only three `run --once` cycles completed in that time); everything else passed, including the recovery refusal for unknown privacy. Cause not established |
+| 2026-11-16 (`118f15c`, pinned worktree, same five combinations) | Linux aarch64, Go 1.27.4 | qBittorrent 5.3.0, Deluge 2.2.0, rTorrent 0.9.8, Transmission 4.0.6, Transmission 4.1.4, each as the managers' client, + Sonarr 4.0.20.3014 + Radarr 6.4.4.10685 (isolated) | **all passed**: every observation test and probe, both recovery workflows, and the automatic test; the new live check read both managers' redownload settings (`/api/v3/config/downloadclient`); Housekeeparr recorded exactly the manager-native replacement search (trigger `unspecified`, newer than the journaled command baseline, "0 reports downloaded") for all four recoveries of each run |
+| 2026-11-16 (`118f15c`, same matrix) | Linux aarch64, Go 1.27.4 | qBittorrent 4.6.7 + Sonarr + Radarr | **failed** on the observation fixture `errored-restart`: after the client restart qBittorrent 4.6.7 reported `stalledDL`, verified 0, instead of `missingFiles` (as it did on 2026-11-15). Not yet diagnosed; hypothesis, not established: the restart happened before qBittorrent persisted its fastresume state (compare the Deluge note below). Everything else passed: the recovery refusals for unknown privacy, and the automatic test (both stalls diagnosed by the engine in four 0–1 s cycles; automatic recovery refused as untested and privacy-unknown, nothing sent). The `6507e87` automatic failure did not recur |
 
 What the suite exercised (`scripts/it/run.sh`, `internal/integration`):
 session login; version probe; listing of complete, half-complete (after
@@ -272,6 +277,7 @@ in the proposal comes from engine-written state and live re-fetches.
 
 | 2026-11-16 (`99cf198`) | Sonarr 4.0.20.3014 + Deluge 2.2.0; Radarr 6.4.4.10685 + Deluge 2.2.0 (isolated) | **passed**: same planner, live checks, baseline-attributed verification, and independent checks, with `core.pause_torrent` as the data-retaining stop; the torrent remained registered as `Paused` with the same label and byte-identical payload, and each manager queued its own replacement search |
 
+| 2026-11-16 (`118f15c`) | Sonarr 4.0.20.3014 and Radarr 6.4.4.10685 with each of qBittorrent 5.3.0, Deluge 2.2.0, rTorrent 0.9.8, Transmission 4.0.6, 4.1.4 (isolated) | **passed** again after the shared-executor changes (manager redownload-settings live check, command-ID baseline in the manager step, post-recovery search observation); Housekeeparr recorded the manager's replacement search as completed for exactly the command the test identifies independently |
 | 2026-11-16 (`dff2166` + `c26f83a`) | Sonarr 4.0.20.3014 + Transmission 4.0.6; Radarr 6.4.4.10685 + Transmission 4.0.6; the same with Transmission 4.1.4 (isolated) | **passed** on both branches with the legacy RPC: `torrent-stop` as the data-retaining stop; the torrent stayed registered and stopped in its download directory with a byte-identical payload, and each manager queued its own replacement search. The grab was first re-verified by the harness (see *Integration runs*). Registered in `action.Tested` with the exact reported versions `4.0.6 (38c164933e)` and `4.1.4 (a6d907d9ea)`. No second protocol was needed |
 | 2026-11-16 (`7b0d1d0` + `1f24634`) | Sonarr 4.0.20.3014 + rTorrent 0.9.8; Radarr 6.4.4.10685 + rTorrent 0.9.8 (isolated) | **passed** in a clean run: `d.stop` (never `d.close`/`d.erase`) as the data-retaining stop; the download stayed registered with `d.state=0`/`d.is_active=0`, the same `d.custom1` label and a byte-identical payload, and each manager queued its own replacement search. Registered in `action.Tested` |
 | 2026-11-16 (`b8d3313`) | Sonarr 4.0.20.3014 + rTorrent 0.9.8; Radarr 6.4.4.10685 + rTorrent 0.9.8 (isolated) | workflow **passed** (every step and independent check, `d.stop` as the stop: the download stayed registered, `d.state=0`/`d.is_active=0`, payload byte-identical), but the run as a whole failed on an unrelated observation fixture (see *Integration runs*), so this combination is **not registered** until a clean run. The same run's `d.message` probe again showed messages persisting across `d.stop`/`d.start` |
@@ -285,12 +291,58 @@ applications); the replacement's grab, progress and completion tracking
 (fixture-tested); search acceptance as an outcome tracked by Housekeeparr;
 retained-data and capacity limits (fixture-tested).
 
+## Automatic dispatch runs
+
+`internal/integration/automatic_test.go` (`TestAutomaticRecovery`, run last
+with both managers) builds the production binary static and runs
+`housekeeparr run --once --headless` repeatedly on one state directory. Two
+fresh managed grabs (Sonarr S01E06, Radarr movie 999007) genuinely make no
+progress (no peer can connect). Two `[[override]]`s for exactly those
+transfers set `new_download_grace = "0s"`, `no_progress_window = "1m"`,
+`min_observations = 3` and enable `no_progress_recovery`; global automation
+stays off, so nothing else on the client is eligible and the other
+never-progressing fixtures keep the default 90-minute window (they neither
+qualify nor trip the correlated-stall breaker). Observe mode first: the real
+engine diagnoses both stalls from its own observations and nothing is sent.
+Then automatic mode: one pass dispatches exactly one recovery
+(`actions_per_cycle` 1) while the other is recorded as waiting, the next pass
+dispatches it, two later passes send nothing, `finding <id> --json` shows the
+dispatched decision, and the same independent checks as the manual recovery
+test hold for both. The binary plans against the compiled `action.Tested`;
+the test fails if any registered combination is refused, and requires a
+visible refusal for qBittorrent 4.x.
+
+| Date | Versions | Result |
+| --- | --- | --- |
+| 2026-11-16 (`118f15c`) | Sonarr 4.0.20.3014 + Radarr 6.4.4.10685 with qBittorrent 5.3.0, Deluge 2.2.0, rTorrent 0.9.8, Transmission 4.0.6, Transmission 4.1.4 (isolated) | **passed** on all five |
+| 2026-11-16 (`118f15c`) | the same with qBittorrent 4.6.7 | **passed as a refusal**: diagnosed, then refused (untested combination, privacy unknown); nothing sent |
+
+Not established by these runs: the daemon loop (`run` without `--once`),
+the default diagnosis windows (deterministic tests only), timing across
+real polling intervals; SPEC §13.4 scenario 1 is therefore not complete on
+real instances.
+
+## Replacement search observation
+
+After a recovery, the manager-native redownload queues `EpisodeSearch` (one
+episode) or `MoviesSearch` with trigger `unspecified` and the content IDs in
+its body (released `RedownloadFailedDownloadService`, Sonarr `v4.0.20.3014`
+and Radarr `v6.4.4.10685`, confirmed on the instances above). It is skipped
+when `autoRedownloadFailed` is off, or for an interactively grabbed release
+when `autoRedownloadFailedFromInteractiveSearch` is off; recovery now
+requires those settings live before the manager write. The command list
+(`GET /api/v3/command`, captured fixtures under the adapters' `testdata`)
+still showed finished commands seven minutes after they ended; how long the
+managers keep them is not established. Sonarr 4.0.20 also pushes
+`SeasonSearch` when a whole season failed; packs are refused, so that is not
+exercised.
+
 ## Workflows by application
 
 | Application | Floor | Source evidence | Transport | Observation | No-progress recovery | Metadata recovery | Preserved-data failure handling | Partial-pack handling |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Sonarr | 4.0 | `v4.0.20.3014` | HTTP API v3, API key header | **tested: 4.0.20.3014**; others contract-tested | **tested: 4.0.20.3014 with qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8** (manual dispatch) | not implemented | not implemented | not implemented |
-| Radarr | 5.0 | `v6.4.4.10685` | HTTP API v3, API key header | **tested: 6.4.4.10685**; others contract-tested | **tested: 6.4.4.10685 with qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8** (manual dispatch) | not implemented | not implemented | n/a (Sonarr-specific in v1) |
+| Sonarr | 4.0 | `v4.0.20.3014` | HTTP API v3, API key header | **tested: 4.0.20.3014**; others contract-tested | **tested: 4.0.20.3014 with qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8** (manual and automatic dispatch) | not implemented | not implemented | not implemented |
+| Radarr | 5.0 | `v6.4.4.10685` | HTTP API v3, API key header | **tested: 6.4.4.10685**; others contract-tested | **tested: 6.4.4.10685 with qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8** (manual and automatic dispatch) | not implemented | not implemented | n/a (Sonarr-specific in v1) |
 | qBittorrent | 4.1 (WebUI API v2) | `release-4.6.7`, `release-5.3.0` | WebUI API v2, session cookie | **tested: 5.3.0, 4.6.7**; others contract-tested | **tested: 5.3.0** with Sonarr/Radarr above; 4.x refused (privacy unknown) | not implemented | not implemented | — |
 | Transmission | 2.80 (RPC 15) | `4.0.6`, `4.1.4` | legacy RPC (deprecated in 4.1, still supported throughout 4.x), session-id handshake, optional basic auth | **tested: 4.0.6, 4.1.4**; others contract-tested | **tested: 4.0.6, 4.1.4** with Sonarr/Radarr above (`torrent-stop`, legacy RPC) | not implemented | not implemented | — |
 | Deluge | 2.0 | `deluge-2.0.0`, `deluge-2.1.1`, `deluge-2.2.0` | deluge-web JSON API (`/json`); daemon protocol unsupported | **tested: 2.2.0**; others contract-tested | **tested: 2.2.0** with Sonarr/Radarr above (`core.pause_torrent`) | not implemented | not implemented | — |
