@@ -525,7 +525,9 @@ type Activity struct {
 	RetainedUsage store.RetainedUsage      `json:"retained_usage"`
 	Limits        policy.Limits            `json:"limits"`
 	Journal       JournalStatus            `json:"journal"`
-	Note          string                   `json:"note"`
+	// Attempts are per-content recovery attempts since their latest reset.
+	Attempts []AttemptSummary `json:"attempts,omitempty"`
+	Note     string           `json:"note"`
 }
 
 // Outcomes returns the replacement outcomes of the given actions.
@@ -539,7 +541,7 @@ func (s *Service) Outcomes(ctx context.Context, actions []store.Intent) (map[int
 
 // Activity returns recent lifecycle and audit history.
 func (s *Service) Activity(ctx context.Context, limit int) (*Activity, error) {
-	a := &Activity{Note: "Every action is journaled before any request is sent, and each step is verified by observation. Only tested workflows can run, and only manually outside observe mode; uncertain outcomes are held for review, never retried. After a verified recovery, the replacement grab, its progress, and completion are observed separately."}
+	a := &Activity{Note: "Every action is journaled before any request is sent, and each step is verified by observation. Only tested workflows can run, manually outside observe mode or automatically in automatic mode when enabled; uncertain outcomes are held for review, never retried. After a verified recovery, the manager's replacement search and the replacement grab, its progress, and completion are observed separately."}
 	var err error
 	if a.Actions, err = s.st.Intents(ctx, store.IntentFilter{Limit: limit}); err != nil {
 		return nil, err
@@ -551,6 +553,9 @@ func (s *Service) Activity(ctx context.Context, limit int) (*Activity, error) {
 		return nil, err
 	}
 	a.Limits = s.cfg.Limits()
+	if a.Attempts, err = s.AttemptSummaries(ctx); err != nil {
+		return nil, err
+	}
 	if a.Journal, err = s.Journal(ctx); err != nil {
 		return nil, err
 	}

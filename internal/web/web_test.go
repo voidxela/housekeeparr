@@ -289,3 +289,62 @@ func TestActivityShowsSearchAndGrabOutcomesSeparately(t *testing.T) {
 		}
 	}
 }
+
+// Recovery attempts per content are listed on Activity with a reset
+// control: the reset needs CSRF, a note, and explicit confirmation, and
+// uses the same service as the CLI.
+func TestActivityListsAttemptsAndResetsThemWithReview(t *testing.T) {
+	e := setup(t)
+	now := e.d.Clock.Now()
+	scope := "attempts:demo-sonarr|episode:42"
+	if err := e.d.Store.Write(context.Background(), func(tx *store.Tx) error {
+		for i := 0; i < 3; i++ {
+			id, err := tx.CreateIntent(store.Intent{Key: "web-att-" + itoa(int64(i)), Workflow: "no_progress_recovery", Origin: "automatic"}, now)
+			if err != nil {
+				return err
+			}
+			if err := tx.ReserveBudget(id, store.Budget{Kind: store.BudgetAttempts, Scope: scope, Limit: 3}, 1, now); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	page := e.get(t, "/activity").Body.String()
+	for _, want := range []string{"demo-sonarr|episode:42", "3 of 3", "needs review", "does not mean no release exists"} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("activity lacks %q", want)
+		}
+	}
+	m := regexp.MustCompile(`name="csrf" value="([0-9a-f]+)"`).FindStringSubmatch(page)
+	if m == nil {
+		t.Fatal("no CSRF token")
+	}
+	used := func() int {
+		u, err := e.d.Store.BudgetUsage(context.Background(), store.Budget{Kind: store.BudgetAttempts, Scope: scope, Limit: 3}, 1, e.d.Clock.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return u.Used
+	}
+	form := url.Values{"csrf": {m[1]}, "ref": {"demo-sonarr|episode:42"}, "note": {"checked history: release fake"}}
+	if w := e.do(t, post("/attempts/reset", "https://attacker.example", form)); w.Code != 403 || used() != 3 {
+		t.Fatalf("cross-origin reset: %d, used %d", w.Code, used())
+	}
+	w := e.do(t, post("/attempts/reset", "http://127.0.0.1:8485", form))
+	if w.Code != http.StatusSeeOther || !strings.Contains(w.Header().Get("Location"), "Not+reset") || used() != 3 {
+		t.Fatalf("reset without confirmation: %d %s used %d", w.Code, w.Header().Get("Location"), used())
+	}
+	noNote := url.Values{"csrf": {m[1]}, "ref": {"demo-sonarr|episode:42"}, "confirm": {"yes"}}
+	if w := e.do(t, post("/attempts/reset", "http://127.0.0.1:8485", noNote)); used() != 3 || !strings.Contains(w.Header().Get("Location"), "Not+reset") {
+		t.Fatalf("reset without a note: used %d", used())
+	}
+	form.Set("confirm", "yes")
+	if w := e.do(t, post("/attempts/reset", "http://127.0.0.1:8485", form)); w.Code != http.StatusSeeOther || used() != 0 {
+		t.Fatalf("confirmed reset: %d used %d", w.Code, used())
+	}
+	if page := e.get(t, "/activity").Body.String(); strings.Contains(page, "needs review") {
+		t.Fatal("reset content still shown as needing review")
+	}
+}

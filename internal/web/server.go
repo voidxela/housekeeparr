@@ -113,6 +113,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /downloads", s.page(s.downloads))
 	mux.HandleFunc("GET /downloads/{client}/{native}", s.page(s.download))
 	mux.HandleFunc("GET /activity", s.page(s.activity))
+	mux.HandleFunc("POST /attempts/reset", s.resetAttempts)
 	mux.HandleFunc("GET /connections", s.page(s.connections))
 	mux.Handle("GET /static/", s.static)
 	mux.HandleFunc("GET /healthz", s.healthz)
@@ -233,6 +234,29 @@ func (s *Server) findingAction(w http.ResponseWriter, r *http.Request) {
 		target += "?notice=" + url.QueryEscape("Saved.")
 	}
 	http.Redirect(w, r, target, http.StatusSeeOther)
+}
+
+// resetAttempts allows further recovery attempts for one episode or movie
+// after review (the same service as "housekeeparr attempts reset"). A note
+// and an explicit confirmation are required; nothing is sent externally.
+func (s *Server) resetAttempts(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
+	if err := r.ParseForm(); err != nil || !s.csrfValid(r) {
+		http.Error(w, "Form expired or invalid; reload the page and try again.", http.StatusForbidden)
+		return
+	}
+	ref := r.PostFormValue("ref")
+	var err error
+	if r.PostFormValue("confirm") != "yes" {
+		err = errors.New("confirm that you reviewed why earlier replacements did not resolve this content")
+	} else {
+		err = s.svc.ResetAttempts(r.Context(), ref, app.ActorWeb, r.PostFormValue("note"))
+	}
+	msg := "Recovery attempts for " + ref + " were reset; earlier attempts remain in the history. Nothing was sent."
+	if err != nil {
+		msg = "Not reset: " + err.Error()
+	}
+	http.Redirect(w, r, "/activity?notice="+url.QueryEscape(msg)+"#h-attempts", http.StatusSeeOther)
 }
 
 func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {

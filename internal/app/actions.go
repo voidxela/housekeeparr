@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/voidxela/housekeeparr/internal/action"
 	"github.com/voidxela/housekeeparr/internal/adapter"
@@ -248,6 +250,59 @@ func (g gate) Blockers(ctx context.Context, p action.Proposal) []action.Check {
 // scope starts with prefix ("" for all), newest first.
 func (s *Service) AttemptHistory(ctx context.Context, prefix string, limit int) ([]store.Attempt, []store.BudgetReset, error) {
 	return s.st.Attempts(ctx, prefix, limit)
+}
+
+// AttemptSummary is one episode's or movie's recovery attempts since its
+// latest reset, against the per-content limit.
+type AttemptSummary struct {
+	// Ref is "<manager-id>|episode:<id>" or "<manager-id>|movie:<id>".
+	Ref       string             `json:"ref"`
+	Used      int                `json:"used"`
+	Limit     int                `json:"limit"`
+	Exhausted bool               `json:"exhausted"`
+	LastAt    time.Time          `json:"last_at"`
+	LastReset *store.BudgetReset `json:"last_reset,omitempty"`
+}
+
+// AttemptSummaries lists content with counted recovery attempts since its
+// latest reset, exhausted first, then most recent. An exhausted allowance
+// needs review and a reset; it is not evidence that no release exists.
+func (s *Service) AttemptSummaries(ctx context.Context) ([]AttemptSummary, error) {
+	atts, resets, err := s.st.Attempts(ctx, "attempts:", 500)
+	if err != nil {
+		return nil, err
+	}
+	limit := s.cfg.Limits().ContentAttempts
+	last := map[string]time.Time{}
+	var order []string
+	for _, a := range atts {
+		if _, ok := last[a.Scope]; !ok {
+			order = append(order, a.Scope)
+			last[a.Scope] = a.At
+		}
+	}
+	latestReset := map[string]*store.BudgetReset{}
+	for i := range resets {
+		r := &resets[i]
+		if cur := latestReset[r.Scope]; cur == nil || r.At.After(cur.At) {
+			latestReset[r.Scope] = r
+		}
+	}
+	now := s.now()
+	var out []AttemptSummary
+	for _, scope := range order {
+		u, err := s.st.BudgetUsage(ctx, store.Budget{Kind: store.BudgetAttempts, Scope: scope, Limit: limit}, 1, now)
+		if err != nil {
+			return nil, err
+		}
+		if u.Used == 0 {
+			continue
+		}
+		out = append(out, AttemptSummary{Ref: strings.TrimPrefix(scope, "attempts:"), Used: u.Used, Limit: limit,
+			Exhausted: u.Used >= limit, LastAt: last[scope], LastReset: latestReset[scope]})
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Exhausted && !out[j].Exhausted })
+	return out, nil
 }
 
 // ResetAttempts allows further recovery attempts for one episode or movie
