@@ -29,6 +29,8 @@ exists yet.
 | 2026-11-15 (isolated: loopback-only network namespace, the new default) | Linux aarch64, Go 1.27.4 | qBittorrent 5.3.0 + Sonarr 4.0.20.3014 + Radarr 6.4.4.10685; qBittorrent 4.6.7 + Sonarr; Transmission 4.0.6; Transmission 4.1.4; rTorrent 0.9.8; Deluge 2.2.0 | all assertions passed in every combination |
 | 2026-11-15 (isolated, with the removal probes and a second partially downloaded movie fixture) | Linux aarch64, Go 1.27.4 | qBittorrent 5.3.0 + Sonarr + Radarr; qBittorrent 4.6.7 + Sonarr; Transmission 4.0.6 and 4.1.4; rTorrent 0.9.8; Deluge 2.2.0 | all observation assertions and both probes passed |
 | 2026-11-15 (isolated, with the `errored` fixture: verified, stopped, payload deleted, started) | Linux aarch64, Go 1.27.4 | full matrix as above | all assertions passed; error-state semantics below |
+| 2026-11-15 (isolated, with the metadata/indexer stand-in and managed-row probes) | Linux aarch64, Go 1.27.4 | qBittorrent 5.3.0 + Transmission 4.0.6 + Deluge 2.2.0 + rTorrent 0.9.8 + Sonarr 4.0.20.3014 + Radarr 6.4.4.10685 (one run) | all observation tests, both unknown-row probes, and all four managed-row variants on each manager passed (managers' download client: qBittorrent 5.3.0) |
+| 2026-11-15 (same) | Linux aarch64, Go 1.27.4 | qBittorrent 4.6.7 + Transmission 4.1.4 + Sonarr 4.0.20.3014 + Radarr 6.4.4.10685 | all passed, including the managed-row variants with qBittorrent 4.6.7 as the managers' download client |
 
 What the suite exercised (`scripts/it/run.sh`, `internal/integration`):
 session login; version probe; listing of complete, half-complete (after
@@ -77,9 +79,9 @@ Not exercised: qBittorrent `error`/`missingFiles` and Deluge `Error` states
 below), missing files after a client restart or forced recheck, queueing,
 checking states as stable observations, real peers or swarm counts, v2/hybrid
 torrents, authentication bypass, reverse-proxy base paths, TLS, large
-libraries, series/movies that exist in the manager library, grab history,
-import completion, and manager correlation with any client other than
-qBittorrent.
+libraries, import completion, and manager correlation with any client other
+than qBittorrent. Series/movies in the manager library and grab history are
+exercised only by the managed-row probes below, with qBittorrent.
 
 ## Missing-data (client error) semantics
 
@@ -115,9 +117,52 @@ is sent explicitly.
 Interpretation: for content without grab history, acceptance of a removal
 is not a durable effect and does not blocklist anything, so a recovery
 workflow must verify queue state after a refresh and treat these rows as
-ineligible. The same requests on rows with real grab history (managed
-content) are not yet probed; that is the prerequisite for any recovery
-workflow.
+ineligible.
+
+### Managed rows with real grab history
+
+`internal/integration/managed_test.go`, run only inside the isolated
+namespace. The managers add fictional content (Sonarr tvdb 999001, a
+four-episode 2020 series; Radarr tmdb 999002–999005) from a loopback
+metadata stand-in (`internal/integration/standin`), search a loopback
+Torznab stand-in, and grab a synthetic, half-present 4 MiB release into
+qBittorrent. The managers' metadata hosts are hard-coded HTTPS names: a
+private `/etc/hosts` bind-mounted inside the namespace resolves them to
+loopback, and the managers trust the stand-in's throwaway CA through
+`SSL_CERT_FILE` (verified for both Sonarr's .NET 6 and Radarr's .NET 8
+runtimes). No manager database is edited; setup uses only the managers'
+API: root folder, indexer (`forceSave`), quality definitions relaxed to a
+zero minimum size (the default WEBDL-1080p minimum rejects a 4 MiB
+release), lookup, add (search on add disabled), then a targeted
+`EpisodeSearch`/`MoviesSearch`. Sonarr's first search right after the
+quality-definition change was still evaluated against the old minimum
+(cached); the test retries the targeted search at most three times.
+
+Each variant runs on its own grabbed release, with every flag explicit
+(`removeFromClient=false&changeCategory=false` always), followed by two
+`RefreshMonitoredDownloads` commands:
+
+| Date | Versions | Variant | Observed (identical on both managers) |
+| --- | --- | --- | --- |
+| 2026-11-15 | Sonarr 4.0.20.3014, Radarr 6.4.4.10685, qBittorrent 5.3.0 and 4.6.7 (isolated) | ignore: `blocklist=false&skipRedownload=true` | HTTP 200; row removed and **stays removed** after both refreshes; history gains `downloadIgnored`; blocklist unchanged; no search queued; torrent registered, same state and category, payload identical |
+| 2026-11-15 | same | blocklist: `blocklist=true&skipRedownload=true` | HTTP 200; row stays removed; history gains `downloadFailed`; **exactly that release is blocklisted**; no search queued; no regrab; torrent and payload preserved as above |
+| 2026-11-15 | same | blocklist with `removeFailedDownloads=true` on the manager's download client | identical to blocklist: the explicit `removeFromClient=false` is honoured, and the torrent stays registered |
+| 2026-11-15 | same | blocklist with `skipRedownload=false` | as blocklist, plus the manager queues its own replacement search (`EpisodeSearch`/`MoviesSearch`, trigger `unspecified`) immediately: manager-native redownload is the default owner unless suppressed |
+
+Interpretation:
+- Unlike unknown rows, removal of a managed row is durable, and the
+  blocklist path blocklists only that release.
+- The torrent is left running in its original category, so a retained
+  incomplete transfer is not stopped by the manager. Separating it (SPEC §7
+  step 4) is a separate client operation.
+- `skipRedownload` decides which component owns the replacement search.
+  Housekeeparr must send `true` whenever it schedules the search itself.
+
+Not exercised yet: these variants with Transmission, Deluge, or rTorrent as
+the managers' download client; `changeCategory=true`; a download the client
+itself reports as failed (the `removeFailedDownloads` path the managers use
+for automatic failed-download handling); completed and imported releases;
+season packs.
 
 ## Workflows by application
 
