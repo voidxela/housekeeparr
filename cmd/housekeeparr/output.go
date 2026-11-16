@@ -61,6 +61,15 @@ func printOverview(w io.Writer, o *app.Overview) {
 	}
 	fmt.Fprintf(w, "Mode:     %s (configuration revision %s)\n", o.Mode, o.ConfigRevision)
 	fmt.Fprintf(w, "Worker:   %s — %s\n", o.Worker.State, o.Worker.Explanation)
+	if len(o.Automation) > 0 {
+		var parts []string
+		for _, r := range []string{"dispatched", "deferred", "held", "refused", "needs_review", "at_ceiling", "waiting", "not_permitted", "ineligible"} {
+			if n := o.Automation[r]; n > 0 {
+				parts = append(parts, fmt.Sprintf("%d %s", n, r))
+			}
+		}
+		fmt.Fprintf(w, "Automation: latest decisions: %s (see each finding)\n", strings.Join(parts, ", "))
+	}
 	fmt.Fprintf(w, "Findings: %d open, %d acknowledged, %d snoozed (errors %d, warnings %d, notices %d)\n",
 		o.Counts.Open, o.Counts.Acknowledged, o.Counts.Snoozed, o.Counts.BySeverity["error"], o.Counts.BySeverity["warning"], o.Counts.BySeverity["notice"])
 	fmt.Fprintf(w, "Downloads: %d incomplete, %d accumulating evidence, %d diagnosed\n", o.Transfers.Incomplete, o.Transfers.Observing, o.Transfers.Diagnosed)

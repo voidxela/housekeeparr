@@ -131,6 +131,8 @@ type Overview struct {
 	Transfers      TransferCounts        `json:"transfers"`
 	Warnings       []string              `json:"warnings,omitempty"`
 	Capabilities   []string              `json:"milestone_limitations"`
+	// Automation counts findings by their latest automatic evaluation.
+	Automation map[string]int `json:"automation,omitempty"`
 }
 
 // TransferCounts summarises observed transfers.
@@ -142,9 +144,10 @@ type TransferCounts struct {
 
 // MilestoneLimitations are shown wherever operators look for actions.
 var MilestoneLimitations = []string{
-	"Observation only: Housekeeparr never changes media managers or download clients in this release.",
-	"Recovery, partial-pack handling, and missing-content searches are planned for v1 but not implemented yet.",
-	"No adapter version has been validated against a real released instance yet.",
+	"Observe mode (the default) never changes media managers or download clients. Outside it, writes are limited to workflows with a recorded " +
+		"real-instance test for the exact versions: today only no-progress recovery for Sonarr 4.0.20 or Radarr 6.4.4 with qBittorrent 5.3.0.",
+	"Metadata recovery, preserved-data failure handling, partial-pack handling, missing-content searches, and notifications are planned for v1 but not implemented yet.",
+	"Observation is validated only for the released versions listed in docs/compatibility.md; other versions are untested.",
 }
 
 // Overview builds the landing summary.
@@ -164,6 +167,9 @@ func (s *Service) Overview(ctx context.Context) (*Overview, error) {
 		return nil, err
 	}
 	if o.Recent, err = s.st.RecentFindingEvents(ctx, 8); err != nil {
+		return nil, err
+	}
+	if o.Automation, err = s.st.EvaluationCounts(ctx); err != nil {
 		return nil, err
 	}
 	trs, err := s.st.Transfers(ctx, store.TransferFilter{PresentOnly: true})
