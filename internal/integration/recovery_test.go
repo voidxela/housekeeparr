@@ -18,8 +18,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -28,7 +31,9 @@ import (
 	"github.com/voidxela/housekeeparr/internal/adapter"
 	"github.com/voidxela/housekeeparr/internal/adapter/arr"
 	"github.com/voidxela/housekeeparr/internal/adapter/radarr"
+	"github.com/voidxela/housekeeparr/internal/config"
 	"github.com/voidxela/housekeeparr/internal/domain"
+	"github.com/voidxela/housekeeparr/internal/engine"
 	"github.com/voidxela/housekeeparr/internal/policy"
 	"github.com/voidxela/housekeeparr/internal/store"
 	"github.com/voidxela/housekeeparr/internal/workflow"
@@ -137,41 +142,85 @@ func runRecovery(t *testing.T, a arrAPI, mgr recoveryManager, me managedEntry, s
 	t.Helper()
 	ctx := context.Background()
 	e := me.asEntry()
-	qb := qbit(t)
-	cp, err := qb.Probe(ctx)
+	// Production path: an engine cycle with engine-built adapters writes the
+	// transfer, queue row, correlation, and probes to a real store; the
+	// proposal is planned from those stored records (as the CLI and web do)
+	// and executed with the same adapters.
+	dir := t.TempDir()
+	section, url_ := "sonarr", env(t, "HK_IT_SONARR_URL")
+	keyEnv := "HK_IT_SONARR_KEY"
+	if mgr.Kind() == adapter.KindRadarr {
+		section, url_, keyEnv = "radarr", env(t, "HK_IT_RADARR_URL"), "HK_IT_RADARR_KEY"
+	}
+	cfgSrc := "version = 1\n[polling]\njitter = \"0s\"\n[[" + section + "]]\nid = \"" + mgr.ID() + "\"\nurl = \"" + url_ +
+		"\"\napi_key = \"env:" + keyEnv + "\"\ndownload_clients = { \"qBittorrent\" = \"qbit\" }\n[[qbittorrent]]\nid = \"qbit\"\nurl = \"" +
+		env(t, "HK_IT_QBT_URL") + "\"\nusername = \"admin\"\npassword = \"env:HK_IT_QBT_PASS\"\n"
+	cfg, _, err := config.Parse([]byte(cfgSrc), filepath.Join(dir, "h.toml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	mp, err := mgr.Probe(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	tr, ok := clientState(t, e.Hash)
-	if !ok {
-		t.Fatal("grabbed torrent not in client")
-	}
-	q, err := mgr.Queue(ctx)
-	if err != nil || !q.Complete {
-		t.Fatalf("queue: %v", err)
-	}
-	var row *domain.QueueItem
-	for i := range q.Items {
-		if strings.EqualFold(q.Items[i].DownloadID, e.Hash) {
-			row = &q.Items[i]
+	secrets, probs := cfg.ResolvedSecrets(nil)
+	for _, pr := range probs {
+		if pr.Severity == "error" {
+			t.Fatal(pr)
 		}
 	}
-	if row == nil {
-		t.Fatal("no queue row for the grab")
+	conns, err := engine.Build(cfg, secrets)
+	if err != nil {
+		t.Fatal(err)
 	}
+	st, err := store.Open(ctx, dir, store.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	eng, err := engine.New(ctx, engine.Options{Config: cfg, Store: st, Conns: conns, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), RunKind: "once", Version: "it"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored *store.TransferRecord
+	var rows []store.QueueRecord
+	for i := 0; i < 3; i++ { // correlation may need consecutive cycles
+		for _, c := range eng.Cycle(ctx, nil).Connections {
+			if !c.OK {
+				t.Fatalf("cycle %s: %s", c.ID, c.Error)
+			}
+		}
+		if stored, err = st.Transfer(ctx, "qbit", e.Hash); err != nil {
+			t.Fatal(err)
+		}
+		if rows, err = st.QueueItems(ctx, store.QueueFilter{ClientID: "qbit", NativeID: e.Hash}); err != nil {
+			t.Fatal(err)
+		}
+		if stored != nil && len(rows) == 1 && rows[0].MatchStatus == store.MatchMatched {
+			break
+		}
+	}
+	if stored == nil || len(rows) != 1 || rows[0].MatchStatus != store.MatchMatched {
+		t.Fatalf("engine did not record a correlated transfer: %+v %+v", stored, rows)
+	}
+	tr, row := stored.Latest, &rows[0].Latest
+	var cp, mp *adapter.Probe
+	recs, _ := st.Connections(ctx)
+	for _, c := range recs {
+		switch c.ID {
+		case "qbit":
+			cp = c.Probe
+		case mgr.ID():
+			mp = c.Probe
+		}
+	}
+	if cp == nil || mp == nil {
+		t.Fatal("engine stored no probes")
+	}
+	// Only the diagnosis is supplied: waiting out the stall window is not useful here.
+	stored.Assessment = &policy.Assessment{Status: policy.StatusQualified, Diagnosis: policy.DiagnosisNoProgress, Headline: "supplied by the integration test"}
 	now := time.Now().UTC()
 	in := action.PlanInput{
-		Finding: domain.Finding{ID: 1, Type: domain.FindingTransferStalled, State: domain.FindingOpen},
-		Transfer: &store.TransferRecord{ClientID: "qbit", NativeID: tr.NativeID, Name: tr.Name, StateClass: tr.StateClass, LastSeen: now, Present: true, Latest: tr,
-			Assessment: &policy.Assessment{Status: policy.StatusQualified, Diagnosis: policy.DiagnosisNoProgress, Headline: "supplied by the integration test"}},
-		Queue: []store.QueueRecord{{ManagerID: mgr.ID(), ItemKey: store.QueueItemKey(*row), QueueID: row.QueueID, DownloadID: row.DownloadID,
-			Present: true, MatchStatus: store.MatchMatched, Latest: *row}},
+		Finding:  domain.Finding{ID: 1, Type: domain.FindingTransferStalled, State: domain.FindingOpen},
+		Transfer: stored, Queue: rows,
 		Policy: policy.Effective{Mode: "automatic", Revision: "it", Automation: []policy.WorkflowPermission{{Workflow: policy.WorkflowNoProgressRecovery, Enabled: true, From: "integration test"}}},
-		Origin: action.OriginAutomatic, ClientKind: adapter.KindQBittorrent, ClientProbe: &cp, ManagerKind: mgr.Kind(), ManagerProbe: &mp,
+		Origin: action.OriginAutomatic, ClientKind: adapter.KindQBittorrent, ClientProbe: cp, ManagerKind: mgr.Kind(), ManagerProbe: mp,
 		PollInterval: 10 * time.Minute, Now: now,
 		// What this test establishes, for exactly these versions.
 		Tested: []action.TestedWorkflow{{Workflow: policy.WorkflowNoProgressRecovery, Manager: mgr.Kind(), ManagerVersion: strings.TrimPrefix(mp.Version, "v"),
@@ -195,14 +244,10 @@ func runRecovery(t *testing.T, a arrAPI, mgr recoveryManager, me managedEntry, s
 	if !p.Eligible() {
 		t.Fatalf("proposal not eligible: %+v", p.Blockers())
 	}
-
-	st, err := store.Open(ctx, t.TempDir(), store.Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
-	ex := workflow.FromConnections([]adapter.DownloadClient{qb}, []adapter.MediaManager{mgr.(adapter.MediaManager)})
+	ex := workflow.FromConnections(conns.Clients, conns.Managers)
 	co := &action.Coordinator{Store: st, Executor: ex, Actor: "integration"}
+	// A stale fingerprint between stored state and the live re-fetch would
+	// refuse here with ErrStale rather than send anything.
 	digest := payloadDigest(t, e)
 	hist0 := a.history(e.Hash)
 	start := time.Now().UTC().Add(-time.Second)
