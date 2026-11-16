@@ -223,7 +223,7 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 			Op:          "manager.queue.fail",
 			Target:      raw(map[string]any{"manager_id": row.ManagerID, "queue_id": row.QueueID, "download_id": row.DownloadID}),
 			Request:     raw(map[string]bool{"removeFromClient": false, "blocklist": true, "skipRedownload": false, "changeCategory": false}),
-			Expect:      raw(map[string]any{"queue_row_absent_after_refresh": true, "release_blocklisted": true, "history_event": "downloadFailed"}),
+			Expect:      raw(map[string]any{"queue_row_absent": true, "release_blocklisted": true, "history_event": "downloadFailed"}),
 			Description: fmt.Sprintf("Mark the grab failed in %s: blocklist this release and remove the queue item, keeping the torrent in the client", row.ManagerID),
 		})
 		p.Effects = append(p.Effects, fmt.Sprintf("%s blocklists this exact release (%q) and stops tracking it", row.ManagerID, row.Latest.Title),
@@ -254,15 +254,36 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 	return p, nil
 }
 
-func fingerprint(in PlanInput, row *store.QueueRecord) string {
+// Facts are the external, decision-relevant facts a proposal was planned
+// against. The executor recomputes them from a fresh read immediately
+// before the first write; any difference cancels the action. (Local facts,
+// such as finding state and policy, are re-checked by re-planning.)
+type Facts struct {
+	ClientID, NativeID string
+	Present            bool
+	StateClass         domain.StateClass
+	Verified           domain.Signal[int64]
+	ManagerID          string
+	QueueID            int64
+	DownloadID         string
+}
+
+// Fingerprint digests the facts.
+func (f Facts) Fingerprint() string {
 	h := sha256.New()
-	t := in.Transfer
-	v, _ := t.Latest.VerifiedBytes.Get()
-	fmt.Fprintf(h, "f%d|%s|t%s|%s|%s|%d|%v|p%s", in.Finding.ID, in.Finding.State, t.ClientID, t.NativeID, t.StateClass, v, t.Present, in.Policy.Revision)
-	if row != nil {
-		fmt.Fprintf(h, "|q%s|%d|%s", row.ManagerID, row.QueueID, row.DownloadID)
-	}
+	v, known := f.Verified.Get()
+	fmt.Fprintf(h, "v1|%s|%s|%v|%s|%v:%d|%s|%d|%s", f.ClientID, f.NativeID, f.Present, f.StateClass, known, v,
+		f.ManagerID, f.QueueID, strings.ToLower(f.DownloadID))
 	return hex.EncodeToString(h.Sum(nil))[:16]
+}
+
+func fingerprint(in PlanInput, row *store.QueueRecord) string {
+	t := in.Transfer
+	f := Facts{ClientID: t.ClientID, NativeID: t.NativeID, Present: t.Present, StateClass: t.StateClass, Verified: t.Latest.VerifiedBytes}
+	if row != nil {
+		f.ManagerID, f.QueueID, f.DownloadID = row.ManagerID, row.QueueID, row.DownloadID
+	}
+	return f.Fingerprint()
 }
 
 func probeVersion(p *adapter.Probe) string {
