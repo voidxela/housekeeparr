@@ -348,3 +348,37 @@ func TestActivityListsAttemptsAndResetsThemWithReview(t *testing.T) {
 		t.Fatal("reset content still shown as needing review")
 	}
 }
+
+// Workflow controls pause and resume through the shared service, with CSRF
+// and a required note; the pause is shown with who paused it and why.
+func TestWorkflowPauseControls(t *testing.T) {
+	e := setup(t)
+	page := e.get(t, "/connections").Body.String()
+	m := regexp.MustCompile(`name="csrf" value="([0-9a-f]+)"`).FindStringSubmatch(page)
+	if m == nil || !strings.Contains(page, "Workflow controls") {
+		t.Fatal("no workflow controls")
+	}
+	path := "/workflows/no_progress_recovery/pause"
+	if w := e.do(t, post(path, "https://attacker.example", url.Values{"csrf": {m[1]}, "note": {"x"}})); w.Code != 403 {
+		t.Fatalf("cross-origin pause: %d", w.Code)
+	}
+	if w := e.do(t, post(path, "http://127.0.0.1:8485", url.Values{"csrf": {m[1]}})); !strings.Contains(w.Header().Get("Location"), "Not+changed") {
+		t.Fatalf("pause without note: %s", w.Header().Get("Location"))
+	}
+	if w := e.do(t, post(path, "http://127.0.0.1:8485", url.Values{"csrf": {m[1]}, "note": {"tracker maintenance"}})); w.Code != http.StatusSeeOther {
+		t.Fatalf("pause: %d", w.Code)
+	}
+	if ps, _ := e.svc.WorkflowPauses(context.Background()); ps["no_progress_recovery"].Note != "tracker maintenance" {
+		t.Fatalf("pauses %v", ps)
+	}
+	page = e.get(t, "/connections").Body.String()
+	if !strings.Contains(page, "tracker maintenance") || !strings.Contains(page, "/workflows/no_progress_recovery/resume") {
+		t.Fatal("pause not shown with a resume control")
+	}
+	if w := e.do(t, post("/workflows/no_progress_recovery/resume", "http://127.0.0.1:8485", url.Values{"csrf": {m[1]}, "note": {"done"}})); w.Code != http.StatusSeeOther {
+		t.Fatalf("resume: %d", w.Code)
+	}
+	if ps, _ := e.svc.WorkflowPauses(context.Background()); len(ps) != 0 {
+		t.Fatalf("still paused: %v", ps)
+	}
+}

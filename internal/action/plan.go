@@ -82,6 +82,8 @@ type PlanInput struct {
 	// Owners are the managers that could own the transfer (see
 	// Planned.Owners).
 	Owners []string
+	// Paused is the operator's pause of this workflow, if any.
+	Paused *store.WorkflowPause
 	// Retained is the current retained-transfer usage (SPEC §7.1).
 	Retained       store.RetainedUsage
 	PollInterval   time.Duration
@@ -236,7 +238,7 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 	add("not in cooldown", len(cooling) == 0, true, nonEmpty(strings.Join(cooling, "; "), "no cooldown on "+strings.Join(p.Locks, " or ")))
 
 	// --- policy -------------------------------------------------------------
-	p.Prerequisites = append(p.Prerequisites, PolicyCheck(in.Policy, wf, in.Origin))
+	p.Prerequisites = append(p.Prerequisites, PolicyCheck(in.Policy, wf, in.Origin), PauseCheck(in.Paused, wf))
 
 	// --- operations ---------------------------------------------------------
 	// Every flag is explicit (SPEC §7.3). The semantics are those recorded
@@ -286,6 +288,17 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 	p.Planned = planned(in, cv, mv, row, present)
 	p.Fingerprint = p.Planned.fingerprint()
 	return p, nil
+}
+
+// PauseCheck refuses a workflow an operator paused: unlike disabled
+// automation, a pause stops manual actions too. Planning and the per-write
+// gate use it.
+func PauseCheck(paused *store.WorkflowPause, wf policy.Workflow) Check {
+	if paused == nil {
+		return Check{Name: "workflow not paused", Satisfied: true, Hard: true, Detail: "not paused"}
+	}
+	return Check{Name: "workflow not paused", Hard: true, Detail: fmt.Sprintf("%s was paused by %s at %s: %s (resume it to allow actions again)",
+		wf, paused.Actor, paused.PausedAt.UTC().Format(time.RFC3339), paused.Note)}
 }
 
 // PolicyCheck evaluates mode, emergency stop, exclusions, and (for

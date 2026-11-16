@@ -314,9 +314,26 @@ func (s *Server) connections(r *http.Request) (string, string, any, error) {
 	if err != nil {
 		return "", "", nil, err
 	}
+	pauses, err := s.svc.WorkflowPauses(r.Context())
+	if err != nil {
+		return "", "", nil, err
+	}
+	type workflowControl struct {
+		Workflow policy.Workflow
+		Pause    *store.WorkflowPause
+	}
+	var wfs []workflowControl
+	for _, wf := range policy.AllWorkflows() {
+		c := workflowControl{Workflow: wf}
+		if p, ok := pauses[string(wf)]; ok {
+			c.Pause = &p
+		}
+		wfs = append(wfs, c)
+	}
 	return "connections", "Connections & policy", struct {
 		Connections []app.ConnectionView
 		Policies    []policy.Effective
+		Workflows   []workflowControl
 		Limitations []string
-	}{cs, ps, app.MilestoneLimitations}, nil
+	}{cs, ps, wfs, app.MilestoneLimitations}, nil
 }

@@ -1,5 +1,15 @@
-{{define "content"}}{{with .Page}}
+{{define "content"}}{{$csrf := .CSRF}}{{with .Page}}
 <h1>Connections &amp; policy</h1>
+<section class="card" aria-labelledby="h-workflows">
+  <h2 id="h-workflows">Workflow controls</h2>
+  <p>Pausing a workflow stops every action for it, automatic and manual, until it is resumed; it is separate from enabling automation in the configuration. Requests already accepted by a manager or client may still complete. Findings stay visible while paused.</p>
+  <table class="table compact"><thead><tr><th scope="col">Workflow</th><th scope="col">State</th><th scope="col">Control</th></tr></thead><tbody>
+  {{range .Workflows}}<tr><td><code>{{.Workflow}}</code></td><td>{{with .Pause}}<strong>paused</strong> {{clock .PausedAt}} <span class="muted small">{{.Actor}}: {{.Note}}</span>{{else}}not paused{{end}}</td>
+  <td><form method="post" action="/workflows/{{.Workflow}}/{{if .Pause}}resume{{else}}pause{{end}}"><input type="hidden" name="csrf" value="{{$csrf}}">
+  <label class="small">{{if .Pause}}Why resume{{else}}Why pause{{end}} <input type="text" name="note" required maxlength="500"></label>
+  <button type="submit" class="secondary">{{if .Pause}}Resume{{else}}Pause{{end}}</button></form></td></tr>{{end}}
+  </tbody></table>
+</section>
 {{if not .Connections}}{{template "empty" "No connections configured."}}<p class="muted center">Add <code>[[sonarr]]</code> and <code>[[qbittorrent]]</code> sections to the configuration file.</p>{{end}}
 {{range .Connections}}
 <section class="card conn-card" aria-labelledby="c-{{.ID}}">

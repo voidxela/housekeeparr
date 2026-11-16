@@ -186,6 +186,26 @@ func TestEndToEndOneShotReadOnlySlice(t *testing.T) {
 	if code, out, _ := runCLI(t, "status", "--config", cfg); code != exitOK || !strings.Contains(out, "scheduled") {
 		t.Fatalf("status after one-shot: %d\n%s", code, out)
 	}
+	// Workflow pause (a local mutation, no external write): a note is
+	// required, it is listed, and resume lifts it.
+	if code, _, errOut := runCLI(t, "pause", "no_progress_recovery", "--config", cfg); code != exitUsage || !strings.Contains(errOut, "note") {
+		t.Fatalf("pause without note: %d %s", code, errOut)
+	}
+	if code, _, _ := runCLI(t, "pause", "no_such", "--note", "x", "--config", cfg); code != exitUsage {
+		t.Fatalf("pause of an unknown workflow: %d", code)
+	}
+	if code, out, errOut := runCLI(t, "pause", "no_progress_recovery", "--note", "tracker maintenance", "--config", cfg); code != exitOK || !strings.Contains(out, "paused") {
+		t.Fatalf("pause: %d %s %s", code, out, errOut)
+	}
+	if code, out, _ := runCLI(t, "paused", "--config", cfg); code != exitOK || !strings.Contains(out, "tracker maintenance") {
+		t.Fatalf("paused: %d %s", code, out)
+	}
+	if code, _, errOut := runCLI(t, "resume", "no_progress_recovery", "--note", "done", "--config", cfg); code != exitOK {
+		t.Fatalf("resume: %d %s", code, errOut)
+	}
+	if code, out, _ := runCLI(t, "paused", "--config", cfg); code != exitOK || !strings.Contains(out, "No workflow is paused") {
+		t.Fatalf("paused after resume: %d %s", code, out)
+	}
 	if writes.Load() != 0 {
 		t.Fatalf("%d operational writes were sent", writes.Load())
 	}

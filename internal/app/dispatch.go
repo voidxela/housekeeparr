@@ -233,7 +233,7 @@ func (s *Service) classify(ctx context.Context, p *action.Proposal, now time.Tim
 		return false
 	}
 	switch {
-	case has("automation permitted by policy"):
+	case has("automation permitted by policy"), has("workflow not paused"):
 		return store.EvalNotPermitted, detail, nil
 	case has("recovery attempts for"):
 		return store.EvalNeedsReview, detail, nil

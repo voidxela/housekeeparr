@@ -109,6 +109,15 @@ func (s *Service) Preview(ctx context.Context, findingID int64, origin action.Or
 	}
 	out.Policy = in.Policy
 	in.Owners = s.cfg.ManagersFor(f.Subject.ClientID)
+	if wf, ok := action.WorkflowFor(f.Type); ok {
+		pauses, err := s.st.WorkflowPauses(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if p, paused := pauses[string(wf)]; paused {
+			in.Paused = &p
+		}
+	}
 	if in.Retained, err = s.st.RetainedUsage(ctx); err != nil {
 		return nil, err
 	}
@@ -243,7 +252,58 @@ func (g gate) Blockers(ctx context.Context, p action.Proposal) []action.Check {
 	if c := action.PolicyCheck(pol, policy.Workflow(p.Workflow), p.Origin); !c.Satisfied {
 		out = append(out, c)
 	}
+	pauses, err := g.s.st.WorkflowPauses(ctx)
+	if err != nil {
+		block("workflow not paused", "pauses could not be read: "+err.Error())
+	} else if pz, ok := pauses[p.Workflow]; ok {
+		out = append(out, action.PauseCheck(&pz, policy.Workflow(p.Workflow)))
+	}
 	return out
+}
+
+// PauseWorkflow pauses a workflow: nothing more is sent for it, automatic
+// or manual, until it is resumed. Requests already accepted externally may
+// still complete. A note is required.
+func (s *Service) PauseWorkflow(ctx context.Context, wf policy.Workflow, actor Actor, note string) error {
+	if !policy.ValidWorkflow(wf) {
+		return fmt.Errorf("unknown workflow %q", wf)
+	}
+	if strings.TrimSpace(note) == "" {
+		return fmt.Errorf("a note saying why the workflow is paused is required")
+	}
+	now := s.now()
+	return s.st.Write(ctx, func(tx *store.Tx) error {
+		if err := tx.PauseWorkflow(store.WorkflowPause{Workflow: string(wf), PausedAt: now, Actor: string(actor), Note: note}); err != nil {
+			return err
+		}
+		return tx.Audit(now, string(actor), "workflow.paused", string(wf)+": "+note)
+	})
+}
+
+// ResumeWorkflow lifts a workflow's pause. A note is required.
+func (s *Service) ResumeWorkflow(ctx context.Context, wf policy.Workflow, actor Actor, note string) error {
+	if !policy.ValidWorkflow(wf) {
+		return fmt.Errorf("unknown workflow %q", wf)
+	}
+	if strings.TrimSpace(note) == "" {
+		return fmt.Errorf("a note saying why the workflow is resumed is required")
+	}
+	now := s.now()
+	return s.st.Write(ctx, func(tx *store.Tx) error {
+		ok, err := tx.ResumeWorkflow(string(wf))
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("%s is not paused", wf)
+		}
+		return tx.Audit(now, string(actor), "workflow.resumed", string(wf)+": "+note)
+	})
+}
+
+// WorkflowPauses returns the current operator pauses by workflow.
+func (s *Service) WorkflowPauses(ctx context.Context) (map[string]store.WorkflowPause, error) {
+	return s.st.WorkflowPauses(ctx)
 }
 
 // AttemptHistory lists recorded acquisition attempts and resets whose

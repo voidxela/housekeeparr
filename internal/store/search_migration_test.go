@@ -7,11 +7,11 @@ import (
 	"time"
 )
 
-// A database at schema 9 (before replacement-search tracking) opens at the
-// current schema; outcomes recorded before are marked not tracked, never
+// A database at schema 9 (before replacement-search tracking, the search
+// baseline, and workflow pauses: schemas 10–12) opens at the current schema; outcomes recorded before are marked not tracked, never
 // "not observed", and new outcomes start unobserved with their search
 // window.
-func TestForwardMigrationV9SearchOutcomes(t *testing.T) {
+func TestForwardMigrationV9SearchOutcomesAndPauses(t *testing.T) {
 	dir := t.TempDir()
 	db, err := sql.Open("sqlite", "file:"+filepath.Join(dir, dbFile))
 	if err != nil {
@@ -84,5 +84,25 @@ func TestForwardMigrationV9SearchOutcomes(t *testing.T) {
 	}
 	if need, _ := s.ManagersAwaitingSearch(ctx); len(need) != 0 {
 		t.Fatalf("settled search still awaited: %v", need)
+	}
+	// Schema 12: no pauses after the upgrade; pause and resume round-trip.
+	if ps, err := s.WorkflowPauses(ctx); err != nil || len(ps) != 0 {
+		t.Fatalf("pauses after upgrade: %v %v", ps, err)
+	}
+	if err := s.Write(ctx, func(tx *Tx) error {
+		return tx.PauseWorkflow(WorkflowPause{Workflow: "no_progress_recovery", PausedAt: since, Actor: "cli", Note: "n"})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if ps, _ := s.WorkflowPauses(ctx); ps["no_progress_recovery"].Note != "n" {
+		t.Fatalf("pause: %v", ps)
+	}
+	var resumed bool
+	if err := s.Write(ctx, func(tx *Tx) error {
+		var err error
+		resumed, err = tx.ResumeWorkflow("no_progress_recovery")
+		return err
+	}); err != nil || !resumed {
+		t.Fatalf("resume: %v %v", resumed, err)
 	}
 }

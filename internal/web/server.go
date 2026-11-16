@@ -26,6 +26,7 @@ import (
 	"github.com/voidxela/housekeeparr/internal/action"
 	"github.com/voidxela/housekeeparr/internal/app"
 	"github.com/voidxela/housekeeparr/internal/findings"
+	"github.com/voidxela/housekeeparr/internal/policy"
 )
 
 //go:embed templates/*.html static/*
@@ -114,6 +115,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /downloads/{client}/{native}", s.page(s.download))
 	mux.HandleFunc("GET /activity", s.page(s.activity))
 	mux.HandleFunc("POST /attempts/reset", s.resetAttempts)
+	mux.HandleFunc("POST /workflows/{workflow}/{verb}", s.workflowControl)
 	mux.HandleFunc("GET /connections", s.page(s.connections))
 	mux.Handle("GET /static/", s.static)
 	mux.HandleFunc("GET /healthz", s.healthz)
@@ -257,6 +259,32 @@ func (s *Server) resetAttempts(w http.ResponseWriter, r *http.Request) {
 		msg = "Not reset: " + err.Error()
 	}
 	http.Redirect(w, r, "/activity?notice="+url.QueryEscape(msg)+"#h-attempts", http.StatusSeeOther)
+}
+
+// workflowControl pauses or resumes one workflow (the same service as the
+// CLI's pause/resume); a note is required.
+func (s *Server) workflowControl(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
+	if err := r.ParseForm(); err != nil || !s.csrfValid(r) {
+		http.Error(w, "Form expired or invalid; reload the page and try again.", http.StatusForbidden)
+		return
+	}
+	wf, note := policy.Workflow(r.PathValue("workflow")), r.PostFormValue("note")
+	var err error
+	msg := string(wf) + " "
+	switch r.PathValue("verb") {
+	case "pause":
+		err, msg = s.svc.PauseWorkflow(r.Context(), wf, app.ActorWeb, note), msg+"paused: nothing more is sent for it, automatically or manually, until it is resumed. Requests already accepted may still complete."
+	case "resume":
+		err, msg = s.svc.ResumeWorkflow(r.Context(), wf, app.ActorWeb, note), msg+"resumed."
+	default:
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		msg = "Not changed: " + err.Error()
+	}
+	http.Redirect(w, r, "/connections?notice="+url.QueryEscape(msg)+"#h-workflows", http.StatusSeeOther)
 }
 
 func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {

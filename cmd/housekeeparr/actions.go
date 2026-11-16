@@ -11,6 +11,7 @@ import (
 	"github.com/voidxela/housekeeparr/internal/app"
 	"github.com/voidxela/housekeeparr/internal/domain"
 	"github.com/voidxela/housekeeparr/internal/engine"
+	"github.com/voidxela/housekeeparr/internal/policy"
 	"github.com/voidxela/housekeeparr/internal/store"
 	"github.com/voidxela/housekeeparr/internal/workflow"
 )
@@ -438,4 +439,92 @@ func cmdRetained(args []string, out, errOut io.Writer) int {
 	}
 	w.Flush()
 	return exitOK
+}
+
+func cmdPause(args []string, out, errOut io.Writer) int {
+	return pauseOrResume("pause", args, out, errOut)
+}
+func cmdResume(args []string, out, errOut io.Writer) int {
+	return pauseOrResume("resume", args, out, errOut)
+}
+
+// pauseOrResume pauses or resumes one workflow; a note is required. A
+// pause stops automatic and manual actions for the workflow (unlike
+// disabling its automation in configuration); requests already accepted
+// externally may still complete.
+func pauseOrResume(verb string, args []string, out, errOut io.Writer) int {
+	o := newFlags(verb, errOut)
+	note := o.fs.String("note", "", "why (required)")
+	pos, err := o.parse(args)
+	if err != nil {
+		return exitUsage
+	}
+	if len(pos) != 1 || strings.TrimSpace(*note) == "" {
+		fmt.Fprintf(errOut, "usage: housekeeparr %s <workflow> --note \"why\" (workflows: %s)\n", verb, workflowNames())
+		return exitUsage
+	}
+	wf := policy.Workflow(pos[0])
+	if !policy.ValidWorkflow(wf) {
+		fmt.Fprintf(errOut, "unknown workflow %q (workflows: %s)\n", pos[0], workflowNames())
+		return exitUsage
+	}
+	svc, done, code := writerService(o)
+	if svc == nil {
+		return code
+	}
+	defer done()
+	ctx := context.Background()
+	if verb == "pause" {
+		err = svc.PauseWorkflow(ctx, wf, app.ActorCLI, *note)
+	} else {
+		err = svc.ResumeWorkflow(ctx, wf, app.ActorCLI, *note)
+	}
+	if err != nil {
+		fmt.Fprintln(errOut, err)
+		return exitUsage
+	}
+	if verb == "pause" {
+		fmt.Fprintf(out, "%s paused: nothing more will be sent for it, automatically or manually, until it is resumed (requests already accepted may still complete)\n", wf)
+	} else {
+		fmt.Fprintf(out, "%s resumed\n", wf)
+	}
+	return exitOK
+}
+
+func cmdPaused(args []string, out, errOut io.Writer) int {
+	o := newFlags("paused", errOut)
+	if _, err := o.parse(args); err != nil {
+		return exitUsage
+	}
+	svc, done, code := readService(o)
+	if svc == nil {
+		return code
+	}
+	defer done()
+	ps, err := svc.WorkflowPauses(context.Background())
+	if err != nil {
+		fmt.Fprintln(errOut, err)
+		return exitFailure
+	}
+	if o.json {
+		return writeJSON(out, ps)
+	}
+	if len(ps) == 0 {
+		fmt.Fprintln(out, "No workflow is paused.")
+		return exitOK
+	}
+	for _, wf := range policy.AllWorkflows() {
+		if p, ok := ps[string(wf)]; ok {
+			fmt.Fprintf(out, "%s paused at %s by %s: %s\n", wf, ts(&p.PausedAt), p.Actor, p.Note)
+		}
+	}
+	return exitOK
+}
+
+func workflowNames() string {
+	var names []string
+	for _, w := range policy.AllWorkflows() {
+		names = append(names, string(w))
+	}
+	return strings.Join(names, ", ")
 }

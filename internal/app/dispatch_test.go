@@ -374,3 +374,52 @@ func TestRefusedFindingsDoNotStarveOthers(t *testing.T) {
 		t.Fatalf("stops %v: the eligible finding was starved by refused ones", s)
 	}
 }
+
+// A workflow pause stops automatic and manual actions alike, is checked
+// again before every write (an earlier preview does not get past it), and
+// keeps the finding's decision visible; resuming lets automation proceed.
+func TestWorkflowPauseStopsAutomaticAndManualActions(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t, "automatic", 20)
+	if err := w.svc.PauseWorkflow(ctx, policy.WorkflowNoProgressRecovery, app.ActorCLI, ""); err == nil {
+		t.Fatal("pause without a note accepted")
+	}
+	if err := w.svc.PauseWorkflow(ctx, policy.WorkflowNoProgressRecovery, app.ActorCLI, "tracker maintenance tonight"); err != nil {
+		t.Fatal(err)
+	}
+	w.stalled(hashA, 1, 1)
+	w.run(4 * time.Hour)
+	if len(w.mgr.Removals()) != 0 || len(w.client.Stops()) != 0 {
+		t.Fatalf("paused workflow sent writes: %v %v", w.mgr.Removals(), w.client.Stops())
+	}
+	f := w.finding(hashA)
+	d, _ := w.svc.Finding(ctx, f.ID)
+	if d.Automation == nil || d.Automation.Result != store.EvalNotPermitted || !strings.Contains(d.Automation.Detail, "tracker maintenance tonight") {
+		t.Fatalf("finding automation %+v", d.Automation)
+	}
+	// Manual: refused, with the pause named, and nothing sent.
+	if _, _, err := w.svc.Act(ctx, f.ID, app.ActorCLI); err == nil || !strings.Contains(err.Error(), "paused") {
+		t.Fatalf("manual action while paused: %v", err)
+	}
+	// Resume: the preview is eligible again.
+	if err := w.svc.ResumeWorkflow(ctx, policy.WorkflowNoProgressRecovery, app.ActorCLI, "maintenance over"); err != nil {
+		t.Fatal(err)
+	}
+	pv, err := w.svc.Preview(ctx, f.ID, action.OriginManual)
+	if err != nil || pv.Proposal == nil || !pv.Proposal.Eligible() {
+		t.Fatalf("preview after resume: %+v %v", pv, err)
+	}
+	if err := w.svc.PauseWorkflow(ctx, policy.WorkflowNoProgressRecovery, app.ActorWeb, "again"); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.svc.ResumeWorkflow(ctx, policy.WorkflowNoProgressRecovery, app.ActorWeb, "done"); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.svc.ResumeWorkflow(ctx, policy.WorkflowNoProgressRecovery, app.ActorWeb, "done"); err == nil {
+		t.Fatal("resuming a workflow that is not paused succeeded")
+	}
+	w.run(time.Hour)
+	if len(w.mgr.Removals()) != 1 || len(w.client.Stops()) != 1 {
+		t.Fatalf("after resume: %v %v", w.mgr.Removals(), w.client.Stops())
+	}
+}
