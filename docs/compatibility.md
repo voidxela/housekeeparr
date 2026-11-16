@@ -44,6 +44,8 @@ workflow.
 | 2026-11-16 (`d1d10f3`: retained records, outcome tracking, automatic dispatcher in the commit path) | Linux aarch64, Go 1.27.4 | same | all passed, including both recovery workflows |
 | 2026-11-16 (`99cf198`, `--clients deluge --manager-client deluge --managers sonarr,radarr`) | Linux aarch64, Go 1.27.4 | Deluge 2.2.0 + Sonarr 4.0.20.3014 + Radarr 6.4.4.10685 (isolated) | all passed, including both recovery workflows through Deluge |
 | 2026-11-16 (`b8d3313`, `--clients rtorrent --manager-client rtorrent --managers sonarr,radarr`) | Linux aarch64, Go 1.27.4 | rTorrent 0.9.8 + Sonarr 4.0.20.3014 + Radarr 6.4.4.10685 (isolated) | **run failed**: both recovery workflows and every probe passed, but the pre-existing observation fixture `errored-recheck` (payload deleted while rTorrent runs, then `d.check_hash`) was reported `seeding`/complete with verified bytes instead of a client error, unlike the 2026-11-15 runs. Not yet diagnosed; hypothesis: the deleted file was still open in rTorrent, so the hash check read the unlinked data. Not rerun; rTorrent recovery is not registered |
+| 2026-11-16 (`725f96b`, final session HEAD: owner-scoped ownership blocking, dispatcher fixes) | Linux aarch64, Go 1.27.4 | qBittorrent 5.3.0 + Sonarr 4.0.20.3014 + Radarr 6.4.4.10685 (isolated) | all passed, including both recovery workflows |
+| 2026-11-16 (`725f96b`, same) | Linux aarch64, Go 1.27.4 | Deluge 2.2.0 + Sonarr + Radarr, Deluge as the managers' client (isolated) | all passed, including both recovery workflows through Deluge |
 
 What the suite exercised (`scripts/it/run.sh`, `internal/integration`):
 session login; version probe; listing of complete, half-complete (after

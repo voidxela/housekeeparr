@@ -6,7 +6,14 @@ Continue implementing Housekeeparr through the complete approved v1 scope in
 behavior. The earlier review `docs/reviews/2026-11-15.md` supplies background;
 its R1–R4 are fixed. Implement and verify concrete increments, not just plans.
 
-Checkpoint: see `git log` on `dev` (session of 2026-11-16, after `73d37d5`).
+Checkpoint: `dev` after `725f96b` (session of 2026-11-16, 30+ commits after
+`73d37d5`, not pushed). Validation at `725f96b`: build, vet, gofmt, full
+uncached Go suite, CGO-disabled binary; real instances: qBittorrent 5.3.0 and
+Deluge 2.2.0 each with Sonarr 4.0.20.3014 + Radarr 6.4.4.10685 (all passed,
+including both recovery workflows); rTorrent 0.9.8 at `b8d3313` (recovery
+passed, run failed on the `errored-recheck` fixture). Not run: Transmission,
+browser check, race detector (host limitation), Docker, real automatic
+dispatch.
 Review R5–R7 are fixed and recorded in `docs/STATUS.md` ("R5–R7 closure");
 the qBittorrent 5.3.0 + Sonarr/Radarr recovery runs pass on the changed
 executor. Since then the session added retained-transfer records and
