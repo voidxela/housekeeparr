@@ -252,8 +252,10 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 		p.Effects = append(p.Effects, "the torrent is stopped and kept, with all downloaded data, in its current category")
 	}
 	p.SideEffects = append(p.SideEffects,
-		"no file is deleted, moved, or renamed; the retained transfer counts toward retained-data tracking",
-		"a later search result, grab, and download progress are verified separately; a search that finds nothing is reported, not retried")
+		"no file is deleted, moved, or renamed; the stopped transfer and its data stay in the client "+
+			"(this build does not yet count retained transfers against capacity limits)",
+		"this build verifies the steps above and that the manager queued its search; whether the search finds and grabs a release, "+
+			"and how that download progresses, is not yet tracked here: check the manager's activity")
 	if row != nil {
 		var keys []string
 		if key, ok := row.Latest.ContentKey(); ok {
