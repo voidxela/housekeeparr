@@ -509,19 +509,21 @@ func (c *Coordinator) run(ctx context.Context, id int64, p Proposal) (Result, er
 	if err != nil {
 		return Result{IntentID: id, State: store.IntentExecuting}, fmt.Errorf("%w: completion not recorded: %v", ErrJournal, err)
 	}
-	c.observeOutcome(jctx, id)
+	c.observeOutcome(ctx, jctx, id)
 	return Result{IntentID: id, State: store.IntentSucceeded, Detail: "every step verified"}, nil
 }
 
 // observeOutcome records what the executor can observe of the replacement
 // search right after a verified recovery. Failure to observe changes
 // nothing: the outcome stays unobserved and the engine keeps looking.
-func (c *Coordinator) observeOutcome(ctx context.Context, id int64) {
+// External reads use ctx (cancelled on shutdown); the local record uses
+// jctx.
+func (c *Coordinator) observeOutcome(ctx, jctx context.Context, id int64) {
 	obs, ok := c.Executor.(OutcomeObserver)
 	if !ok {
 		return
 	}
-	os, err := c.Store.Outcomes(ctx, []int64{id})
+	os, err := c.Store.Outcomes(jctx, []int64{id})
 	if err != nil {
 		return
 	}
@@ -532,7 +534,7 @@ func (c *Coordinator) observeOutcome(ctx context.Context, id int64) {
 	if changed, err := obs.ObserveOutcome(ctx, &o, c.now); err != nil || !changed {
 		return
 	}
-	_ = c.Store.Write(ctx, func(tx *store.Tx) error { return tx.SaveSearchOutcome(id, o.Search) })
+	_ = c.Store.Write(jctx, func(tx *store.Tx) error { return tx.SaveSearchOutcome(id, o.Search) })
 }
 
 // settle classifies a dispatch result and verifies the postcondition.
@@ -800,15 +802,21 @@ func trackOutcome(tx *store.Tx, id int64, steps []store.Step, now time.Time) err
 		}
 		// The replacement search is looked for from the dispatch of this
 		// manager request: the manager queues it in response.
-		since, err := tx.StepDispatchedAt(id, st.Seq)
+		// Only commands newer than those listed in the step's baseline are
+		// attributed to it.
+		since, base, err := tx.StepDispatch(id, st.Seq)
 		if err != nil {
 			return err
 		}
 		if since == nil {
 			since = &now
 		}
+		var b struct {
+			MaxCommandID *int64 `json:"max_command_id"`
+		}
+		_ = json.Unmarshal(base, &b)
 		return tx.CreateOutcome(store.RecoveryOutcome{IntentID: id, ManagerID: tg.ManagerID, Content: content, OldDownloadID: tg.DownloadID,
-			StartedAt: now, Search: store.SearchOutcome{Since: since}})
+			StartedAt: now, Search: store.SearchOutcome{Since: since, AfterID: b.MaxCommandID}})
 	}
 	return nil
 }

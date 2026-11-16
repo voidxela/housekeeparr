@@ -233,17 +233,23 @@ func (t *Tx) BeginStep(id int64, seq int, now time.Time, baseline json.RawMessag
 	return nil
 }
 
-// StepDispatchedAt returns when a step was last dispatched, or nil.
-func (t *Tx) StepDispatchedAt(id int64, seq int) (*time.Time, error) {
+// StepDispatch returns when a step was last dispatched (nil if never) and
+// the evidence baseline journaled with that dispatch.
+func (t *Tx) StepDispatch(id int64, seq int) (*time.Time, json.RawMessage, error) {
 	var at sql.NullInt64
-	err := t.queryRow(`SELECT dispatched_at FROM action_steps WHERE intent_id=? AND seq=?`, id, seq).Scan(&at)
+	var base sql.NullString
+	err := t.queryRow(`SELECT dispatched_at, baseline_json FROM action_steps WHERE intent_id=? AND seq=?`, id, seq).Scan(&at, &base)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return ptrMS(at), nil
+	var raw json.RawMessage
+	if base.Valid {
+		raw = json.RawMessage(base.String)
+	}
+	return ptrMS(at), raw, nil
 }
 
 // FinishStep records a step's observed outcome. A pending step may be

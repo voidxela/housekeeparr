@@ -45,6 +45,7 @@ type managerWrites struct {
 	commands    []arr.Command
 	commandsErr error
 	searchState string // status of queued replacement searches (default "completed")
+	redownload  *arr.RedownloadSettings
 	clock       func() time.Time
 }
 
@@ -97,6 +98,24 @@ func (m *Manager) AddCommand(c arr.Command) {
 		}
 	}
 	m.w.commands = append(m.w.commands, c)
+}
+
+// SetRedownload sets the simulated redownload settings (default: both on).
+func (m *Manager) SetRedownload(rs arr.RedownloadSettings) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.w.redownload = &rs
+}
+
+// Redownload returns the simulated redownload settings.
+func (m *Manager) Redownload(context.Context) (arr.RedownloadSettings, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.w.redownload != nil {
+		return *m.w.redownload, nil
+	}
+	on := true
+	return arr.RedownloadSettings{Failed: true, FromInteractive: &on}, nil
 }
 
 // Commands returns the simulated command list.

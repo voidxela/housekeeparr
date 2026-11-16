@@ -58,14 +58,15 @@ func TestForwardMigrationV9SearchOutcomes(t *testing.T) {
 	}
 
 	since := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
+	baseline := int64(45)
 	if err := s.Write(ctx, func(tx *Tx) error {
 		return tx.CreateOutcome(RecoveryOutcome{IntentID: 2, ManagerID: "radarr", Content: []string{"movie:4"}, OldDownloadID: "bb",
-			StartedAt: since.Add(time.Minute), Search: SearchOutcome{Since: &since}})
+			StartedAt: since.Add(time.Minute), Search: SearchOutcome{Since: &since, AfterID: &baseline}})
 	}); err != nil {
 		t.Fatal(err)
 	}
 	got, _ = s.Outcomes(ctx, []int64{2})
-	if o := got[2]; o.Search.State != SearchUnobserved || o.Search.Since == nil || !o.Search.Since.Equal(since) {
+	if o := got[2]; o.Search.State != SearchUnobserved || o.Search.Since == nil || !o.Search.Since.Equal(since) || o.Search.AfterID == nil || *o.Search.AfterID != 45 {
 		t.Fatalf("new outcome: %+v", o.Search)
 	}
 	if need, _ := s.ManagersAwaitingSearch(ctx); !need["radarr"] || len(need) != 1 {
@@ -73,7 +74,7 @@ func TestForwardMigrationV9SearchOutcomes(t *testing.T) {
 	}
 	id, ended := int64(46), since.Add(2*time.Minute)
 	o := got[2]
-	o.Search = SearchOutcome{State: SearchCompleted, Since: &since, CommandID: &id, Name: "MoviesSearch", EndedAt: &ended, Note: "done"}
+	o.Search = SearchOutcome{State: SearchCompleted, Since: &since, AfterID: &baseline, CommandID: &id, Name: "MoviesSearch", EndedAt: &ended, Note: "done"}
 	if err := s.Write(ctx, func(tx *Tx) error { return tx.SaveSearchOutcome(2, o.Search) }); err != nil {
 		t.Fatal(err)
 	}

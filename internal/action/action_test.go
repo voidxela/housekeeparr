@@ -65,6 +65,7 @@ func matching(p Proposal, failed bool) Live {
 		live.Associations = []domain.QueueItem{{ManagerID: pl.ManagerID, QueueID: pl.QueueID, DownloadID: pl.DownloadID, ContentKind: "episode", EpisodeID: 1}}
 	}
 	live.Content = []ContentState{{Key: "episode:1", Exists: true, Monitored: true, Detail: "monitored"}}
+	live.Redownload = &Redownload{Failed: true, GrabSource: "Search"}
 	return live
 }
 

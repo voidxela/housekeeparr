@@ -70,8 +70,11 @@ type RecoveryOutcome struct {
 // command for the same content queued at or after Since (the dispatch of the
 // recovery's manager request, less a small clock tolerance).
 type SearchOutcome struct {
-	State     string     `json:"state"`
-	Since     *time.Time `json:"since,omitempty"`
+	State string     `json:"state"`
+	Since *time.Time `json:"since,omitempty"`
+	// AfterID is the highest command ID the manager listed just before the
+	// request; only newer commands are attributed. Nil when not read.
+	AfterID   *int64     `json:"after_id,omitempty"`
 	CommandID *int64     `json:"command_id,omitempty"`
 	Name      string     `json:"name,omitempty"`
 	QueuedAt  *time.Time `json:"queued_at,omitempty"`
@@ -91,8 +94,8 @@ func ptrTime(t *time.Time) sql.NullInt64 {
 // the intent is already tracked.
 func (t *Tx) CreateOutcome(o RecoveryOutcome) error {
 	_, err := t.exec(`INSERT OR IGNORE INTO recovery_outcomes(intent_id, manager_id, content, old_download_id, started_at, state, checked_at,
-		search_state, search_since) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`, o.IntentID, o.ManagerID, strings.Join(o.Content, ","), o.OldDownloadID,
-		ms(o.StartedAt), OutcomeAwaitingGrab, ms(o.StartedAt), SearchUnobserved, ptrTime(o.Search.Since))
+		search_state, search_since, search_after_id) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, o.IntentID, o.ManagerID, strings.Join(o.Content, ","),
+		o.OldDownloadID, ms(o.StartedAt), OutcomeAwaitingGrab, ms(o.StartedAt), SearchUnobserved, ptrTime(o.Search.Since), nullInt(o.Search.AfterID))
 	return err
 }
 
@@ -119,7 +122,7 @@ func (t *Tx) SaveSearchOutcome(intentID int64, so SearchOutcome) error {
 
 const outcomeCols = `intent_id, manager_id, content, old_download_id, started_at, state, grabbed_at, COALESCE(new_download_id, ''),
 	COALESCE(new_client_id, ''), COALESCE(new_native_id, ''), grab_verified, progress_at, completed_at, checked_at, note,
-	search_state, search_since, search_command_id, search_name, search_queued_at, search_ended_at, search_checked_at, search_note`
+	search_state, search_since, search_command_id, search_name, search_queued_at, search_ended_at, search_checked_at, search_note, search_after_id`
 
 func scanOutcomes(rows *sql.Rows) ([]RecoveryOutcome, error) {
 	defer rows.Close()
@@ -128,15 +131,18 @@ func scanOutcomes(rows *sql.Rows) ([]RecoveryOutcome, error) {
 		var o RecoveryOutcome
 		var content string
 		var started, checked int64
-		var grabbed, gv, prog, done, sSince, sCmd, sQueued, sEnded, sChecked sql.NullInt64
+		var grabbed, gv, prog, done, sSince, sCmd, sQueued, sEnded, sChecked, sAfter sql.NullInt64
 		if err := rows.Scan(&o.IntentID, &o.ManagerID, &content, &o.OldDownloadID, &started, &o.State, &grabbed, &o.NewDownloadID,
 			&o.NewClientID, &o.NewNativeID, &gv, &prog, &done, &checked, &o.Note,
-			&o.Search.State, &sSince, &sCmd, &o.Search.Name, &sQueued, &sEnded, &sChecked, &o.Search.Note); err != nil {
+			&o.Search.State, &sSince, &sCmd, &o.Search.Name, &sQueued, &sEnded, &sChecked, &o.Search.Note, &sAfter); err != nil {
 			return nil, err
 		}
 		o.Search.Since, o.Search.QueuedAt, o.Search.EndedAt, o.Search.CheckedAt = ptrMS(sSince), ptrMS(sQueued), ptrMS(sEnded), ptrMS(sChecked)
 		if sCmd.Valid {
 			o.Search.CommandID = &sCmd.Int64
+		}
+		if sAfter.Valid {
+			o.Search.AfterID = &sAfter.Int64
 		}
 		if content != "" {
 			o.Content = strings.Split(content, ",")

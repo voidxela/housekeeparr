@@ -264,10 +264,10 @@ func runRecovery(t *testing.T, a arrAPI, mgr recoveryManager, me managedEntry, s
 		t.Fatalf("workflow did not succeed: %+v %v", res, err)
 	}
 
-	after, hist, searches := verifyRecovered(t, a, mgr, e, *row, tr.Category, digest, hist0, start, searchName)
-	// Housekeeparr itself recorded the manager's replacement search as a
+	after, hist, searches, replacement := verifyRecovered(t, a, mgr, e, *row, tr.Category, digest, hist0, start, searchName)
+	// Housekeeparr itself recorded exactly that replacement search as a
 	// separate outcome, right after the recovery.
-	requireSearchOutcome(t, st, res.IntentID, searchName)
+	requireSearchOutcome(t, st, res.IntentID, searchName, replacement)
 	// The local journal holds no lock and records the cooldown.
 	if h, _ := st.LockHolder(ctx, p.Locks[0]); h != 0 {
 		t.Error("lock still held after success")
@@ -286,9 +286,10 @@ func runRecovery(t *testing.T, a arrAPI, mgr recoveryManager, me managedEntry, s
 // torrent is still registered, stopped, in the same category with a
 // byte-identical payload, and the manager queued its own replacement search.
 func verifyRecovered(t *testing.T, a arrAPI, mgr recoveryManager, e entry, row domain.QueueItem, category domain.Signal[string],
-	digest string, hist0 []string, start time.Time, searchName string) (domain.Transfer, []string, []arrCommand) {
+	digest string, hist0 []string, start time.Time, searchName string) (domain.Transfer, []string, []arrCommand, int64) {
 	t.Helper()
 	ctx := context.Background()
+	var replacement int64
 	statuses := []string{a.command("RefreshMonitoredDownloads")}
 	time.Sleep(3 * time.Second)
 	statuses = append(statuses, a.command("RefreshMonitoredDownloads"))
@@ -335,8 +336,15 @@ func verifyRecovered(t *testing.T, a arrAPI, mgr recoveryManager, e entry, row d
 				continue
 			}
 			if (row.EpisodeID > 0 && slices.Contains(c.EpisodeIDs, row.EpisodeID)) || (row.MovieID > 0 && slices.Contains(c.MovieIDs, row.MovieID)) {
-				matched = true
 				t.Logf("adapter command: %+v", c)
+				// The manager-native redownload search (the harness's own
+				// grab search is "manual" and precedes the request).
+				if c.Trigger == "unspecified" && !c.Queued.Before(start) {
+					if matched {
+						t.Errorf("more than one manager-native %s for this content after the request", searchName)
+					}
+					matched, replacement = true, c.ID
+				}
 			}
 		}
 		if !matched {
@@ -348,13 +356,13 @@ func verifyRecovered(t *testing.T, a arrAPI, mgr recoveryManager, e entry, row d
 	} else {
 		t.Errorf("%T has no command reader", mgr)
 	}
-	return after, hist, searches
+	return after, hist, searches, replacement
 }
 
 // requireSearchOutcome checks the replacement-search outcome Housekeeparr
 // recorded for an intent: the manager-native search was seen accepted,
 // running, or completed (it completes within seconds on these instances).
-func requireSearchOutcome(t *testing.T, st *store.Store, intentID int64, searchName string) {
+func requireSearchOutcome(t *testing.T, st *store.Store, intentID int64, searchName string, wantID int64) {
 	t.Helper()
 	oc, err := st.Outcomes(context.Background(), []int64{intentID})
 	if err != nil {
@@ -366,8 +374,8 @@ func requireSearchOutcome(t *testing.T, st *store.Store, intentID int64, searchN
 	default:
 		t.Fatalf("action #%d: replacement search outcome %+v, want it observed", intentID, s)
 	}
-	if s.Name != searchName || s.CommandID == nil {
-		t.Fatalf("action #%d: replacement search outcome %+v, want %s", intentID, s, searchName)
+	if s.Name != searchName || s.CommandID == nil || *s.CommandID != wantID || s.AfterID == nil {
+		t.Fatalf("action #%d: replacement search outcome %+v, want %s command %d attributed against a baseline", intentID, s, searchName, wantID)
 	}
 	t.Logf("action #%d: replacement search recorded: %s — %s", intentID, s.State, s.Note)
 }

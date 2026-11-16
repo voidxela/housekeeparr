@@ -19,27 +19,63 @@ func TestObserveSearchTracksTheContentsSearchSeparately(t *testing.T) {
 	at := func(d time.Duration) time.Time { return t0.Add(d) }
 	ptr := func(t time.Time) *time.Time { return &t }
 
-	t.Run("matches only this content, queued after the request", func(t *testing.T) {
+	t.Run("only a command newer than the baseline is attributed", func(t *testing.T) {
 		o := newOutcome("episode:5")
+		after := int64(42)
+		o.Search.AfterID = &after
 		cmds := []arr.Command{
-			{ID: 1, Name: "EpisodeSearch", Status: "completed", Queued: at(-10 * time.Minute), EpisodeIDs: []int64{5}}, // before the request
-			{ID: 2, Name: "EpisodeSearch", Status: "queued", Queued: at(time.Second), EpisodeIDs: []int64{6}},          // other content
-			{ID: 3, Name: "MoviesSearch", Status: "queued", Queued: at(time.Second), MovieIDs: []int64{5}},             // other kind
-			{ID: 4, Name: "RefreshMonitoredDownloads", Status: "queued", Queued: at(time.Second)},
+			// The original grab's search, seconds before the request: not newer than the baseline.
+			{ID: 42, Name: "EpisodeSearch", Status: "completed", Trigger: "manual", Queued: at(-10 * time.Second), EpisodeIDs: []int64{5}},
+			{ID: 43, Name: "EpisodeSearch", Status: "queued", Queued: at(time.Second), EpisodeIDs: []int64{6}}, // other content
+			{ID: 44, Name: "MoviesSearch", Status: "queued", Queued: at(time.Second), MovieIDs: []int64{5}},    // other kind
+			{ID: 45, Name: "RefreshMonitoredDownloads", Status: "queued", Queued: at(time.Second)},
 		}
 		if !ObserveSearch(&o, cmds, at(30*time.Second)) || o.Search.State != store.SearchUnobserved || o.Search.CommandID != nil {
 			t.Fatalf("matched something else: %+v", o.Search)
 		}
-		cmds = append(cmds, arr.Command{ID: 7, Name: "EpisodeSearch", Status: "queued", Queued: at(-30 * time.Second), EpisodeIDs: []int64{4, 5}})
+		cmds = append(cmds, arr.Command{ID: 48, Name: "EpisodeSearch", Status: "queued", Trigger: "manual", Queued: at(2 * time.Second), EpisodeIDs: []int64{5}},
+			arr.Command{ID: 46, Name: "EpisodeSearch", Status: "queued", Trigger: "unspecified", Queued: at(time.Second), EpisodeIDs: []int64{4, 5}})
 		ObserveSearch(&o, cmds, at(31*time.Second))
-		if o.Search.State != store.SearchAccepted || o.Search.CommandID == nil || *o.Search.CommandID != 7 {
-			t.Fatalf("within the clock tolerance, want accepted #7: %+v", o.Search)
+		if o.Search.State != store.SearchAccepted || o.Search.CommandID == nil || *o.Search.CommandID != 46 {
+			t.Fatalf("want accepted #46 (first newer than the baseline): %+v", o.Search)
+		}
+	})
+
+	t.Run("without a baseline only the manager-native trigger after the request counts", func(t *testing.T) {
+		o := newOutcome("episode:5")
+		cmds := []arr.Command{
+			{ID: 42, Name: "EpisodeSearch", Status: "completed", Trigger: "manual", Queued: at(-10 * time.Second), EpisodeIDs: []int64{5}},
+			{ID: 30, Name: "EpisodeSearch", Status: "completed", Trigger: "unspecified", Queued: at(-10 * time.Minute), EpisodeIDs: []int64{5}},
+		}
+		ObserveSearch(&o, cmds, at(30*time.Second))
+		if o.Search.CommandID != nil {
+			t.Fatalf("attributed a user's or an old search: %+v", o.Search)
+		}
+		cmds = append(cmds, arr.Command{ID: 45, Name: "EpisodeSearch", Status: "queued", Trigger: "unspecified", Queued: at(-20 * time.Second), EpisodeIDs: []int64{5}})
+		ObserveSearch(&o, cmds, at(31*time.Second))
+		if o.Search.CommandID == nil || *o.Search.CommandID != 45 || !strings.Contains(o.Search.Note, "trigger and time only") {
+			t.Fatalf("within the clock tolerance, want #45 with a weaker-evidence note: %+v", o.Search)
+		}
+	})
+
+	t.Run("expires by time when the list cannot be read", func(t *testing.T) {
+		o := newOutcome("episode:5")
+		if ExpireSearch(&o, at(30*time.Minute)) {
+			t.Fatal("expired early")
+		}
+		if !ExpireSearch(&o, at(SearchFollowWindow+time.Minute)) || o.Search.State != store.SearchNotObserved {
+			t.Fatalf("%+v", o.Search)
+		}
+		o = newOutcome("episode:5")
+		ObserveSearch(&o, []arr.Command{{ID: 3, Name: "EpisodeSearch", Status: "queued", Trigger: "unspecified", Queued: at(time.Second), EpisodeIDs: []int64{5}}}, at(time.Minute))
+		if !ExpireSearch(&o, at(SearchFollowWindow+time.Minute)) || o.Search.State != store.SearchEndUnverified {
+			t.Fatalf("%+v", o.Search)
 		}
 	})
 
 	t.Run("follows the command to completion, which is not a grab", func(t *testing.T) {
 		o := newOutcome("movie:9")
-		c := arr.Command{ID: 40, Name: "MoviesSearch", Status: "started", Queued: at(time.Second), MovieIDs: []int64{9}}
+		c := arr.Command{ID: 40, Name: "MoviesSearch", Status: "started", Trigger: "unspecified", Queued: at(time.Second), MovieIDs: []int64{9}}
 		ObserveSearch(&o, []arr.Command{c}, at(5*time.Second))
 		if o.Search.State != store.SearchRunning {
 			t.Fatalf("state %s", o.Search.State)
@@ -47,7 +83,7 @@ func TestObserveSearchTracksTheContentsSearchSeparately(t *testing.T) {
 		// A later search for the same content does not replace the
 		// command already followed.
 		c.Status, c.Result, c.Ended = "completed", "successful", ptr(at(9*time.Second))
-		later := arr.Command{ID: 41, Name: "MoviesSearch", Status: "queued", Queued: at(8 * time.Second), MovieIDs: []int64{9}}
+		later := arr.Command{ID: 41, Name: "MoviesSearch", Status: "queued", Trigger: "unspecified", Queued: at(8 * time.Second), MovieIDs: []int64{9}}
 		ObserveSearch(&o, []arr.Command{later, c}, at(10*time.Second))
 		if o.Search.State != store.SearchCompleted || *o.Search.CommandID != 40 || o.Search.EndedAt == nil {
 			t.Fatalf("want completed #40: %+v", o.Search)
@@ -62,7 +98,7 @@ func TestObserveSearchTracksTheContentsSearchSeparately(t *testing.T) {
 
 	t.Run("failure is a command failure, with a redacted message", func(t *testing.T) {
 		o := newOutcome("episode:5")
-		c := arr.Command{ID: 8, Name: "EpisodeSearch", Status: "failed", Queued: at(time.Second), EpisodeIDs: []int64{5},
+		c := arr.Command{ID: 8, Name: "EpisodeSearch", Status: "failed", Trigger: "unspecified", Queued: at(time.Second), EpisodeIDs: []int64{5},
 			Message: "Search failed: https://indexer.example/api?apikey=SECRETKEY123"}
 		ObserveSearch(&o, []arr.Command{c}, at(time.Minute))
 		if o.Search.State != store.SearchFailed || strings.Contains(o.Search.Note, "SECRETKEY123") || !strings.Contains(o.Search.Note, "command failure") {
@@ -72,7 +108,7 @@ func TestObserveSearchTracksTheContentsSearchSeparately(t *testing.T) {
 
 	t.Run("seen then dropped before its end is unverified", func(t *testing.T) {
 		o := newOutcome("episode:5")
-		ObserveSearch(&o, []arr.Command{{ID: 3, Name: "EpisodeSearch", Status: "queued", Queued: at(time.Second), EpisodeIDs: []int64{5}}}, at(time.Minute))
+		ObserveSearch(&o, []arr.Command{{ID: 3, Name: "EpisodeSearch", Status: "queued", Trigger: "unspecified", Queued: at(time.Second), EpisodeIDs: []int64{5}}}, at(time.Minute))
 		ObserveSearch(&o, []arr.Command{}, at(20*time.Minute))
 		if o.Search.State != store.SearchEndUnverified {
 			t.Fatalf("%+v", o.Search)
@@ -93,7 +129,7 @@ func TestObserveSearchTracksTheContentsSearchSeparately(t *testing.T) {
 
 	t.Run("still running after the window is no longer followed", func(t *testing.T) {
 		o := newOutcome("episode:5")
-		ObserveSearch(&o, []arr.Command{{ID: 3, Name: "EpisodeSearch", Status: "started", Queued: at(time.Second), EpisodeIDs: []int64{5}}},
+		ObserveSearch(&o, []arr.Command{{ID: 3, Name: "EpisodeSearch", Status: "started", Trigger: "unspecified", Queued: at(time.Second), EpisodeIDs: []int64{5}}},
 			at(SearchFollowWindow+time.Minute))
 		if o.Search.State != store.SearchEndUnverified {
 			t.Fatalf("%+v", o.Search)

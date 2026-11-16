@@ -29,6 +29,7 @@ type Manager interface {
 	RemoveQueueItem(ctx context.Context, queueID int64, f arr.RemoveFlags) error
 	BlocklistEntries(ctx context.Context, m arr.BlocklistMatch) ([]int64, error)
 	History(ctx context.Context, downloadID string) ([]arr.HistoryEvent, error)
+	Redownload(ctx context.Context) (arr.RedownloadSettings, error)
 }
 
 // Client is a download client connection with the recovery operations.
@@ -86,6 +87,10 @@ type queueTarget struct {
 type queueBaseline struct {
 	BlocklistIDs []int64 `json:"blocklist_ids"`
 	HistoryIDs   []int64 `json:"history_ids"`
+	// MaxCommandID is the highest command ID the manager listed, so the
+	// replacement search can be told apart from earlier searches. Nil
+	// when the list could not be read (that does not block the request).
+	MaxCommandID *int64 `json:"max_command_id,omitempty"`
 }
 
 func (tg queueTarget) blocklistMatch() arr.BlocklistMatch {
@@ -246,6 +251,24 @@ func (r *Recovery) Live(ctx context.Context, p action.Proposal) (action.Live, er
 	} else {
 		live.Health = h.Items
 	}
+	if rs, err := m.Redownload(ctx); err != nil {
+		live.RedownloadErr = err.Error()
+	} else {
+		rd := &action.Redownload{Failed: rs.Failed, FromInteractive: rs.FromInteractive}
+		// The grab's release source decides whether the interactive-search
+		// setting applies; newest grab first.
+		if hist, err := m.History(ctx, downloadID); err != nil {
+			live.RedownloadErr = "history: " + err.Error()
+		} else {
+			for _, h := range hist {
+				if h.EventType == "grabbed" {
+					rd.GrabSource = h.ReleaseSource
+					break
+				}
+			}
+			live.Redownload = rd
+		}
+	}
 	for _, key := range pl.Content {
 		cs, err := m.Content(ctx, key)
 		if err != nil {
@@ -286,6 +309,17 @@ func (r *Recovery) Baseline(ctx context.Context, st store.Step) (json.RawMessage
 	}
 	for _, h := range hist {
 		b.HistoryIDs = append(b.HistoryIDs, h.ID)
+	}
+	if cr, ok := m.(CommandReader); ok {
+		if cmds, err := cr.Commands(ctx); err == nil {
+			var max int64
+			for _, c := range cmds {
+				if c.ID > max {
+					max = c.ID
+				}
+			}
+			b.MaxCommandID = &max
+		}
 	}
 	return json.Marshal(b)
 }

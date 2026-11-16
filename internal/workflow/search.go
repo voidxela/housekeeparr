@@ -28,14 +28,17 @@ type CommandReader interface {
 }
 
 // ObserveSearch updates o's replacement-search outcome from the manager's
-// command list as read at now. The search is the earliest EpisodeSearch or
-// MoviesSearch whose body names the outcome's content and that was queued
-// no earlier than the recovery's manager request (less the clock
-// tolerance); once found, that command is followed by ID. This is matching
+// command list as read at now. The search is the first EpisodeSearch or
+// MoviesSearch naming the outcome's content in its body that is newer than
+// every command the manager listed just before the recovery's manager
+// request (o.Search.AfterID, journaled with that step); without that
+// baseline, the first such command with the manager-native trigger
+// ("unspecified") queued no earlier than the request, less the clock
+// tolerance. Once found, that command is followed by ID. This is matching
 // evidence, not proof of causation: a search for the same content queued by
-// someone else in that interval would be indistinguishable. A completed
-// search says nothing about whether anything was grabbed (the grab is a
-// separate outcome). It reports whether anything changed.
+// someone else right after the request would be indistinguishable. A
+// completed search says nothing about whether anything was grabbed (the
+// grab is a separate outcome). It reports whether anything changed.
 func ObserveSearch(o *store.RecoveryOutcome, cmds []arr.Command, now time.Time) bool {
 	s := &o.Search
 	if store.SearchTerminal(s.State) {
@@ -56,10 +59,18 @@ func ObserveSearch(o *store.RecoveryOutcome, cmds []arr.Command, now time.Time) 
 			}
 			continue
 		}
-		if c.Queued.Before(since.Add(-SearchClockTolerance)) || !searchCovers(*c, o.Content) {
+		if !searchCovers(*c, o.Content) {
 			continue
 		}
-		if match == nil || c.Queued.Before(match.Queued) || (c.Queued.Equal(match.Queued) && c.ID < match.ID) {
+		if s.AfterID != nil {
+			if c.ID <= *s.AfterID {
+				continue
+			}
+		} else if c.Trigger != "unspecified" || c.Queued.Before(since.Add(-SearchClockTolerance)) {
+			continue
+		}
+		// Command IDs increase in the order commands are queued.
+		if match == nil || c.ID < match.ID {
 			match = c
 		}
 	}
@@ -109,7 +120,36 @@ func ObserveSearch(o *store.RecoveryOutcome, cmds []arr.Command, now time.Time) 
 				match.Name, id, match.Status, SearchFollowWindow)
 		}
 	}
+	if s.CommandID != nil && s.AfterID == nil && !store.SearchTerminal(before.State) && before.CommandID == nil {
+		s.Note += " (attributed by trigger and time only: the command list could not be read just before the request)"
+	}
 	return s.State != before.State || s.Note != before.Note || !samePtr(s.CommandID, before.CommandID)
+}
+
+// ExpireSearch ends following a search whose window has passed without a
+// command-list read settling it (for example while the manager's list
+// cannot be read). It reports whether anything changed.
+func ExpireSearch(o *store.RecoveryOutcome, now time.Time) bool {
+	s := &o.Search
+	since := o.StartedAt
+	if s.Since != nil {
+		since = *s.Since
+	}
+	if store.SearchTerminal(s.State) || now.Sub(since) <= SearchFollowWindow {
+		return false
+	}
+	at := now
+	s.CheckedAt = &at
+	if s.CommandID != nil {
+		s.State = store.SearchEndUnverified
+		s.Note = fmt.Sprintf("the manager's %s (command %d) was accepted, but its end was not observed within %s; the final search outcome is unverified",
+			s.Name, *s.CommandID, SearchFollowWindow)
+	} else {
+		s.State = store.SearchNotObserved
+		s.Note = "no search for this content could be observed within " + SearchFollowWindow.String() +
+			" (the manager's command list was not read successfully, or showed none); this is not evidence that no search ran"
+	}
+	return true
 }
 
 // searchCovers reports whether a search command names any of the content

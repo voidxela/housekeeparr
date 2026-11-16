@@ -140,6 +140,11 @@ func (c *Client) History(ctx context.Context, downloadID string) ([]arr.HistoryE
 // commands (read-only).
 func (c *Client) Commands(ctx context.Context) ([]arr.Command, error) { return c.api.Commands(ctx) }
 
+// Redownload reads whether the manager searches again after a failed grab.
+func (c *Client) Redownload(ctx context.Context) (arr.RedownloadSettings, error) {
+	return c.api.Redownload(ctx)
+}
+
 // Content reports whether a movie ("movie:<id>") exists and is monitored.
 func (c *Client) Content(ctx context.Context, key string) (arr.Content, error) {
 	kind, id, ok := domain.ParseContentKey(key)

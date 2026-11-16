@@ -77,6 +77,20 @@ type Live struct {
 	ContentErr     string              `json:"content_error,omitempty"`
 	Health         []domain.HealthItem `json:"health,omitempty"`
 	HealthErr      string              `json:"health_error,omitempty"`
+	// Redownload is whether failing the grab makes the manager search for
+	// a replacement itself (the recovery's only replacement owner).
+	Redownload    *Redownload `json:"redownload,omitempty"`
+	RedownloadErr string      `json:"redownload_error,omitempty"`
+}
+
+// Redownload is the manager's redownload configuration and the grab's
+// release source, as read live.
+type Redownload struct {
+	Failed bool `json:"auto_redownload_failed"`
+	// FromInteractive is nil when the manager does not report it.
+	FromInteractive *bool `json:"from_interactive_search,omitempty"`
+	// GrabSource is the grab's release source from history ("" unknown).
+	GrabSource string `json:"grab_source,omitempty"`
 }
 
 // LiveChecks describes, for previews, what is re-read before every write.
@@ -86,6 +100,7 @@ var LiveChecks = []string{
 	"client and manager versions are still the tested ones",
 	"no other queue row in any manager refers to this torrent; the planned row is unchanged before the manager step",
 	"before the manager step: the content still exists and is monitored, and the manager reports no download-client or search-indexer failure",
+	"before the manager step: the manager's \"Redownload Failed\" setting is on (and, for a release grabbed through interactive search, \"Redownload Failed from Interactive Search\"), so failing the grab makes the manager search for a replacement",
 	"mode, emergency stop, exclusions, and workflow permission still allow the action",
 }
 
@@ -168,6 +183,25 @@ func Revalidate(p Proposal, i int, live Live) []Check {
 			}
 			add("content monitored", ok, strings.Join(details, "; ")+
 				" (a replacement is only wanted, and only searched by the manager, for existing monitored content)")
+		}
+		const owns = "manager searches for the replacement"
+		switch rd := live.Redownload; {
+		case live.RedownloadErr != "":
+			add(owns, false, "the manager's redownload settings could not be read: "+live.RedownloadErr)
+		case rd == nil:
+			add(owns, false, "the manager's redownload settings were not read")
+		case !rd.Failed:
+			add(owns, false, "the manager's \"Redownload Failed\" setting is off, so failing this grab would not make it search for a replacement, "+
+				"and Housekeeparr-scheduled replacement searches are not implemented")
+		case (rd.GrabSource == "InteractiveSearch" || rd.GrabSource == "") && (rd.FromInteractive == nil || !*rd.FromInteractive):
+			src := "was grabbed through interactive search"
+			if rd.GrabSource == "" {
+				src = "has no known release source in history (it may have been grabbed interactively)"
+			}
+			add(owns, false, "this release "+src+" and the manager's \"Redownload Failed from Interactive Search\" setting is off or not reported, "+
+				"so the manager might not search for a replacement")
+		default:
+			add(owns, true, fmt.Sprintf("the manager redownloads failed grabs (this grab's source: %s)", nonEmpty(rd.GrabSource, "unknown")))
 		}
 		if live.HealthErr != "" {
 			add("manager health", false, "health could not be read: "+live.HealthErr)

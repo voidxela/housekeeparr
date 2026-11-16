@@ -31,5 +31,6 @@ func Matching(p action.Proposal, failed bool) action.Live {
 	for _, key := range pl.Content {
 		live.Content = append(live.Content, action.ContentState{Key: key, Exists: true, Monitored: true, Detail: "monitored"})
 	}
+	live.Redownload = &action.Redownload{Failed: true, GrabSource: "Search"}
 	return live
 }

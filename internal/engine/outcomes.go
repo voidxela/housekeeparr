@@ -41,6 +41,8 @@ func (e *Engine) trackOutcomes(tx *store.Tx, freshManagers map[string]bool, comm
 		searchChanged := false
 		if cmds, ok := commands[o.ManagerID]; ok {
 			searchChanged = workflow.ObserveSearch(&o, cmds, now)
+		} else {
+			searchChanged = workflow.ExpireSearch(&o, now)
 		}
 		switch {
 		case now.Sub(o.StartedAt) > outcomeWindow:

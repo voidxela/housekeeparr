@@ -412,6 +412,9 @@ type HistoryEvent struct {
 	ID        int64     `json:"id"`
 	EventType string    `json:"event_type"`
 	Date      time.Time `json:"date"`
+	// ReleaseSource is the grab's data.releaseSource (for example Search,
+	// Rss, InteractiveSearch), when the record has one.
+	ReleaseSource string `json:"release_source,omitempty"`
 }
 
 // History returns the newest history records for a download id, newest
@@ -423,6 +426,9 @@ func (c *Client) History(ctx context.Context, downloadID string) ([]HistoryEvent
 			EventType  string    `json:"eventType"`
 			DownloadID string    `json:"downloadId"`
 			Date       time.Time `json:"date"`
+			Data       struct {
+				ReleaseSource string `json:"releaseSource"`
+			} `json:"data"`
 		} `json:"records"`
 	}
 	q := url.Values{"page": {"1"}, "pageSize": {"50"}, "downloadId": {strings.ToUpper(downloadID)}, "sortKey": {"date"}, "sortDirection": {"descending"}}
@@ -438,10 +444,36 @@ func (c *Client) History(ctx context.Context, downloadID string) ([]HistoryEvent
 			return nil, httpx.Malformed(c.app+".history", fmt.Errorf("record without id"))
 		}
 		if strings.EqualFold(r.DownloadID, downloadID) {
-			out = append(out, HistoryEvent{ID: *r.ID, EventType: r.EventType, Date: r.Date})
+			out = append(out, HistoryEvent{ID: *r.ID, EventType: r.EventType, Date: r.Date, ReleaseSource: r.Data.ReleaseSource})
 		}
 	}
 	return out, nil
+}
+
+// RedownloadSettings are the manager settings that decide whether failing a
+// grab makes the manager search for a replacement itself (released
+// RedownloadFailedDownloadService in Sonarr 4.0.20 and Radarr 6.4.4: no
+// search unless AutoRedownloadFailed, nor for a release grabbed through
+// interactive search unless AutoRedownloadFailedFromInteractiveSearch).
+type RedownloadSettings struct {
+	Failed bool `json:"auto_redownload_failed"`
+	// FromInteractive is nil when the manager does not report it.
+	FromInteractive *bool `json:"auto_redownload_failed_from_interactive_search,omitempty"`
+}
+
+// Redownload reads the redownload settings (GET /api/v3/config/downloadclient).
+func (c *Client) Redownload(ctx context.Context) (RedownloadSettings, error) {
+	var raw struct {
+		Failed          *bool `json:"autoRedownloadFailed"`
+		FromInteractive *bool `json:"autoRedownloadFailedFromInteractiveSearch"`
+	}
+	if err := c.Get(ctx, "download client config", "/api/v3/config/downloadclient", nil, &raw); err != nil {
+		return RedownloadSettings{}, err
+	}
+	if raw.Failed == nil {
+		return RedownloadSettings{}, httpx.Malformed(c.app+".config", fmt.Errorf("missing autoRedownloadFailed"))
+	}
+	return RedownloadSettings{Failed: *raw.Failed, FromInteractive: raw.FromInteractive}, nil
 }
 
 // Command is one entry of the manager's command list (GET /api/v3/command).

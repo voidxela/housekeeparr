@@ -75,6 +75,11 @@ func (m *fakeManager) History(context.Context, string) ([]arr.HistoryEvent, erro
 	return m.history, nil
 }
 
+func (m *fakeManager) Redownload(context.Context) (arr.RedownloadSettings, error) {
+	on := true
+	return arr.RedownloadSettings{Failed: true, FromInteractive: &on}, nil
+}
+
 type fakeClient struct {
 	ts      []domain.Transfer
 	stopped []string

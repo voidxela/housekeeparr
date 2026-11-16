@@ -100,8 +100,9 @@ func TestAutomaticRecovery(t *testing.T) {
 	runOnce := func(label string) {
 		t.Helper()
 		cmd := exec.Command(bin, "run", "--once", "--headless", "--config", cfgPath)
+		began := time.Now()
 		out, err := cmd.CombinedOutput()
-		t.Logf("%s: run --once: err=%v\n%s", label, err, lastLines(string(out), 12))
+		t.Logf("%s: run --once (%s): err=%v\n%s", label, time.Since(began).Round(time.Second), err, lastLines(string(out), 12))
 		if err != nil {
 			t.Fatalf("%s: run --once failed: %v", label, err)
 		}
@@ -109,6 +110,7 @@ func TestAutomaticRecovery(t *testing.T) {
 	type snapshot struct {
 		findings  map[string]domain.Finding // by hash: latest no-progress finding, any state
 		qualified map[string]bool
+		headline  map[string]string
 		intents   []store.Intent
 		evals     map[string]*store.AutomationEvaluation
 		probes    map[string]*adapter.Probe
@@ -122,7 +124,7 @@ func TestAutomaticRecovery(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer st.Close()
-		s := snapshot{findings: map[string]domain.Finding{}, qualified: map[string]bool{}, evals: map[string]*store.AutomationEvaluation{},
+		s := snapshot{findings: map[string]domain.Finding{}, qualified: map[string]bool{}, headline: map[string]string{}, evals: map[string]*store.AutomationEvaluation{},
 			probes: map[string]*adapter.Probe{}, rows: map[string]domain.QueueItem{}, category: map[string]domain.Signal[string]{}}
 		fs, err := st.Findings(ctx, store.FindingFilter{})
 		if err != nil {
@@ -147,6 +149,9 @@ func TestAutomaticRecovery(t *testing.T) {
 			}
 			if tr != nil {
 				s.qualified[tg.e.Hash] = tr.Assessment != nil && tr.Assessment.Status == policy.StatusQualified
+				if tr.Assessment != nil {
+					s.headline[tg.e.Hash] = string(tr.Assessment.Status) + ": " + tr.Assessment.Headline
+				}
 				s.category[tg.e.Hash] = tr.Latest.Category
 			}
 			rows, err := st.QueueItems(ctx, store.QueueFilter{ClientID: clientID, NativeID: tg.e.Hash})
@@ -186,7 +191,7 @@ func TestAutomaticRecovery(t *testing.T) {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("the engine did not diagnose both stalls in time: findings %v qualified %v", s.findings, s.qualified)
+			t.Fatalf("the engine did not diagnose both stalls in time: findings %v assessments %v", s.findings, s.headline)
 		}
 		time.Sleep(20 * time.Second)
 	}
@@ -231,6 +236,11 @@ func TestAutomaticRecovery(t *testing.T) {
 	rows, cats := s.rows, s.category
 	start := time.Now().UTC().Add(-time.Second)
 
+	if !eligible && !(managerClientKind() == "qbittorrent" && strings.HasPrefix(strings.TrimPrefix(cp.Version, "v"), "4.")) {
+		// Every other combination the harness runs is registered; a
+		// refusal there is a registry or probe mismatch, not a pass.
+		t.Fatalf("%s %s is not registered with these manager versions; the automatic run cannot exercise it", managerClientKind(), cp.Version)
+	}
 	if !eligible {
 		// Unregistered (or privacy-unknown) combination: every pass refuses
 		// before any request, visibly.
@@ -318,12 +328,14 @@ func TestAutomaticRecovery(t *testing.T) {
 	}
 
 	// Independent verification on the real instances, for each target.
+	replacements := map[string]int64{}
 	for _, tg := range targets {
 		row, ok := rows[tg.e.Hash]
 		if !ok {
 			t.Fatalf("%s: no queue row recorded before dispatch", tg.e.Key)
 		}
-		after, hist, searches := verifyRecovered(t, tg.a, tg.mgr, tg.e.asEntry(), row, cats[tg.e.Hash], digest[tg.e.Hash], hist0[tg.e.Hash], start, tg.search)
+		after, hist, searches, replacement := verifyRecovered(t, tg.a, tg.mgr, tg.e.asEntry(), row, cats[tg.e.Hash], digest[tg.e.Hash], hist0[tg.e.Hash], start, tg.search)
+		replacements[tg.e.Hash] = replacement
 		t.Logf("%s: verified after automatic dispatch: history %v, torrent %s, replacement searches %+v", tg.e.Key, hist, after.NativeState, searches)
 	}
 	// The binary recorded each manager's replacement search as its own
@@ -342,7 +354,7 @@ func TestAutomaticRecovery(t *testing.T) {
 		if strings.EqualFold(subj.NativeID, film.Hash) {
 			name = "MoviesSearch"
 		}
-		requireSearchOutcome(t, st, in.ID, name)
+		requireSearchOutcome(t, st, in.ID, name, replacements[strings.ToLower(subj.NativeID)])
 	}
 }
 
