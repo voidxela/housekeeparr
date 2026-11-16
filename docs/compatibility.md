@@ -43,9 +43,10 @@ workflow.
 | 2026-11-16 (`05b2afb`: content identity, attempt ledger, baseline verification) | Linux aarch64, Go 1.27.4 | same | all passed, including both recovery workflows |
 | 2026-11-16 (`d1d10f3`: retained records, outcome tracking, automatic dispatcher in the commit path) | Linux aarch64, Go 1.27.4 | same | all passed, including both recovery workflows |
 | 2026-11-16 (`99cf198`, `--clients deluge --manager-client deluge --managers sonarr,radarr`) | Linux aarch64, Go 1.27.4 | Deluge 2.2.0 + Sonarr 4.0.20.3014 + Radarr 6.4.4.10685 (isolated) | all passed, including both recovery workflows through Deluge |
-| 2026-11-16 (`b8d3313`, `--clients rtorrent --manager-client rtorrent --managers sonarr,radarr`) | Linux aarch64, Go 1.27.4 | rTorrent 0.9.8 + Sonarr 4.0.20.3014 + Radarr 6.4.4.10685 (isolated) | **run failed**: both recovery workflows and every probe passed, but the pre-existing observation fixture `errored-recheck` (payload deleted while rTorrent runs, then `d.check_hash`) was reported `seeding`/complete with verified bytes instead of a client error, unlike the 2026-11-15 runs. Not yet diagnosed; hypothesis: the deleted file was still open in rTorrent, so the hash check read the unlinked data. Not rerun; rTorrent recovery is not registered |
+| 2026-11-16 (`b8d3313`, `--clients rtorrent --manager-client rtorrent --managers sonarr,radarr`) | Linux aarch64, Go 1.27.4 | rTorrent 0.9.8 + Sonarr 4.0.20.3014 + Radarr 6.4.4.10685 (isolated) | **run failed**: both recovery workflows and every probe passed, but the pre-existing observation fixture `errored-recheck` (payload deleted while rTorrent runs, then `d.check_hash`) was reported `seeding`/complete with verified bytes instead of a client error, unlike the 2026-11-15 runs. Diagnosed 2026-11-16 as a harness race, not an adapter defect (see *rTorrent hash-check race* below); fixed in `1f24634` |
 | 2026-11-16 (`725f96b`, final session HEAD: owner-scoped ownership blocking, dispatcher fixes) | Linux aarch64, Go 1.27.4 | qBittorrent 5.3.0 + Sonarr 4.0.20.3014 + Radarr 6.4.4.10685 (isolated) | all passed, including both recovery workflows |
 | 2026-11-16 (`725f96b`, same) | Linux aarch64, Go 1.27.4 | Deluge 2.2.0 + Sonarr + Radarr, Deluge as the managers' client (isolated) | all passed, including both recovery workflows through Deluge |
+| 2026-11-16 (`7b0d1d0` + the fixture fix committed as `1f24634`, `--clients rtorrent --manager-client rtorrent --managers sonarr,radarr`) | Linux aarch64, Go 1.27.4 | rTorrent 0.9.8 + Sonarr 4.0.20.3014 + Radarr 6.4.4.10685 (isolated) | **all passed**: every observation assertion (`errored`, `errored-restart` and `errored-recheck` all client errors), the `d.message` probe, all probes, and both recovery workflows through rTorrent |
 
 What the suite exercised (`scripts/it/run.sh`, `internal/integration`):
 session login; version probe; listing of complete, half-complete (after
@@ -135,6 +136,27 @@ carries a stale local message is reported as a client error, and after
 `d.start` with `d.state=1` but inactive it is reported as paused while the
 stale message remains. Diagnosis must treat rTorrent local messages as
 possibly stale.
+
+### rTorrent hash-check race
+
+The `b8d3313` failure of `errored-recheck` was reproduced and explained with
+standalone disposable rTorrent 0.9.8 instances (loopback-only namespace):
+rTorrent opens a download's files only while it hashes them (none are open
+while the check is merely queued). A payload deleted **during** a running
+hash check is still read through the open descriptor, the check passes, and
+a `d.check_hash` sent meanwhile is silently ignored because `d.hashing` is
+non-zero. The download then stays started, `d.complete=1`, with all bytes
+verified, over a file `/proc` shows as `(deleted)`: exactly the failure
+signature. The harness used fixed sleeps (3 s after hashing every torrent,
+before `session.save` and the restart; none before the deletion), so on a
+loaded host a check could still be running when the payload was deleted.
+The fixture now waits (bounded, early exit) until every download is loaded
+and idle before saving and before deleting, and requires the forced check
+to fail, so a missed window fails the setup loudly instead of producing a
+misleading adapter result. Product consequence: on rTorrent too,
+"complete" can briefly coexist with deleted data (until the descriptor is
+closed), so the preserved-data limitation below applies to all four clients
+in some window.
 
 libtorrent-based clients do not notice missing payload until they read it,
 so a "complete" state is not evidence that the data still exists.
@@ -245,26 +267,28 @@ in the proposal comes from engine-written state and live re-fetches.
 
 | 2026-11-16 (`99cf198`) | Sonarr 4.0.20.3014 + Deluge 2.2.0; Radarr 6.4.4.10685 + Deluge 2.2.0 (isolated) | **passed**: same planner, live checks, baseline-attributed verification, and independent checks, with `core.pause_torrent` as the data-retaining stop; the torrent remained registered as `Paused` with the same label and byte-identical payload, and each manager queued its own replacement search |
 
+| 2026-11-16 (`7b0d1d0` + `1f24634`) | Sonarr 4.0.20.3014 + rTorrent 0.9.8; Radarr 6.4.4.10685 + rTorrent 0.9.8 (isolated) | **passed** in a clean run: `d.stop` (never `d.close`/`d.erase`) as the data-retaining stop; the download stayed registered with `d.state=0`/`d.is_active=0`, the same `d.custom1` label and a byte-identical payload, and each manager queued its own replacement search. Registered in `action.Tested` |
 | 2026-11-16 (`b8d3313`) | Sonarr 4.0.20.3014 + rTorrent 0.9.8; Radarr 6.4.4.10685 + rTorrent 0.9.8 (isolated) | workflow **passed** (every step and independent check, `d.stop` as the stop: the download stayed registered, `d.state=0`/`d.is_active=0`, payload byte-identical), but the run as a whole failed on an unrelated observation fixture (see *Integration runs*), so this combination is **not registered** until a clean run. The same run's `d.message` probe again showed messages persisting across `d.stop`/`d.start` |
 
-The qBittorrent 5.3.0 and Deluge 2.2.0 combinations above are registered in `action.Tested`; no other
+The qBittorrent 5.3.0, Deluge 2.2.0, and rTorrent 0.9.8 combinations above are registered in `action.Tested`; no other
 combination is eligible. qBittorrent 4.x does not report privacy, so
 recovery is refused there by the "public transfer" prerequisite (the test
-asserts this refusal). Not covered: engine-initiated (automatic) dispatch,
-which is not implemented; tracking of the replacement's search result, grab,
-and progress after the workflow; retained-data and capacity limits; other
-clients.
+asserts this refusal). Not covered on real instances: engine-initiated
+(automatic) dispatch (implemented, tested only with simulated
+applications); the replacement's grab, progress and completion tracking
+(fixture-tested); search acceptance as an outcome tracked by Housekeeparr;
+retained-data and capacity limits (fixture-tested); Transmission.
 
 ## Workflows by application
 
 | Application | Floor | Source evidence | Transport | Observation | No-progress recovery | Metadata recovery | Preserved-data failure handling | Partial-pack handling |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Sonarr | 4.0 | `v4.0.20.3014` | HTTP API v3, API key header | **tested: 4.0.20.3014**; others contract-tested | **tested: 4.0.20.3014 with qBittorrent 5.3.0** (manual dispatch) | not implemented | not implemented | not implemented |
-| Radarr | 5.0 | `v6.4.4.10685` | HTTP API v3, API key header | **tested: 6.4.4.10685**; others contract-tested | **tested: 6.4.4.10685 with qBittorrent 5.3.0** (manual dispatch) | not implemented | not implemented | n/a (Sonarr-specific in v1) |
+| Sonarr | 4.0 | `v4.0.20.3014` | HTTP API v3, API key header | **tested: 4.0.20.3014**; others contract-tested | **tested: 4.0.20.3014 with qBittorrent 5.3.0, Deluge 2.2.0, rTorrent 0.9.8** (manual dispatch) | not implemented | not implemented | not implemented |
+| Radarr | 5.0 | `v6.4.4.10685` | HTTP API v3, API key header | **tested: 6.4.4.10685**; others contract-tested | **tested: 6.4.4.10685 with qBittorrent 5.3.0, Deluge 2.2.0, rTorrent 0.9.8** (manual dispatch) | not implemented | not implemented | n/a (Sonarr-specific in v1) |
 | qBittorrent | 4.1 (WebUI API v2) | `release-4.6.7`, `release-5.3.0` | WebUI API v2, session cookie | **tested: 5.3.0, 4.6.7**; others contract-tested | **tested: 5.3.0** with Sonarr/Radarr above; 4.x refused (privacy unknown) | not implemented | not implemented | — |
 | Transmission | 2.80 (RPC 15) | `4.0.6`, `4.1.4` | legacy RPC (deprecated in 4.1, still supported throughout 4.x), session-id handshake, optional basic auth | **tested: 4.0.6, 4.1.4**; others contract-tested | not implemented | not implemented | not implemented | — |
-| Deluge | 2.0 | `deluge-2.0.0`, `deluge-2.1.1`, `deluge-2.2.0` | deluge-web JSON API (`/json`); daemon protocol unsupported | **tested: 2.2.0**; others contract-tested | not implemented | not implemented | not implemented | — |
-| rTorrent | 0.9.8 | `v0.9.8`, `v0.16.28` | XML-RPC over an HTTP(S) SCGI gateway (tested: lighttpd `mod_scgi`); raw SCGI unsupported | **tested: 0.9.8**; others contract-tested | not implemented | not implemented | not implemented | — |
+| Deluge | 2.0 | `deluge-2.0.0`, `deluge-2.1.1`, `deluge-2.2.0` | deluge-web JSON API (`/json`); daemon protocol unsupported | **tested: 2.2.0**; others contract-tested | **tested: 2.2.0** with Sonarr/Radarr above (`core.pause_torrent`) | not implemented | not implemented | — |
+| rTorrent | 0.9.8 | `v0.9.8`, `v0.16.28` | XML-RPC over an HTTP(S) SCGI gateway (tested: lighttpd `mod_scgi`); raw SCGI unsupported | **tested: 0.9.8**; others contract-tested | **tested: 0.9.8** with Sonarr/Radarr above (`d.stop`) | not implemented | not implemented | — |
 
 ## Observation signals by client
 
