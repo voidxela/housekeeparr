@@ -516,8 +516,13 @@ type Activity struct {
 	// Outcomes are what was observed after each verified recovery, by
 	// action ID.
 	Outcomes map[int64]store.RecoveryOutcome `json:"outcomes,omitempty"`
-	Journal  JournalStatus                   `json:"journal"`
-	Note     string                          `json:"note"`
+	// Retained lists transfers recovery stopped and kept with their data,
+	// against the configured ceiling.
+	Retained      []store.RetainedTransfer `json:"retained,omitempty"`
+	RetainedUsage store.RetainedUsage      `json:"retained_usage"`
+	Limits        policy.Limits            `json:"limits"`
+	Journal       JournalStatus            `json:"journal"`
+	Note          string                   `json:"note"`
 }
 
 // Outcomes returns the replacement outcomes of the given actions.
@@ -539,6 +544,10 @@ func (s *Service) Activity(ctx context.Context, limit int) (*Activity, error) {
 	if a.Outcomes, err = s.Outcomes(ctx, a.Actions); err != nil {
 		return nil, err
 	}
+	if a.Retained, a.RetainedUsage, err = s.Retained(ctx, false); err != nil {
+		return nil, err
+	}
+	a.Limits = s.cfg.Limits()
 	if a.Journal, err = s.Journal(ctx); err != nil {
 		return nil, err
 	}

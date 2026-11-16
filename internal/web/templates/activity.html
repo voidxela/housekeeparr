@@ -10,6 +10,13 @@
   </tbody></table>
   {{else}}{{template "empty" "No actions have been journaled."}}{{end}}
 </section>
+<section class="card" aria-labelledby="h-ret">
+  <h2 id="h-ret">Retained transfers</h2>
+  <p>{{.RetainedUsage.Count}} of {{.Limits.RetainedTransfers}} retained{{if .RetainedUsage.UnknownSize}}, {{.RetainedUsage.UnknownSize}} of unknown size{{end}}. Recovery stopped these and kept them, with their data, in the client; at the ceiling recovery stops. Housekeeparr never deletes them: remove them in the client when you no longer need the partial data, and they are released at the next poll. Sizes are logical estimates, not disk use.</p>
+  {{if .Retained}}<table class="table compact"><thead><tr><th scope="col">Retained</th><th scope="col">Client</th><th scope="col">Transfer</th><th scope="col">Content</th><th scope="col">Action</th></tr></thead><tbody>
+  {{range .Retained}}<tr><td>{{clock .RetainedAt}}</td><td>{{.ClientID}}</td><td>{{if .Name}}{{.Name}}{{else}}<code>{{.NativeID}}</code>{{end}}</td><td>{{if .Content}}<code>{{.ManagerID}}|{{.Content}}</code>{{end}}</td><td>#{{.IntentID}}</td></tr>{{end}}
+  </tbody></table>{{end}}
+</section>
 <section class="card" aria-labelledby="h-ev">
   <h2 id="h-ev">Finding lifecycle</h2>
   {{if .Events}}<ol class="timeline">{{range .Events}}<li><time datetime="{{iso .At}}">{{clock .At}}</time> <a href="/findings/{{.FindingID}}">#{{.FindingID}}</a> <span class="event event-{{.Kind}}">{{.Kind}}</span> <span class="muted small">{{.Actor}}</span> {{.Detail}}</li>{{end}}</ol>
