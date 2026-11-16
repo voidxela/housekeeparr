@@ -18,6 +18,7 @@ import (
 	"github.com/voidxela/housekeeparr/internal/adapter"
 	"github.com/voidxela/housekeeparr/internal/adapter/httpx"
 	"github.com/voidxela/housekeeparr/internal/domain"
+	"github.com/voidxela/housekeeparr/internal/redact"
 )
 
 // AvailabilityMeaning qualifies qBittorrent's availability figure: libtorrent's
@@ -137,6 +138,11 @@ func (c *Client) login(ctx context.Context) error {
 func (c *Client) get(ctx context.Context, op, path string, q url.Values) ([]byte, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	return c.getLocked(ctx, op, path, q)
+}
+
+// getLocked is get with c.mu already held.
+func (c *Client) getLocked(ctx context.Context, op, path string, q url.Values) ([]byte, error) {
 	if !c.loggedIn {
 		if err := c.login(ctx); err != nil {
 			return nil, err
@@ -412,4 +418,47 @@ func normalize(clientID string, r *torrent, v version) (domain.Transfer, error) 
 	}
 	t.ClientMessage = domain.UnsupportedValue[string]("qBittorrent does not report error details in the torrent list")
 	return t, nil
+}
+
+// Stop stops (5.x) or pauses (4.x) one torrent, retaining it and its data.
+// It is a write: a timeout is an uncertain outcome. The WebUI returns 200
+// for unknown hashes, so callers verify the effect by listing.
+func (c *Client) Stop(ctx context.Context, nativeID string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.loggedIn {
+		if err := c.login(ctx); err != nil {
+			return err
+		}
+	}
+	if c.version.raw == "" {
+		body, err := c.getLocked(ctx, "qbittorrent.version", "/api/v2/app/version", nil)
+		if err != nil {
+			return err
+		}
+		v, ok := parseVersion(string(body))
+		if !ok {
+			return &adapter.Error{Class: adapter.ErrUnsupported, Op: "qbittorrent.stop", Message: "unrecognised version " + redact.Truncate(string(body), 40)}
+		}
+		c.version = v
+	}
+	path := "/api/v2/torrents/pause"
+	if c.version.major >= 5 {
+		path = "/api/v2/torrents/stop" // renamed in 5.0
+	}
+	form := url.Values{"hashes": {nativeID}}
+	req := httpx.Request{Op: "qbittorrent.stop", Method: http.MethodPost, Path: path, Write: true,
+		Header: http.Header{"Content-Type": {"application/x-www-form-urlencoded"}, "Referer": {c.referer}},
+		Body:   strings.NewReader(form.Encode())}
+	_, err := c.http.Do(ctx, req)
+	if ae, ok := err.(*adapter.Error); ok && ae.HTTPStatus == http.StatusForbidden && c.username != "" {
+		// Session expired before anything was applied: log in and send once.
+		c.loggedIn = false
+		if lerr := c.login(ctx); lerr != nil {
+			return lerr
+		}
+		req.Body = strings.NewReader(form.Encode())
+		_, err = c.http.Do(ctx, req)
+	}
+	return err
 }

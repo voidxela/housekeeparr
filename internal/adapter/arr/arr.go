@@ -301,3 +301,86 @@ func (c *Client) Health(ctx context.Context, managerID string) (domain.HealthSna
 	}
 	return snap, nil
 }
+
+// RemoveFlags are the DELETE /api/v3/queue/{id} parameters. All four are
+// always sent: the released QueueController defaults removeFromClient to
+// true, which would delete the torrent.
+type RemoveFlags struct {
+	RemoveFromClient bool
+	Blocklist        bool
+	SkipRedownload   bool
+	ChangeCategory   bool
+}
+
+// Query returns the explicit query string.
+func (f RemoveFlags) Query() url.Values {
+	b := func(v bool) []string { return []string{fmt.Sprint(v)} }
+	return url.Values{"removeFromClient": b(f.RemoveFromClient), "blocklist": b(f.Blocklist),
+		"skipRedownload": b(f.SkipRedownload), "changeCategory": b(f.ChangeCategory)}
+}
+
+// RemoveQueueItem removes one queue row with explicit flags. A timeout is
+// reported as an uncertain outcome; callers must observe before acting
+// again. Semantics on released versions are recorded in
+// docs/compatibility.md ("Managed rows with real grab history").
+func (c *Client) RemoveQueueItem(ctx context.Context, queueID int64, f RemoveFlags) error {
+	op := c.app + ".queue_remove"
+	_, err := c.http.Do(ctx, httpx.Request{Op: op, Method: http.MethodDelete, Path: fmt.Sprintf("/api/v3/queue/%d", queueID),
+		Query: f.Query(), Header: http.Header{"X-Api-Key": {c.apiKey}}, Write: true})
+	return err
+}
+
+// Blocklisted reports whether the blocklist holds an entry for the
+// infohash. The first pages (newest first) are searched; an entry beyond
+// them is reported as not found, so callers treat false as "not observed".
+func (c *Client) Blocklisted(ctx context.Context, downloadID string) (bool, error) {
+	for p := 1; p <= 5; p++ {
+		var pg struct {
+			TotalRecords *int `json:"totalRecords"`
+			Records      []struct {
+				TorrentInfoHash string `json:"torrentInfoHash"`
+			} `json:"records"`
+		}
+		q := url.Values{"page": {fmt.Sprint(p)}, "pageSize": {"100"}, "sortKey": {"date"}, "sortDirection": {"descending"}}
+		if err := c.Get(ctx, "blocklist", "/api/v3/blocklist", q, &pg); err != nil {
+			return false, err
+		}
+		if pg.TotalRecords == nil || pg.Records == nil {
+			return false, httpx.Malformed(c.app+".blocklist", fmt.Errorf("missing totalRecords or records"))
+		}
+		for _, r := range pg.Records {
+			if strings.EqualFold(r.TorrentInfoHash, downloadID) {
+				return true, nil
+			}
+		}
+		if p*100 >= *pg.TotalRecords {
+			break
+		}
+	}
+	return false, nil
+}
+
+// HistoryEvents returns the event types recorded for a download id, newest
+// first. Records are filtered by download id client-side as well.
+func (c *Client) HistoryEvents(ctx context.Context, downloadID string) ([]string, error) {
+	var pg struct {
+		Records []struct {
+			EventType  string `json:"eventType"`
+			DownloadID string `json:"downloadId"`
+		} `json:"records"`
+	}
+	q := url.Values{"page": {"1"}, "pageSize": {"50"}, "downloadId": {strings.ToUpper(downloadID)}, "sortKey": {"date"}, "sortDirection": {"descending"}}
+	if err := c.Get(ctx, "history", "/api/v3/history", q, &pg); err != nil {
+		return nil, err
+	}
+	if pg.Records == nil {
+		return nil, httpx.Malformed(c.app+".history", fmt.Errorf("missing records"))
+	}
+	var out []string
+	for _, r := range pg.Records {
+		if strings.EqualFold(r.DownloadID, downloadID) {
+			out = append(out, r.EventType)
+		}
+	}
+	return out, nil
+}

@@ -110,3 +110,18 @@ func (c *Client) Queue(ctx context.Context) (domain.QueueSnapshot, error) {
 func (c *Client) Health(ctx context.Context) (domain.HealthSnapshot, error) {
 	return c.api.Health(ctx, c.id)
 }
+
+// RemoveQueueItem removes a queue row with every flag explicit.
+func (c *Client) RemoveQueueItem(ctx context.Context, queueID int64, f arr.RemoveFlags) error {
+	return c.api.RemoveQueueItem(ctx, queueID, f)
+}
+
+// Blocklisted reports whether the blocklist holds the infohash.
+func (c *Client) Blocklisted(ctx context.Context, downloadID string) (bool, error) {
+	return c.api.Blocklisted(ctx, downloadID)
+}
+
+// HistoryEvents lists history event types for a download id, newest first.
+func (c *Client) HistoryEvents(ctx context.Context, downloadID string) ([]string, error) {
+	return c.api.HistoryEvents(ctx, downloadID)
+}
