@@ -256,12 +256,53 @@ def rtorrent(port, manifest, tdir, save):
             scgi_call(port, "d.check_hash", h)
         if t["key"] == "stopped":
             scgi_call(port, "d.stop", h)
-    time.sleep(3)
+    # Save the session only once every hash check has finished, so that no
+    # download restarts with an interrupted check (see rtorrent_wait_idle).
+    rtorrent_wait_idle(port, m)
     scgi_call(port, "session.save")
+
+
+def rtorrent_wait_idle(port, m, timeout=90):
+    """Wait until every listed download is loaded and none is hash checking.
+
+    rTorrent opens a download's files while it hashes them. A payload deleted
+    during a check is still read through the open descriptor, the check
+    passes, and a d.check_hash sent meanwhile is ignored (observed on 0.9.8:
+    the download stays started and complete over a "(deleted)" file). Fixed
+    sleeps let a slow host hit that window, so wait for idleness instead.
+    """
+    hashes = [t["hash"].upper() for t in m if t["key"] != "magnet"]
+    deadline = time.time() + timeout
+    while True:
+        busy = []
+        for h in hashes:
+            try:
+                if scgi_call(port, "d.hashing", h) != 0:
+                    busy.append(h)
+            except xmlrpc.client.Fault:  # session still loading
+                busy.append(h)
+        if not busy:
+            return
+        if time.time() > deadline:
+            raise SystemExit("rtorrent: downloads still loading or hash checking after %ds: %s" % (timeout, busy))
+        time.sleep(0.5)
+
+
+def rtorrent_await_recheck_failure(port, h, timeout=60):
+    """Require that the forced check of a deleted payload actually failed."""
+    deadline = time.time() + timeout
+    while True:
+        st = {k: scgi_call(port, k, h) for k in ("d.hashing", "d.state", "d.complete", "d.message")}
+        if st["d.hashing"] == 0 and st["d.complete"] == 0 and st["d.state"] == 0 and st["d.message"]:
+            return
+        if time.time() > deadline:
+            raise SystemExit("rtorrent errored-recheck fixture setup did not fail its check: %r" % (st,))
+        time.sleep(0.5)
 
 
 def rtorrent_post_restart(port, manifest, save):
     m = load(manifest)
+    rtorrent_wait_idle(port, m)
     for t in by_key(m, "errored-restart"):
         h = t["hash"].upper()
         state = scgi_call(port, "d.state", h)
@@ -276,10 +317,12 @@ def rtorrent_post_restart(port, manifest, save):
         time.sleep(1)
         delete_payload(save, t)
         scgi_call(port, "d.start", h)
+    rtorrent_wait_idle(port, m)
     for t in by_key(m, "errored-recheck"):
         h = t["hash"].upper()
         delete_payload(save, t)
         scgi_call(port, "d.check_hash", h)
+        rtorrent_await_recheck_failure(port, h)
     time.sleep(3)
 
 
