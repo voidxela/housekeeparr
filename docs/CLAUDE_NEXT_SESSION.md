@@ -6,8 +6,8 @@ Continue implementing Housekeeparr through the complete approved v1 scope in
 behavior. The earlier review `docs/reviews/2026-11-15.md` supplies background;
 its R1–R4 are fixed. Implement and verify concrete increments, not just plans.
 
-Checkpoint: `dev` after `725f96b` (session of 2026-11-16, 30+ commits after
-`73d37d5`, not pushed). Validation at `725f96b`: build, vet, gofmt, full
+Checkpoint: `dev` at `dc2b726` (code last changed at `725f96b`; session of
+2026-11-16, 35 commits after `73d37d5`, not pushed). Validation at `725f96b`: build, vet, gofmt, full
 uncached Go suite, CGO-disabled binary; real instances: qBittorrent 5.3.0 and
 Deluge 2.2.0 each with Sonarr 4.0.20.3014 + Radarr 6.4.4.10685 (all passed,
 including both recovery workflows); rTorrent 0.9.8 at `b8d3313` (recovery
@@ -57,8 +57,13 @@ clients or SPEC §13.4 scenario 1 on real instances.
 
 The user is concerned that an arbitrary recovery quota will leave stuck
 transfers hanging. SPEC §§7, 9.1 and 10 require bounded acquisition and retry
-controls, but do **not** approve the current hard-coded 20/day global or 3/week
-per-item values (or the 24-hour cooldown). They are implementation proposals.
+controls, but do **not** approve the proposed values now in
+`[automation.limits]` (20 per rolling 24 h globally and per manager, 3
+attempts per episode/movie until reset, 24-hour success cooldown, and the
+rest listed in STATUS "Implementation proposals still hard-coded"). Pacing,
+per-content attempts with `housekeeparr attempts reset`, visible deferral and
+persisted per-finding automatic decisions are implemented; numbers remain
+proposals awaiting a product decision.
 Explain the distinction between pacing eligible work across an installation
 and stopping repeated ineffective replacement attempts for the same content.
 An exhausted allowance must keep the finding visible with reason, scope,
