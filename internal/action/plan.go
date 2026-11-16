@@ -25,13 +25,15 @@ type TestedWorkflow struct {
 	ClientVersion  string
 }
 
-// Tested is the registry of tested write workflows. It is empty: the
-// managed-row queue-removal semantics are recorded in
-// docs/compatibility.md, but no Housekeeparr adapter has a write method and
-// no complete workflow (separation, replacement ownership, verification)
-// has been exercised end to end. Add an entry only with the integration
-// run that establishes it.
-var Tested []TestedWorkflow
+// Tested is the registry of tested write workflows. Each entry is backed
+// by a passing run of internal/integration/recovery_test.go recorded in
+// docs/compatibility.md ("Recovery workflow runs"); add an entry only with
+// such a run. qBittorrent 4.x is absent on purpose: it does not report
+// privacy, so recovery is refused there regardless.
+var Tested = []TestedWorkflow{
+	{Workflow: policy.WorkflowNoProgressRecovery, Manager: adapter.KindSonarr, ManagerVersion: "4.0.20.3014", Client: adapter.KindQBittorrent, ClientVersion: "5.3.0"},
+	{Workflow: policy.WorkflowNoProgressRecovery, Manager: adapter.KindRadarr, ManagerVersion: "6.4.4.10685", Client: adapter.KindQBittorrent, ClientVersion: "5.3.0"},
+}
 
 // WorkflowFor maps a finding type to the workflow that would address it.
 func WorkflowFor(findingType string) (policy.Workflow, bool) {
