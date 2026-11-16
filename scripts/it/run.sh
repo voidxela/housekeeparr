@@ -605,6 +605,10 @@ go test -tags integration -count=1 -v -run "$RUN" ./internal/integration/ | tee 
 STATUS=${PIPESTATUS[0]}
 # Probes change manager and client state, so each runs on its own, in the
 # order registered (unknown-content probes before managed-content probes).
+# The automatic-dispatch test needs both managers and runs last.
+if [ "$STANDIN" = 1 ] && has "$MANAGERS" sonarr && has "$MANAGERS" radarr; then
+	MANAGED_PROBES+=(TestAutomaticRecovery)
+fi
 PROBES+=("${MANAGED_PROBES[@]}")
 for p in "${PROBES[@]}"; do
 	go test -tags integration -count=1 -v -run "^$p\$" ./internal/integration/ | tee -a "$WORK/go-test.log"

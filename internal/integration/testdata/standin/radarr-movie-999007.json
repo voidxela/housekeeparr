@@ -1,0 +1,35 @@
+{
+ "tmdbId": 999007,
+ "imdbId": "tt9990007",
+ "title": "Housekeeparr Sixth Fixture Film",
+ "originalTitle": "Housekeeparr Sixth Fixture Film",
+ "titleSlug": "999007",
+ "overview": "Fictional film served by the Housekeeparr integration stand-in.",
+ "year": 2016,
+ "inCinema": "2016-03-01T00:00:00Z",
+ "physicalRelease": "2016-06-01T00:00:00Z",
+ "digitalRelease": "2016-05-15T00:00:00Z",
+ "runtime": 100,
+ "originalLanguage": "en",
+ "status": "Released",
+ "studio": "Fixture Studio",
+ "movieRatings": {
+  "tmdb": {
+   "count": 1,
+   "value": 7.0,
+   "type": "user"
+  }
+ },
+ "ratings": [],
+ "genres": [],
+ "keywords": [],
+ "alternativeTitles": [],
+ "translations": [],
+ "certifications": [],
+ "images": [],
+ "credits": {
+  "cast": [],
+  "crew": []
+ },
+ "recommendations": []
+}

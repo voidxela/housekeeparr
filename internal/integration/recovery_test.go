@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -263,7 +264,28 @@ func runRecovery(t *testing.T, a arrAPI, mgr recoveryManager, me managedEntry, s
 		t.Fatalf("workflow did not succeed: %+v %v", res, err)
 	}
 
-	// Independent verification, separately for each outcome.
+	after, hist, searches := verifyRecovered(t, a, mgr, e, *row, tr.Category, digest, hist0, start, searchName)
+	// The local journal holds no lock and records the cooldown.
+	if h, _ := st.LockHolder(ctx, p.Locks[0]); h != 0 {
+		t.Error("lock still held after success")
+	}
+	if _, _, ok, _ := st.Cooldown(ctx, p.Locks[0]); !ok {
+		t.Error("no cooldown recorded")
+	}
+	t.Logf("verified: row absent after refreshes, blocklisted, history %v, torrent %s and payload intact, replacement searches %+v",
+		hist, after.NativeState, searches)
+}
+
+// verifyRecovered checks, independently of Housekeeparr's own verification
+// and separately for each outcome, that a recovery took effect on the real
+// instances: the queue row stays absent after two refreshes, exactly this
+// release is blocklisted with one new downloadFailed and no new grab, the
+// torrent is still registered, stopped, in the same category with a
+// byte-identical payload, and the manager queued its own replacement search.
+func verifyRecovered(t *testing.T, a arrAPI, mgr recoveryManager, e entry, row domain.QueueItem, category domain.Signal[string],
+	digest string, hist0 []string, start time.Time, searchName string) (domain.Transfer, []string, []arrCommand) {
+	t.Helper()
+	ctx := context.Background()
 	statuses := []string{a.command("RefreshMonitoredDownloads")}
 	time.Sleep(3 * time.Second)
 	statuses = append(statuses, a.command("RefreshMonitoredDownloads"))
@@ -281,8 +303,8 @@ func runRecovery(t *testing.T, a arrAPI, mgr recoveryManager, me managedEntry, s
 		t.Errorf("history %v → %v", hist0, hist)
 	}
 	after, ok := clientState(t, e.Hash)
-	if !ok || after.StateClass != domain.StatePaused || after.Category != tr.Category {
-		t.Errorf("client after: present=%v %s/%s category %v (was %v)", ok, after.NativeState, after.StateClass, after.Category, tr.Category)
+	if !ok || after.StateClass != domain.StatePaused || after.Category != category {
+		t.Errorf("client after: present=%v %s/%s category %v (was %v)", ok, after.NativeState, after.StateClass, after.Category, category)
 	}
 	if d := payloadDigest(t, e); d != digest {
 		t.Errorf("payload changed: %s → %s", digest, d)
@@ -295,13 +317,33 @@ func runRecovery(t *testing.T, a arrAPI, mgr recoveryManager, me managedEntry, s
 	if !found {
 		t.Errorf("manager queued no replacement %s (skipRedownload=false): %+v", searchName, searches)
 	}
-	// The local journal holds no lock and records the cooldown.
-	if h, _ := st.LockHolder(ctx, p.Locks[0]); h != 0 {
-		t.Error("lock still held after success")
+	// The adapter's command reader sees the same search, scoped to this
+	// content by the command body (what search-acceptance tracking uses).
+	if cr, ok := mgr.(interface {
+		Commands(context.Context) ([]arr.Command, error)
+	}); ok {
+		cmds, err := cr.Commands(ctx)
+		if err != nil {
+			t.Fatalf("commands: %v", err)
+		}
+		matched := false
+		for _, c := range cmds {
+			if c.Name != searchName || c.Queued.Before(start.Add(-time.Minute)) {
+				continue
+			}
+			if (row.EpisodeID > 0 && slices.Contains(c.EpisodeIDs, row.EpisodeID)) || (row.MovieID > 0 && slices.Contains(c.MovieIDs, row.MovieID)) {
+				matched = true
+				t.Logf("adapter command: %+v", c)
+			}
+		}
+		if !matched {
+			t.Errorf("the adapter's command list has no %s for this content: %+v", searchName, cmds)
+		}
+		// Raw response, for sanitized contract fixtures.
+		_, raw := a.do(http.MethodGet, "/api/v3/command", nil, nil)
+		t.Logf("raw /api/v3/command: %s", raw)
+	} else {
+		t.Errorf("%T has no command reader", mgr)
 	}
-	if _, _, ok, _ := st.Cooldown(ctx, p.Locks[0]); !ok {
-		t.Error("no cooldown recorded")
-	}
-	t.Logf("verified: row absent after refreshes, blocklisted, history %v, torrent %s and payload intact, replacement searches %+v",
-		hist, after.NativeState, searches)
+	return after, hist, searches
 }

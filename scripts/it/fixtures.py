@@ -103,6 +103,9 @@ def main(out, save):
     release("film-c", "Housekeeparr.Third.Fixture.Film.2019.1080p.WEB-DL.x264-HKFIX", 4 * MB, kind="movie", tmdbId=999004, imdbId="tt9990004")
     release("film-d", "Housekeeparr.Fourth.Fixture.Film.2018.1080p.WEB-DL.x264-HKFIX", 4 * MB, kind="movie", tmdbId=999005, imdbId="tt9990005")
     release("film-e", "Housekeeparr.Fifth.Fixture.Film.2017.1080p.WEB-DL.x264-HKFIX", 4 * MB, kind="movie", tmdbId=999006, imdbId="tt9990006")
+    # Released only to the automatic-dispatch test.
+    release("tv-e06", "Housekeeparr.Fixture.Show.S01E06.1080p.WEB-DL.x264-HKFIX", 4 * MB, kind="tv", tvdbId=999001, season=1, episode=6)
+    release("film-f", "Housekeeparr.Sixth.Fixture.Film.2016.1080p.WEB-DL.x264-HKFIX", 4 * MB, kind="movie", tmdbId=999007, imdbId="tt9990007")
     with open(os.path.join(out, "managed.json"), "w") as f:
         json.dump(managed, f, indent=1)
 
