@@ -503,7 +503,7 @@ type Activity struct {
 
 // Activity returns recent lifecycle and audit history.
 func (s *Service) Activity(ctx context.Context, limit int) (*Activity, error) {
-	a := &Activity{Note: "Every action is journaled before any request is sent. This build has no write workflow that has passed its tests, so no operation has been sent to a manager or client."}
+	a := &Activity{Note: "Every action is journaled before any request is sent, and each step is verified by observation. Only tested workflows can run, and only manually outside observe mode; uncertain outcomes are held for review, never retried."}
 	var err error
 	if a.Actions, err = s.st.Intents(ctx, store.IntentFilter{Limit: limit}); err != nil {
 		return nil, err

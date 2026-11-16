@@ -55,7 +55,7 @@ type Client struct {
 
 // New creates a Transmission adapter.
 func New(o Options) (*Client, error) {
-	hc, err := httpx.New(o.BaseURL, httpx.Options{Timeout: o.Timeout, CAFile: o.CAFile, MaxResponseBytes: 64 << 20, UserAgent: "Housekeeparr (read-only)"})
+	hc, err := httpx.New(o.BaseURL, httpx.Options{Timeout: o.Timeout, CAFile: o.CAFile, MaxResponseBytes: 64 << 20, UserAgent: "Housekeeparr"})
 	if err != nil {
 		return nil, err
 	}

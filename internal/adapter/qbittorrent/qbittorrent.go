@@ -58,7 +58,7 @@ func New(o Options) (*Client, error) {
 		Timeout: o.Timeout, CAFile: o.CAFile, CookieJar: true,
 		// Large seeding libraries produce big listings; bound them anyway.
 		MaxResponseBytes: 64 << 20,
-		UserAgent:        "Housekeeparr (read-only)",
+		UserAgent:        "Housekeeparr",
 	})
 	if err != nil {
 		return nil, err
