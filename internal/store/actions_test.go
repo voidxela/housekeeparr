@@ -67,12 +67,15 @@ func TestIntentTransitionsAndLockRelease(t *testing.T) {
 		if err := tx.SetIntentState(id, IntentExecuting, "", t0); err != nil {
 			return err
 		}
-		return tx.BeginStep(id, 1, t0)
+		return tx.BeginStep(id, 1, t0, json.RawMessage(`{"blocklist_ids":[3]}`))
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := w(func(tx *Tx) error { return tx.BeginStep(id, 1, t0) }); !errors.Is(err, ErrIllegalTransition) {
+	if err := w(func(tx *Tx) error { return tx.BeginStep(id, 1, t0, nil) }); !errors.Is(err, ErrIllegalTransition) {
 		t.Fatalf("re-dispatching a step: %v", err)
+	}
+	if in, _ := s.Intent(ctx, id); string(in.Steps[0].Baseline) != `{"blocklist_ids":[3]}` || in.Steps[1].Baseline != nil {
+		t.Fatalf("baseline not journaled: %+v", in.Steps)
 	}
 	// Timed out: uncertain keeps the lock and requires review.
 	if err := w(func(tx *Tx) error {
@@ -418,6 +421,10 @@ func TestForwardMigrationV3ContentIdentity(t *testing.T) {
 	}
 	if atts, _, _ := s.Attempts(ctx, "pacing:", 0); len(atts) != 4 {
 		t.Fatalf("pacing history after upgrade: %+v", atts)
+	}
+	// Schema 6: steps journaled earlier load with no baseline.
+	if in, err := s.Intent(ctx, 1); err != nil || len(in.Steps) != 1 || in.Steps[0].Baseline != nil {
+		t.Fatalf("pre-baseline step: %+v %v", in, err)
 	}
 	// Reviewing the held intent releases every subject, old and new.
 	err = s.Write(ctx, func(tx *Tx) error { return tx.SetIntentState(1, IntentFailed, "reviewed", time.Now()) })

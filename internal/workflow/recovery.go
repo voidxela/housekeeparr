@@ -27,8 +27,8 @@ type Manager interface {
 	Health(ctx context.Context) (domain.HealthSnapshot, error)
 	Content(ctx context.Context, key string) (arr.Content, error)
 	RemoveQueueItem(ctx context.Context, queueID int64, f arr.RemoveFlags) error
-	Blocklisted(ctx context.Context, m arr.BlocklistMatch) (bool, error)
-	HistoryEvents(ctx context.Context, downloadID string) ([]string, error)
+	BlocklistEntries(ctx context.Context, m arr.BlocklistMatch) ([]int64, error)
+	History(ctx context.Context, downloadID string) ([]arr.HistoryEvent, error)
 }
 
 // Client is a download client connection with the recovery operations.
@@ -80,9 +80,17 @@ type queueTarget struct {
 	MovieID    int64  `json:"movie_id"`
 }
 
-// clockSlack tolerates a manager clock behind ours when matching blocklist
-// entries recorded after dispatch.
-const clockSlack = 5 * time.Minute
+// queueBaseline is the manager evidence that already matched before the
+// queue step was sent. Only entries and records absent from it are
+// attributed to the step.
+type queueBaseline struct {
+	BlocklistIDs []int64 `json:"blocklist_ids"`
+	HistoryIDs   []int64 `json:"history_ids"`
+}
+
+func (tg queueTarget) blocklistMatch() arr.BlocklistMatch {
+	return arr.BlocklistMatch{SourceTitle: tg.Title, SeriesID: tg.SeriesID, EpisodeID: tg.EpisodeID, MovieID: tg.MovieID}
+}
 
 type queueRequest struct {
 	RemoveFromClient *bool `json:"removeFromClient"`
@@ -226,6 +234,39 @@ func (r *Recovery) Live(ctx context.Context, p action.Proposal) (action.Live, er
 	return live, nil
 }
 
+// Baseline reads, before the queue step, the matching blocklist entries
+// and history records that already exist.
+func (r *Recovery) Baseline(ctx context.Context, st store.Step) (json.RawMessage, error) {
+	if st.Op != "manager.queue.fail" {
+		return nil, nil
+	}
+	var tg queueTarget
+	if err := json.Unmarshal(st.Target, &tg); err != nil {
+		return nil, err
+	}
+	m, ok := r.Managers[tg.ManagerID]
+	if !ok {
+		return nil, fmt.Errorf("no recovery support for manager %s", tg.ManagerID)
+	}
+	if tg.Title == "" {
+		return nil, fmt.Errorf("no release title to match blocklist entries")
+	}
+	b := queueBaseline{BlocklistIDs: []int64{}, HistoryIDs: []int64{}}
+	ids, err := m.BlocklistEntries(ctx, tg.blocklistMatch())
+	if err != nil {
+		return nil, err
+	}
+	b.BlocklistIDs = append(b.BlocklistIDs, ids...)
+	hist, err := m.History(ctx, tg.DownloadID)
+	if err != nil {
+		return nil, err
+	}
+	for _, h := range hist {
+		b.HistoryIDs = append(b.HistoryIDs, h.ID)
+	}
+	return json.Marshal(b)
+}
+
 // Dispatch sends one step.
 func (r *Recovery) Dispatch(ctx context.Context, st store.Step) (json.RawMessage, error) {
 	switch st.Op {
@@ -308,40 +349,56 @@ func (r *Recovery) Observe(ctx context.Context, st store.Step) (action.Observati
 		if blocklist {
 			event = "downloadFailed"
 		}
+		var base *queueBaseline
+		if len(st.Baseline) > 0 {
+			base = &queueBaseline{}
+			if err := json.Unmarshal(st.Baseline, base); err != nil {
+				return action.Observation{}, err
+			}
+		}
 		return r.wait(ctx, func() (action.Observation, error) {
 			row, err := r.queueRow(ctx, tg.ManagerID, tg.DownloadID)
 			if err != nil {
 				return action.Observation{}, err
 			}
-			bl := false
+			if base == nil {
+				// Without a baseline an existing entry or record cannot be
+				// told apart from this step's effect.
+				ev, _ := json.Marshal(map[string]any{"queue_row_present": row != nil})
+				return action.Observation{Verdict: action.Unknown, Evidence: ev,
+					Detail: "no pre-dispatch baseline, so blocklist and history evidence cannot be attributed to this request"}, nil
+			}
+			var newBlock []int64
 			if blocklist {
-				if st.DispatchedAt == nil || tg.Title == "" {
-					return action.Observation{Verdict: action.Unknown, Detail: "no dispatch time or release title to match a blocklist entry"}, nil
-				}
-				var err error
-				bl, err = m.Blocklisted(ctx, arr.BlocklistMatch{SourceTitle: tg.Title, Since: st.DispatchedAt.Add(-clockSlack),
-					SeriesID: tg.SeriesID, EpisodeID: tg.EpisodeID, MovieID: tg.MovieID})
+				ids, err := m.BlocklistEntries(ctx, tg.blocklistMatch())
 				if err != nil {
 					return action.Observation{}, err
 				}
+				newBlock = newIDs(ids, base.BlocklistIDs)
 			}
-			hist, err := m.HistoryEvents(ctx, tg.DownloadID)
+			hist, err := m.History(ctx, tg.DownloadID)
 			if err != nil {
 				return action.Observation{}, err
 			}
+			var newEvents []string
 			recorded := false
 			for _, h := range hist {
-				recorded = recorded || h == event
+				if !contains(base.HistoryIDs, h.ID) {
+					newEvents = append(newEvents, h.EventType)
+					recorded = recorded || h.EventType == event
+				}
 			}
-			ev, _ := json.Marshal(map[string]any{"queue_row_present": row != nil, "blocklisted": bl, "history": hist})
+			bl := len(newBlock) > 0
+			ev, _ := json.Marshal(map[string]any{"queue_row_present": row != nil, "new_blocklist_ids": newBlock, "new_history": newEvents,
+				"baseline": base, "matching": "byte-exact release title and content; title evidence, not infohash identity"})
 			switch {
 			case row == nil && recorded && (bl || !blocklist):
 				return action.Observation{Verdict: action.Holds, Evidence: ev}, nil
 			case row != nil && !recorded && !bl:
-				return action.Observation{Verdict: action.NotHolds, Evidence: ev, Detail: "the queue row is still tracked and nothing was recorded"}, nil
+				return action.Observation{Verdict: action.NotHolds, Evidence: ev, Detail: "the queue row is still tracked and nothing new was recorded"}, nil
 			default:
 				return action.Observation{Verdict: action.Unknown, Evidence: ev,
-					Detail: fmt.Sprintf("partial effect: row present=%v, %s recorded=%v, blocklisted=%v", row != nil, event, recorded, bl)}, nil
+					Detail: fmt.Sprintf("partial effect: row present=%v, new %s recorded=%v, new blocklist entries=%d", row != nil, event, recorded, len(newBlock))}, nil
 			}
 		})
 	case "client.stop":
@@ -367,4 +424,23 @@ func (r *Recovery) Observe(ctx context.Context, st store.Step) (action.Observati
 		})
 	}
 	return action.Observation{}, fmt.Errorf("unknown operation %s", st.Op)
+}
+
+func contains(xs []int64, x int64) bool {
+	for _, y := range xs {
+		if y == x {
+			return true
+		}
+	}
+	return false
+}
+
+func newIDs(now, before []int64) []int64 {
+	var out []int64
+	for _, id := range now {
+		if !contains(before, id) {
+			out = append(out, id)
+		}
+	}
+	return out
 }

@@ -331,11 +331,13 @@ func (c *Client) RemoveQueueItem(ctx context.Context, queueID int64, f RemoveFla
 	return err
 }
 
-// BlocklistMatch identifies a blocklist entry by evidence. Released
+// BlocklistMatch identifies blocklist entries by evidence. Released
 // Sonarr 4.0.20 and Radarr 6.4.4 BlocklistResource expose no infohash, so
-// an entry is matched by its exact source title, recorded at or after
-// Since, and (when set) for the same series/episode or movie. This is
-// evidence of identity, not proof: two releases may share a title.
+// an entry is matched by its byte-exact source title, recorded at or after
+// Since (when set), and (when set) for the same series/episode or movie.
+// This is evidence of identity, not proof: two releases may share a
+// title. Callers attribute an entry to their own request only by
+// comparing with a baseline taken before the request.
 type BlocklistMatch struct {
 	SourceTitle string
 	Since       time.Time
@@ -344,17 +346,19 @@ type BlocklistMatch struct {
 	MovieID     int64
 }
 
-// Blocklisted reports whether a matching blocklist entry exists. The newest
-// pages are searched; an entry beyond them is reported as not found, so
-// callers treat false as "not observed".
-func (c *Client) Blocklisted(ctx context.Context, m BlocklistMatch) (bool, error) {
+// BlocklistEntries returns the IDs of matching blocklist entries among the
+// newest pages; an entry beyond them is not returned, so callers treat
+// absence as "not observed".
+func (c *Client) BlocklistEntries(ctx context.Context, m BlocklistMatch) ([]int64, error) {
 	if strings.TrimSpace(m.SourceTitle) == "" {
-		return false, fmt.Errorf("blocklist match needs a source title")
+		return nil, fmt.Errorf("blocklist match needs a source title")
 	}
+	var out []int64
 	for p := 1; p <= 5; p++ {
 		var pg struct {
 			TotalRecords *int `json:"totalRecords"`
 			Records      []struct {
+				ID          *int64    `json:"id"`
 				SourceTitle string    `json:"sourceTitle"`
 				Date        time.Time `json:"date"`
 				SeriesID    int64     `json:"seriesId"`
@@ -364,13 +368,16 @@ func (c *Client) Blocklisted(ctx context.Context, m BlocklistMatch) (bool, error
 		}
 		q := url.Values{"page": {fmt.Sprint(p)}, "pageSize": {"100"}, "sortKey": {"date"}, "sortDirection": {"descending"}}
 		if err := c.Get(ctx, "blocklist", "/api/v3/blocklist", q, &pg); err != nil {
-			return false, err
+			return nil, err
 		}
 		if pg.TotalRecords == nil || pg.Records == nil {
-			return false, httpx.Malformed(c.app+".blocklist", fmt.Errorf("missing totalRecords or records"))
+			return nil, httpx.Malformed(c.app+".blocklist", fmt.Errorf("missing totalRecords or records"))
 		}
 		for _, r := range pg.Records {
-			if !strings.EqualFold(r.SourceTitle, m.SourceTitle) || r.Date.Before(m.Since) {
+			if r.ID == nil {
+				return nil, httpx.Malformed(c.app+".blocklist", fmt.Errorf("record without id"))
+			}
+			if r.SourceTitle != m.SourceTitle || (!m.Since.IsZero() && r.Date.Before(m.Since)) {
 				continue
 			}
 			if m.SeriesID != 0 && r.SeriesID != m.SeriesID || m.MovieID != 0 && r.MovieID != m.MovieID {
@@ -385,22 +392,37 @@ func (c *Client) Blocklisted(ctx context.Context, m BlocklistMatch) (bool, error
 					continue
 				}
 			}
-			return true, nil
+			out = append(out, *r.ID)
 		}
 		if p*100 >= *pg.TotalRecords {
 			break
 		}
 	}
-	return false, nil
+	return out, nil
 }
 
-// HistoryEvents returns the event types recorded for a download id, newest
+// Blocklisted reports whether a matching blocklist entry exists.
+func (c *Client) Blocklisted(ctx context.Context, m BlocklistMatch) (bool, error) {
+	ids, err := c.BlocklistEntries(ctx, m)
+	return len(ids) > 0, err
+}
+
+// HistoryEvent is one manager history record for a download.
+type HistoryEvent struct {
+	ID        int64     `json:"id"`
+	EventType string    `json:"event_type"`
+	Date      time.Time `json:"date"`
+}
+
+// History returns the newest history records for a download id, newest
 // first. Records are filtered by download id client-side as well.
-func (c *Client) HistoryEvents(ctx context.Context, downloadID string) ([]string, error) {
+func (c *Client) History(ctx context.Context, downloadID string) ([]HistoryEvent, error) {
 	var pg struct {
 		Records []struct {
-			EventType  string `json:"eventType"`
-			DownloadID string `json:"downloadId"`
+			ID         *int64    `json:"id"`
+			EventType  string    `json:"eventType"`
+			DownloadID string    `json:"downloadId"`
+			Date       time.Time `json:"date"`
 		} `json:"records"`
 	}
 	q := url.Values{"page": {"1"}, "pageSize": {"50"}, "downloadId": {strings.ToUpper(downloadID)}, "sortKey": {"date"}, "sortDirection": {"descending"}}
@@ -410,10 +432,13 @@ func (c *Client) HistoryEvents(ctx context.Context, downloadID string) ([]string
 	if pg.Records == nil {
 		return nil, httpx.Malformed(c.app+".history", fmt.Errorf("missing records"))
 	}
-	var out []string
+	var out []HistoryEvent
 	for _, r := range pg.Records {
+		if r.ID == nil {
+			return nil, httpx.Malformed(c.app+".history", fmt.Errorf("record without id"))
+		}
 		if strings.EqualFold(r.DownloadID, downloadID) {
-			out = append(out, r.EventType)
+			out = append(out, HistoryEvent{ID: *r.ID, EventType: r.EventType, Date: r.Date})
 		}
 	}
 	return out, nil

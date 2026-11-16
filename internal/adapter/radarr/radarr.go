@@ -120,15 +120,20 @@ func (c *Client) RemoveQueueItem(ctx context.Context, queueID int64, f arr.Remov
 	return c.api.RemoveQueueItem(ctx, queueID, f)
 }
 
-// Blocklisted reports whether a matching blocklist entry exists (see
+// BlocklistEntries returns matching blocklist entry IDs (see
 // arr.BlocklistMatch for why this is evidence rather than hash identity).
+func (c *Client) BlocklistEntries(ctx context.Context, m arr.BlocklistMatch) ([]int64, error) {
+	return c.api.BlocklistEntries(ctx, m)
+}
+
+// Blocklisted reports whether a matching blocklist entry exists.
 func (c *Client) Blocklisted(ctx context.Context, m arr.BlocklistMatch) (bool, error) {
 	return c.api.Blocklisted(ctx, m)
 }
 
-// HistoryEvents lists history event types for a download id, newest first.
-func (c *Client) HistoryEvents(ctx context.Context, downloadID string) ([]string, error) {
-	return c.api.HistoryEvents(ctx, downloadID)
+// History lists history records for a download id, newest first.
+func (c *Client) History(ctx context.Context, downloadID string) ([]arr.HistoryEvent, error) {
+	return c.api.History(ctx, downloadID)
 }
 
 // Content reports whether a movie ("movie:<id>") exists and is monitored.

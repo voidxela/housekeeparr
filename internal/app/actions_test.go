@@ -22,6 +22,7 @@ type okExec struct{ sent []string }
 func (e *okExec) Live(_ context.Context, p action.Proposal) (action.Live, error) {
 	return actiontest.Matching(p, len(e.sent) > 0), nil
 }
+func (e *okExec) Baseline(context.Context, store.Step) (json.RawMessage, error) { return nil, nil }
 func (e *okExec) Dispatch(_ context.Context, st store.Step) (json.RawMessage, error) {
 	e.sent = append(e.sent, st.Op)
 	return nil, nil
@@ -199,6 +200,7 @@ type unknownExec struct{ sent int }
 func (e *unknownExec) Live(_ context.Context, p action.Proposal) (action.Live, error) {
 	return actiontest.Matching(p, e.sent > 0), nil
 }
+func (e *unknownExec) Baseline(context.Context, store.Step) (json.RawMessage, error) { return nil, nil }
 func (e *unknownExec) Dispatch(context.Context, store.Step) (json.RawMessage, error) {
 	e.sent++
 	return nil, nil
@@ -226,7 +228,7 @@ func TestActReconcilesInterruptedActionsFirst(t *testing.T) {
 		if err := tx.SetIntentState(id, store.IntentExecuting, "", now); err != nil {
 			return err
 		}
-		return tx.BeginStep(id, 1, now)
+		return tx.BeginStep(id, 1, now, nil)
 	})
 	if err != nil {
 		t.Fatal(err)

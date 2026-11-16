@@ -85,6 +85,8 @@ type Step struct {
 	FinishedAt   *time.Time      `json:"finished_at,omitempty"`
 	Outcome      json.RawMessage `json:"outcome,omitempty"`
 	Error        string          `json:"error,omitempty"`
+	// Baseline is external evidence read immediately before dispatch.
+	Baseline json.RawMessage `json:"baseline,omitempty"`
 }
 
 // LockHeldError reports a subject already locked by another intent.
@@ -215,9 +217,13 @@ func (t *Tx) SetIntentState(id int64, to IntentState, explanation string, now ti
 
 // BeginStep records, before the external request is sent, that the step is
 // being dispatched. The caller must commit this before sending.
-func (t *Tx) BeginStep(id int64, seq int, now time.Time) error {
-	res, err := t.exec(`UPDATE action_steps SET state=?, attempts=attempts+1, dispatched_at=? WHERE intent_id=? AND seq=? AND state=?`,
-		string(StepDispatching), ms(now), id, seq, string(StepPending))
+func (t *Tx) BeginStep(id int64, seq int, now time.Time, baseline json.RawMessage) error {
+	var base sql.NullString
+	if len(baseline) > 0 {
+		base = sql.NullString{String: string(baseline), Valid: true}
+	}
+	res, err := t.exec(`UPDATE action_steps SET state=?, attempts=attempts+1, dispatched_at=?, baseline_json=? WHERE intent_id=? AND seq=? AND state=?`,
+		string(StepDispatching), ms(now), base, id, seq, string(StepPending))
 	if err != nil {
 		return err
 	}
@@ -616,7 +622,7 @@ func (s *Store) Intent(ctx context.Context, id int64) (Intent, error) {
 
 func (s *Store) loadIntentDetail(ctx context.Context, in *Intent) error {
 	rows, err := s.r.QueryContext(ctx, `SELECT seq, op, target_json, request_json, expect_json, state, attempts, dispatched_at,
-		finished_at, outcome_json, error FROM action_steps WHERE intent_id=? ORDER BY seq`, in.ID)
+		finished_at, outcome_json, error, baseline_json FROM action_steps WHERE intent_id=? ORDER BY seq`, in.ID)
 	if err != nil {
 		return err
 	}
@@ -624,8 +630,8 @@ func (s *Store) loadIntentDetail(ctx context.Context, in *Intent) error {
 		st := Step{IntentID: in.ID}
 		var tgt, req, exp, state string
 		var disp, fin sql.NullInt64
-		var out, errText sql.NullString
-		if err := rows.Scan(&st.Seq, &st.Op, &tgt, &req, &exp, &state, &st.Attempts, &disp, &fin, &out, &errText); err != nil {
+		var out, errText, base sql.NullString
+		if err := rows.Scan(&st.Seq, &st.Op, &tgt, &req, &exp, &state, &st.Attempts, &disp, &fin, &out, &errText, &base); err != nil {
 			rows.Close()
 			return err
 		}
@@ -633,6 +639,9 @@ func (s *Store) loadIntentDetail(ctx context.Context, in *Intent) error {
 		st.State, st.DispatchedAt, st.FinishedAt, st.Error = StepState(state), ptrMS(disp), ptrMS(fin), errText.String
 		if out.Valid {
 			st.Outcome = json.RawMessage(out.String)
+		}
+		if base.Valid {
+			st.Baseline = json.RawMessage(base.String)
 		}
 		in.Steps = append(in.Steps, st)
 	}

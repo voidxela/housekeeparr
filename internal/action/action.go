@@ -141,6 +141,11 @@ type Executor interface {
 	// Live re-reads the decision-relevant external state for p, for
 	// Revalidate. It must not write.
 	Live(ctx context.Context, p Proposal) (Live, error)
+	// Baseline reads, immediately before a step is dispatched, the
+	// external evidence its verification compares against (for example
+	// existing matching blocklist entries), so only evidence that is new
+	// relative to it is attributed to this request. It may return nil.
+	Baseline(ctx context.Context, step store.Step) (json.RawMessage, error)
 	Dispatch(ctx context.Context, step store.Step) (json.RawMessage, error)
 	Observe(ctx context.Context, step store.Step) (Observation, error)
 }
@@ -405,8 +410,20 @@ func (c *Coordinator) run(ctx context.Context, id int64, p Proposal) (Result, er
 				return Result{IntentID: id, State: store.IntentUncertain, Detail: why}, nil
 			}
 		}
-		// Commit "dispatching" before sending. If this write fails nothing
-		// is sent.
+		base, berr := c.Executor.Baseline(ctx, st)
+		if berr != nil {
+			why := fmt.Sprintf("the evidence baseline for step %d (%s) could not be read: %v", st.Seq, st.Op, berr)
+			c.skipRest(jctx, id, in.Steps[i:])
+			if i == 0 {
+				_ = c.unsent(jctx, id, store.IntentCancelled, why+"; nothing was sent")
+				return Result{IntentID: id, State: store.IntentCancelled, Detail: why}, nil
+			}
+			why += "; earlier steps took effect, review required"
+			_ = c.finish(jctx, id, store.IntentUncertain, why)
+			return Result{IntentID: id, State: store.IntentUncertain, Detail: why}, nil
+		}
+		// Commit "dispatching", with the baseline, before sending. If this
+		// write fails nothing is sent.
 		now := c.now()
 		err := c.Store.Write(jctx, func(tx *store.Tx) error {
 			if i == 0 {
@@ -414,7 +431,7 @@ func (c *Coordinator) run(ctx context.Context, id int64, p Proposal) (Result, er
 					return err
 				}
 			}
-			return tx.BeginStep(id, st.Seq, now)
+			return tx.BeginStep(id, st.Seq, now, base)
 		})
 		if err != nil {
 			if i == 0 {
@@ -424,7 +441,7 @@ func (c *Coordinator) run(ctx context.Context, id int64, p Proposal) (Result, er
 			// Earlier steps took effect; leave the intent for reconciliation.
 			return Result{IntentID: id, State: store.IntentExecuting}, fmt.Errorf("%w after step %d: %v", ErrJournal, i, err)
 		}
-		st.State, st.DispatchedAt, st.Attempts = store.StepDispatching, &now, st.Attempts+1
+		st.State, st.DispatchedAt, st.Attempts, st.Baseline = store.StepDispatching, &now, st.Attempts+1, base
 		out, derr := c.Executor.Dispatch(ctx, st)
 		state, detail, outcome := c.settle(jctx, st, out, derr)
 		if err := c.Store.Write(jctx, func(tx *store.Tx) error {

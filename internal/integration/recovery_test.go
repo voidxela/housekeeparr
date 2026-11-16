@@ -41,8 +41,8 @@ import (
 
 type recoveryManager interface {
 	workflow.Manager
-	Probe(ctx context.Context) (adapter.Probe, error)
 	Kind() adapter.Kind
+	Blocklisted(ctx context.Context, m arr.BlocklistMatch) (bool, error)
 }
 
 func ensureSeries(t *testing.T, a arrAPI) int {

@@ -25,15 +25,15 @@ var (
 )
 
 type fakeManager struct {
-	id        string
-	rows      []domain.QueueItem
-	queueErr  error
-	health    []domain.HealthItem
-	content   map[string]arr.Content
-	blocklist bool
-	history   []string
-	removed   []arr.RemoveFlags
-	match     arr.BlocklistMatch
+	id       string
+	rows     []domain.QueueItem
+	queueErr error
+	health   []domain.HealthItem
+	content  map[string]arr.Content
+	blockIDs []int64
+	history  []arr.HistoryEvent
+	removed  []arr.RemoveFlags
+	match    arr.BlocklistMatch
 }
 
 func (m *fakeManager) ID() string {
@@ -61,11 +61,13 @@ func (m *fakeManager) RemoveQueueItem(_ context.Context, _ int64, f arr.RemoveFl
 	m.removed = append(m.removed, f)
 	return nil
 }
-func (m *fakeManager) Blocklisted(_ context.Context, b arr.BlocklistMatch) (bool, error) {
+func (m *fakeManager) BlocklistEntries(_ context.Context, b arr.BlocklistMatch) ([]int64, error) {
 	m.match = b
-	return m.blocklist, nil
+	return m.blockIDs, nil
 }
-func (m *fakeManager) HistoryEvents(context.Context, string) ([]string, error) { return m.history, nil }
+func (m *fakeManager) History(context.Context, string) ([]arr.HistoryEvent, error) {
+	return m.history, nil
+}
 
 type fakeClient struct {
 	ts      []domain.Transfer
@@ -117,17 +119,34 @@ func TestDispatchRefusesImplicitOrDestructiveFlags(t *testing.T) {
 	}
 }
 
+func hist(pairs ...any) []arr.HistoryEvent {
+	var out []arr.HistoryEvent
+	for i := 0; i < len(pairs); i += 2 {
+		out = append(out, arr.HistoryEvent{ID: int64(pairs[i].(int)), EventType: pairs[i+1].(string)})
+	}
+	return out
+}
+
 func TestObserveQueueFail(t *testing.T) {
 	ctx := context.Background()
 	req := `{"removeFromClient":false,"blocklist":true,"skipRedownload":false,"changeCategory":false}`
+	// Before dispatch: the grab (history 10) and an old, unrelated
+	// blocklist entry with the same title for the same episode (id 5).
+	baseline := `{"blocklist_ids":[5],"history_ids":[10]}`
 	cases := []struct {
-		name string
-		m    fakeManager
-		want action.Verdict
+		name     string
+		m        fakeManager
+		baseline string
+		want     action.Verdict
 	}{
-		{"effective", fakeManager{blocklist: true, history: []string{"downloadFailed", "grabbed"}}, action.Holds},
-		{"row still tracked, nothing recorded", fakeManager{rows: []domain.QueueItem{{DownloadID: "AA", QueueID: 7}}, history: []string{"grabbed"}}, action.NotHolds},
-		{"row gone but not blocklisted", fakeManager{history: []string{"downloadFailed", "grabbed"}}, action.Unknown},
+		{"effective", fakeManager{blockIDs: []int64{6, 5}, history: hist(11, "downloadFailed", 10, "grabbed")}, baseline, action.Holds},
+		{"row still tracked, nothing new", fakeManager{rows: []domain.QueueItem{{DownloadID: "AA", QueueID: 7}}, blockIDs: []int64{5},
+			history: hist(10, "grabbed")}, baseline, action.NotHolds},
+		{"row gone but not blocklisted", fakeManager{blockIDs: []int64{5}, history: hist(11, "downloadFailed", 10, "grabbed")}, baseline, action.Unknown},
+		// Review decision 3: an old failure and an old matching entry are
+		// not this action's effect.
+		{"only stale evidence", fakeManager{blockIDs: []int64{5}, history: hist(10, "grabbed", 9, "downloadFailed")}, `{"blocklist_ids":[5],"history_ids":[10,9]}`, action.Unknown},
+		{"no baseline", fakeManager{blockIDs: []int64{6}, history: hist(11, "downloadFailed")}, "", action.Unknown},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -135,14 +154,28 @@ func TestObserveQueueFail(t *testing.T) {
 			st := step("manager.queue.fail", qtarget, req)
 			at := time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)
 			st.DispatchedAt = &at
+			if c.baseline != "" {
+				st.Baseline = json.RawMessage(c.baseline)
+			}
 			obs, err := rec(&m, &fakeClient{}).Observe(ctx, st)
 			if err != nil || obs.Verdict != c.want {
 				t.Fatalf("%+v %v", obs, err)
 			}
-			if c.want == action.Holds && (m.match.SourceTitle != "Show.S01E01" || m.match.EpisodeID != 9 || !m.match.Since.Before(at)) {
+			if c.want == action.Holds && (m.match.SourceTitle != "Show.S01E01" || m.match.EpisodeID != 9) {
 				t.Fatalf("blocklist matched by %+v", m.match)
 			}
 		})
+	}
+}
+
+func TestBaselineRecordsExistingEvidence(t *testing.T) {
+	m := &fakeManager{blockIDs: []int64{5}, history: hist(10, "grabbed")}
+	b, err := rec(m, &fakeClient{}).Baseline(context.Background(), step("manager.queue.fail", qtarget, `{}`))
+	if err != nil || string(b) != `{"blocklist_ids":[5],"history_ids":[10]}` {
+		t.Fatalf("baseline %s %v", b, err)
+	}
+	if b, err := rec(m, &fakeClient{}).Baseline(context.Background(), step("client.stop", `{}`, `{}`)); err != nil || b != nil {
+		t.Fatalf("stop baseline %s %v", b, err)
 	}
 }
 

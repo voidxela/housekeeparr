@@ -55,10 +55,10 @@ func TestBlocklistAndHistoryReads(t *testing.T) {
 	// Shape of released BlocklistResource: no infohash.
 	c := serve(t, map[string]string{
 		"/api/v3/blocklist": `{"totalRecords":3,"records":[
-			{"sourceTitle":"Show.S01E02.1080p-GRP","date":"2026-11-15T12:00:05Z","seriesId":3,"episodeIds":[9]},
-			{"sourceTitle":"Show.S01E02.1080p-GRP","date":"2026-11-14T12:00:00Z","seriesId":3,"episodeIds":[9]},
-			{"sourceTitle":"Film.2020.1080p-GRP","date":"2026-11-15T12:00:05Z","movieId":4}]}`,
-		"/api/v3/history": `{"totalRecords":3,"records":[{"eventType":"downloadFailed","downloadId":"BBBB"},{"eventType":"grabbed","downloadId":"BBBB"},{"eventType":"grabbed","downloadId":"CCCC"}]}`,
+			{"id":3,"sourceTitle":"Show.S01E02.1080p-GRP","date":"2026-11-15T12:00:05Z","seriesId":3,"episodeIds":[9]},
+			{"id":2,"sourceTitle":"Show.S01E02.1080p-GRP","date":"2026-11-14T12:00:00Z","seriesId":3,"episodeIds":[9]},
+			{"id":1,"sourceTitle":"Film.2020.1080p-GRP","date":"2026-11-15T12:00:05Z","movieId":4}]}`,
+		"/api/v3/history": `{"totalRecords":3,"records":[{"id":7,"eventType":"downloadFailed","downloadId":"BBBB"},{"id":6,"eventType":"grabbed","downloadId":"BBBB"},{"id":5,"eventType":"grabbed","downloadId":"CCCC"}]}`,
 	})
 	ctx := context.Background()
 	since := time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)
@@ -66,7 +66,9 @@ func TestBlocklistAndHistoryReads(t *testing.T) {
 		m    BlocklistMatch
 		want bool
 	}{
-		{BlocklistMatch{SourceTitle: "show.s01e02.1080p-grp", Since: since, SeriesID: 3, EpisodeID: 9}, true},
+		{BlocklistMatch{SourceTitle: "Show.S01E02.1080p-GRP", Since: since, SeriesID: 3, EpisodeID: 9}, true},
+		// Byte-exact: a title differing only in case is another release.
+		{BlocklistMatch{SourceTitle: "show.s01e02.1080p-grp", Since: since, SeriesID: 3, EpisodeID: 9}, false},
 		{BlocklistMatch{SourceTitle: "Show.S01E02.1080p-GRP", Since: since, SeriesID: 3, EpisodeID: 8}, false},
 		{BlocklistMatch{SourceTitle: "Show.S01E02.1080p-GRP", Since: since.Add(time.Hour)}, false},
 		{BlocklistMatch{SourceTitle: "Film.2020.1080p-GRP", Since: since, MovieID: 4}, true},
@@ -76,9 +78,25 @@ func TestBlocklistAndHistoryReads(t *testing.T) {
 			t.Errorf("%+v: %v %v", c2.m, ok, err)
 		}
 	}
-	ev, err := c.HistoryEvents(ctx, "bbbb")
-	if err != nil || len(ev) != 2 || ev[0] != "downloadFailed" {
+	if ids, err := c.BlocklistEntries(ctx, BlocklistMatch{SourceTitle: "Show.S01E02.1080p-GRP", SeriesID: 3, EpisodeID: 9}); err != nil || len(ids) != 2 {
+		t.Fatalf("entries without Since %v %v", ids, err)
+	}
+	ev, err := c.History(ctx, "bbbb")
+	if err != nil || len(ev) != 2 || ev[0].EventType != "downloadFailed" || ev[0].ID != 7 {
 		t.Fatalf("history %v %v (other download ids must be filtered out)", ev, err)
+	}
+}
+
+func TestRecordsWithoutIDsAreMalformed(t *testing.T) {
+	c := serve(t, map[string]string{
+		"/api/v3/blocklist": `{"totalRecords":1,"records":[{"sourceTitle":"x","date":"2026-11-15T12:00:05Z"}]}`,
+		"/api/v3/history":   `{"records":[{"eventType":"grabbed","downloadId":"X"}]}`,
+	})
+	if _, err := c.BlocklistEntries(context.Background(), BlocklistMatch{SourceTitle: "x"}); err == nil {
+		t.Fatal("blocklist record without id accepted")
+	}
+	if _, err := c.History(context.Background(), "x"); err == nil {
+		t.Fatal("history record without id accepted")
 	}
 }
 
@@ -87,7 +105,7 @@ func TestMalformedBlocklistIsAnError(t *testing.T) {
 	if _, err := c.Blocklisted(context.Background(), BlocklistMatch{SourceTitle: "x"}); err == nil {
 		t.Fatal("malformed blocklist accepted as 'not blocklisted'")
 	}
-	if _, err := c.HistoryEvents(context.Background(), "x"); err == nil {
+	if _, err := c.History(context.Background(), "x"); err == nil {
 		t.Fatal("malformed history accepted as empty")
 	}
 }

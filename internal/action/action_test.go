@@ -23,19 +23,20 @@ type fakeExec struct {
 	mu sync.Mutex
 	// live is what Live returns; nil means "exactly as planned" (with the
 	// queue row gone once the manager step was sent).
-	live       func(p Proposal) Live
-	liveErr    error
-	dispatch   map[string]func() (json.RawMessage, error)
-	observe    map[string]Observation
-	observeErr map[string]error
-	sent       []string
-	observed   []string
-	onDispatch func(op string)
+	live        func(p Proposal) Live
+	liveErr     error
+	dispatch    map[string]func() (json.RawMessage, error)
+	observe     map[string]Observation
+	observeErr  map[string]error
+	baselineErr map[string]error
+	sent        []string
+	observed    []string
+	onDispatch  func(op string)
 }
 
 func newFake() *fakeExec {
 	return &fakeExec{dispatch: map[string]func() (json.RawMessage, error){},
-		observe: map[string]Observation{}, observeErr: map[string]error{}}
+		observe: map[string]Observation{}, observeErr: map[string]error{}, baselineErr: map[string]error{}}
 }
 
 func (f *fakeExec) Live(_ context.Context, p Proposal) (Live, error) {
@@ -65,6 +66,15 @@ func matching(p Proposal, failed bool) Live {
 	}
 	live.Content = []ContentState{{Key: "episode:1", Exists: true, Monitored: true, Detail: "monitored"}}
 	return live
+}
+
+func (f *fakeExec) Baseline(_ context.Context, st store.Step) (json.RawMessage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.baselineErr[st.Op]; err != nil {
+		return nil, err
+	}
+	return json.RawMessage(`{"op":"` + st.Op + `"}`), nil
 }
 
 func (f *fakeExec) Dispatch(_ context.Context, st store.Step) (json.RawMessage, error) {
@@ -669,5 +679,34 @@ func TestFirstWriteChecksPlannedState(t *testing.T) {
 	}
 	if bad := RelevantHealth([]domain.HealthItem{{Source: "IndexerStatusCheck", Type: "error", Message: "All indexers are unavailable due to failures"}}); len(bad) != 1 {
 		t.Fatal("all indexers failing does not block")
+	}
+}
+
+// A baseline that cannot be read stops the step before it is sent: the
+// first step is cancelled with nothing sent (and its reservation returned),
+// a later one holds the partial workflow.
+func TestBaselineIsJournaledAndRequired(t *testing.T) {
+	c, f, _ := setup(t)
+	res, err := c.Execute(ctx, proposal("qbit|aa"))
+	if err != nil || res.State != store.IntentSucceeded {
+		t.Fatal(res, err)
+	}
+	in, _ := c.Store.Intent(ctx, res.IntentID)
+	if string(in.Steps[0].Baseline) != `{"op":"manager.queue.fail"}` {
+		t.Fatalf("baseline not journaled: %s", in.Steps[0].Baseline)
+	}
+	for i, op := range []string{"manager.queue.fail", "client.stop"} {
+		c, f, _ = setup(t)
+		f.baselineErr[op] = errors.New("blocklist unreadable")
+		p := proposal("qbit|aa")
+		p.Budgets = []BudgetClaim{pacingClaim(5)}
+		res, err := c.Execute(ctx, p)
+		want := []store.IntentState{store.IntentCancelled, store.IntentUncertain}[i]
+		if err != nil || res.State != want || f.count(op) != 0 || !strings.Contains(res.Detail, "baseline") {
+			t.Fatalf("%s: %+v %v sent %v", op, res, err, f.sent)
+		}
+		if u, _ := c.Store.BudgetUsage(ctx, pacingClaim(5).Budget(), 1, t0); u.Used != i {
+			t.Fatalf("%s: budget used %d", op, u.Used)
+		}
 	}
 }
