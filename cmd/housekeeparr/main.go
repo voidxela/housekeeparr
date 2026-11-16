@@ -53,6 +53,11 @@ func commands() []command {
 		{"ack", "acknowledge a finding: ack <id>", cmdAck},
 		{"snooze", "snooze a finding: snooze <id> --for 24h", cmdSnooze},
 		{"reopen", "return an acknowledged or snoozed finding to open: reopen <id>", cmdReopen},
+		{"preview", "preview the action for a finding: prerequisites, exact operations, effects: preview <id>", cmdPreview},
+		{"act", "run the previewed manual action through the coordinator: act <id> --confirm", cmdAct},
+		{"actions", "list journaled actions and holds (exit 1 if any need review)", cmdActions},
+		{"review", "resolve an uncertain action after checking: review <action-id> --as failed --note ...", cmdReview},
+		{"restore-ack", "accept a restored state database as authoritative: restore-ack --confirm", cmdRestoreAck},
 		{"check", "probe every configured connection now (read-only; does not change state)", cmdCheck},
 		{"config", "validate configuration and secret references: config validate", cmdConfig},
 		{"demo", "serve the web interface on synthetic demo data in a separate state directory", cmdDemo},
@@ -214,6 +219,21 @@ func cmdRun(args []string, out, errOut io.Writer) int {
 		return code
 	}
 	defer st.Close()
+	// Startup reconciliation of the action journal. This build has no write
+	// executor, so nothing can be observed or settled here; anything
+	// interrupted or uncertain is reported and keeps its locks for review,
+	// and a suspected restore holds all writes. Nothing is ever replayed.
+	if js, err := app.New(st, cfg, nil, nil).Journal(ctx); err != nil {
+		fmt.Fprintln(errOut, "action journal:", err)
+		return exitFailure
+	} else {
+		if js.RestoreHold != nil {
+			log.Warn("writes held: state database may predate actions already sent", "reason", js.RestoreHold.Reason)
+		}
+		if js.Active > 0 || js.Uncertain > 0 {
+			log.Warn("actions need review before related work can proceed", "interrupted", js.Active, "uncertain", js.Uncertain)
+		}
+	}
 	kind := "daemon"
 	if *once {
 		kind = "once"
@@ -355,12 +375,12 @@ func cmdFindings(args []string, out, errOut io.Writer) int {
 
 func parseID(pos []string, errOut io.Writer) (int64, bool) {
 	if len(pos) != 1 {
-		fmt.Fprintln(errOut, "expected exactly one finding id")
+		fmt.Fprintln(errOut, "expected exactly one id")
 		return 0, false
 	}
 	id, err := strconv.ParseInt(pos[0], 10, 64)
 	if err != nil || id <= 0 {
-		fmt.Fprintf(errOut, "invalid finding id %q\n", pos[0])
+		fmt.Fprintf(errOut, "invalid id %q\n", pos[0])
 		return 0, false
 	}
 	return id, true

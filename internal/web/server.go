@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/voidxela/housekeeparr/internal/action"
 	"github.com/voidxela/housekeeparr/internal/app"
 	"github.com/voidxela/housekeeparr/internal/findings"
 )
@@ -117,6 +118,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /healthz", s.healthz)
 	mux.HandleFunc("GET /api/v1/{resource}", s.api)
 	mux.HandleFunc("GET /api/v1/findings/{id}", s.apiFinding)
+	mux.HandleFunc("GET /api/v1/findings/{id}/preview", s.apiPreview)
 	mux.HandleFunc("GET /api/v1/downloads/{client}/{native}", s.apiDownload)
 	return s.guard(mux)
 }
@@ -199,6 +201,12 @@ func (s *Server) findingAction(w http.ResponseWriter, r *http.Request) {
 		_, err = s.svc.Acknowledge(ctx, id, app.ActorWeb)
 	case "reopen":
 		_, err = s.svc.Reopen(ctx, id, app.ActorWeb)
+	case "act":
+		if r.PostFormValue("confirm") != "yes" {
+			err = errors.New("confirm the previewed effects before running the action")
+			break
+		}
+		_, _, err = s.svc.Act(ctx, id, app.ActorWeb)
 	case "snooze":
 		var d time.Duration
 		d, err = time.ParseDuration(r.PostFormValue("duration"))
@@ -216,6 +224,8 @@ func (s *Server) findingAction(w http.ResponseWriter, r *http.Request) {
 		return
 	case errors.Is(err, findings.ErrResolved), errors.Is(err, findings.ErrInvalidSnooze):
 		target += "?notice=" + url.QueryEscape(err.Error())
+	case errors.As(err, new(*action.RefusedError)), errors.Is(err, app.ErrNoExecutor):
+		target += "?notice=" + url.QueryEscape("Not run, nothing was sent: "+err.Error())
 	case err != nil:
 		s.log.Error("finding action failed", "id", id, "err", err)
 		target += "?notice=" + url.QueryEscape("Could not save the change: "+err.Error())
@@ -295,6 +305,20 @@ func (s *Server) apiFinding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v, err := s.svc.Finding(r.Context(), id)
+	writeAPI(w, v, err)
+}
+
+func (s *Server) apiPreview(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeAPI(w, nil, app.ErrNotFound)
+		return
+	}
+	origin := action.OriginManual
+	if r.URL.Query().Get("origin") == "automatic" {
+		origin = action.OriginAutomatic
+	}
+	v, err := s.svc.Preview(r.Context(), id, origin)
 	writeAPI(w, v, err)
 }
 

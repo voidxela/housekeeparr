@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/voidxela/housekeeparr/internal/action"
 	"github.com/voidxela/housekeeparr/internal/app"
 	"github.com/voidxela/housekeeparr/internal/domain"
 	"github.com/voidxela/housekeeparr/internal/engine"
@@ -257,7 +258,14 @@ func (s *Server) finding(r *http.Request) (string, string, any, error) {
 	if err != nil {
 		return "", "", nil, err
 	}
-	return "finding", d.Title, d, nil
+	pv, err := s.svc.Preview(r.Context(), id, action.OriginManual)
+	if err != nil {
+		return "", "", nil, err
+	}
+	return "finding", d.Title, struct {
+		*app.FindingDetail
+		Preview *app.ActionPreview
+	}{d, pv}, nil
 }
 
 func (s *Server) downloads(r *http.Request) (string, string, any, error) {

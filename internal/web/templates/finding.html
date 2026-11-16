@@ -43,6 +43,28 @@
 </section>
 {{end}}
 
+{{with $.Page.Preview}}{{with .Proposal}}
+<section class="card preview" aria-labelledby="h-preview">
+  <h2 id="h-preview">Action preview: {{.Workflow}}</h2>
+  {{if .Eligible}}<p><span class="glyph" aria-hidden="true">✓</span> <strong>Eligible.</strong> Every prerequisite holds right now.</p>
+  {{else}}<p><span class="glyph" aria-hidden="true">✕</span> <strong>Not eligible.</strong> Nothing will be sent while any prerequisite below fails.</p>{{end}}
+  <ul class="checks">{{range .Prerequisites}}<li class="{{if .Satisfied}}check-ok{{else}}check-fail{{end}}"><span class="check-mark">{{if .Satisfied}}OK{{else}}FAILS{{end}}</span> <strong>{{.Name}}</strong>{{if .Hard}} <span class="muted small">(safety)</span>{{end}} — {{.Detail}}</li>{{end}}</ul>
+  <h3>Intended operations</h3>
+  <ol>{{range .Operations}}<li>{{.Description}}<br><code class="small">{{.Op}} {{printf "%s" .Request}}</code></li>{{end}}</ol>
+  <h3>Effects</h3>
+  <ul>{{range .Effects}}<li>{{.}}</li>{{end}}{{range .SideEffects}}<li>{{.}}</li>{{end}}</ul>
+  {{if .Eligible}}
+  <form method="post" action="/findings/{{$.Page.ID}}/act">
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <label><input type="checkbox" name="confirm" value="yes" required> I have read the effects above</label>
+    <button type="submit">Run this action</button>
+  </form>
+  <p class="muted small">The action is re-planned from current state and every prerequisite is checked again before anything is sent. Progress and outcome appear in Activity.</p>
+  {{end}}
+  <p class="muted small">Preview computed {{clock .CreatedAt}}; it expires {{clock .ExpiresAt}}. The same preview is available as <code>housekeeparr preview {{$.Page.ID}}</code>.</p>
+</section>
+{{end}}{{end}}
+
 {{with .Detail.NextSteps}}
 <section class="card" aria-labelledby="h-steps"><h2 id="h-steps">Suggested next steps</h2><ol>{{range .}}<li>{{.}}</li>{{end}}</ol>
 {{with $.Page.Detail.Links}}<p class="links">{{range .}}<a href="{{.URL}}" rel="noopener noreferrer" target="_blank">{{.Label}} ↗</a>{{end}}</p>{{end}}

@@ -236,3 +236,10 @@ progress.bar::-moz-progress-bar { background: var(--accent); }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; scroll-behavior: auto !important; } }
 @media print { .side, .actions, .demo-banner { display: none; } .shell { display: block; } }
+
+/* Action preview prerequisites: state is spelled out, colour only reinforces it. */
+.checks { list-style: none; padding: 0; margin: 0 0 1rem; }
+.checks li { padding: .35rem 0; border-bottom: 1px solid var(--line, #e3e3e3); }
+.check-mark { display: inline-block; min-width: 3.5rem; font-weight: 600; font-size: .8rem; letter-spacing: .03em; }
+.check-ok .check-mark { color: var(--ok, #1f7a3a); }
+.check-fail .check-mark { color: var(--bad, #a8261b); }

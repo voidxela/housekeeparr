@@ -1,6 +1,15 @@
 {{define "content"}}{{with .Page}}
 <h1>Activity</h1>
 <div class="banner banner-info"><span class="glyph" aria-hidden="true">●</span> <span>{{.Note}}</span></div>
+{{with .Journal.RestoreHold}}<div class="banner banner-warn" role="alert"><span class="glyph" aria-hidden="true">!</span> <span><strong>Writes are held.</strong> {{.Reason}} Check the managers and clients, then run <code>housekeeparr restore-ack --confirm</code>.</span></div>{{end}}
+<section class="card" aria-labelledby="h-actions">
+  <h2 id="h-actions">Actions</h2>
+  {{if .Actions}}<table class="table compact"><thead><tr><th scope="col">#</th><th scope="col">State</th><th scope="col">Workflow</th><th scope="col">Origin</th><th scope="col">Created</th><th scope="col">Steps</th><th scope="col">Explanation</th></tr></thead><tbody>
+  {{range .Actions}}<tr><td>{{.ID}}</td><td><span class="pill">{{.State}}</span>{{if .ReviewRequired}} <strong>review required</strong>{{end}}</td><td>{{.Workflow}}</td><td>{{.Origin}}</td><td>{{clock .CreatedAt}}</td>
+  <td><ol class="plain small">{{range .Steps}}<li>{{.Op}}: {{.State}}{{if .Error}} — {{.Error}}{{end}}</li>{{end}}</ol></td><td>{{.Explanation}}</td></tr>{{end}}
+  </tbody></table>
+  {{else}}{{template "empty" "No actions have been journaled."}}{{end}}
+</section>
 <section class="card" aria-labelledby="h-ev">
   <h2 id="h-ev">Finding lifecycle</h2>
   {{if .Events}}<ol class="timeline">{{range .Events}}<li><time datetime="{{iso .At}}">{{clock .At}}</time> <a href="/findings/{{.FindingID}}">#{{.FindingID}}</a> <span class="event event-{{.Kind}}">{{.Kind}}</span> <span class="muted small">{{.Actor}}</span> {{.Detail}}</li>{{end}}</ol>

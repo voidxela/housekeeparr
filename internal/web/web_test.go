@@ -210,3 +210,40 @@ func (w testWriter) Write(b []byte) (int, error) {
 }
 
 var _ = io.Discard
+
+func TestFindingPageShowsActionPreviewAndActRefuses(t *testing.T) {
+	e := setup(t)
+	f := firstFinding(t, e, domain.FindingTransferStalled)
+	page := e.get(t, "/findings/"+itoa(f.ID)).Body.String()
+	for _, want := range []string{"Action preview: no_progress_recovery", "Not eligible", "tested write workflow", "FAILS",
+		"manager.queue.fail", `&#34;removeFromClient&#34;:false`, "housekeeparr preview " + itoa(f.ID)} {
+		if !strings.Contains(page, want) {
+			t.Errorf("finding page lacks %q", want)
+		}
+	}
+	if strings.Contains(page, "Run this action") {
+		t.Error("ineligible preview offers the action button")
+	}
+	m := regexp.MustCompile(`name="csrf" value="([0-9a-f]+)"`).FindStringSubmatch(page)
+	path := "/findings/" + itoa(f.ID) + "/act"
+	// Without confirmation nothing runs.
+	w := e.do(t, post(path, "http://127.0.0.1:8485", url.Values{"csrf": {m[1]}}))
+	if w.Code != http.StatusSeeOther || !strings.Contains(w.Header().Get("Location"), "confirm") {
+		t.Fatalf("unconfirmed act: %d %s", w.Code, w.Header().Get("Location"))
+	}
+	// Confirmed, it goes through the coordinator and is refused with reasons.
+	w = e.do(t, post(path, "http://127.0.0.1:8485", url.Values{"csrf": {m[1]}, "confirm": {"yes"}}))
+	loc, _ := url.QueryUnescape(w.Header().Get("Location"))
+	if w.Code != http.StatusSeeOther || !strings.Contains(loc, "nothing was sent") || !strings.Contains(loc, "tested write workflow") {
+		t.Fatalf("confirmed act: %d %s", w.Code, loc)
+	}
+	if acts, _ := e.svc.Actions(context.Background(), 10); len(acts) != 0 {
+		t.Fatalf("refused action journaled: %+v", acts)
+	}
+	// The JSON preview is the same evaluation.
+	w = e.get(t, "/api/v1/findings/"+itoa(f.ID)+"/preview?origin=automatic")
+	var pv app.ActionPreview
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &pv) != nil || pv.Proposal == nil || pv.Proposal.Origin != "automatic" || pv.Proposal.Eligible() {
+		t.Fatalf("preview API: %d %s", w.Code, w.Body.String())
+	}
+}

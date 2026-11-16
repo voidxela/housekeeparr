@@ -984,6 +984,19 @@ func (c *Config) Resolve(sub policy.Subject) (policy.Effective, error) {
 	return eff, nil
 }
 
+// HasManager reports whether a manager connection with id is configured.
+func (c *Config) HasManager(id string) bool { return c.hasManager(id) }
+
+// HasClient reports whether a client connection with id is configured.
+func (c *Config) HasClient(id string) bool {
+	for _, ce := range c.Clients() {
+		if ce.Config.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *Config) hasManager(id string) bool {
 	for _, m := range c.Sonarr {
 		if m.ID == id {

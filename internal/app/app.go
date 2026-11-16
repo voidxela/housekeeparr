@@ -12,6 +12,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/voidxela/housekeeparr/internal/action"
 	"github.com/voidxela/housekeeparr/internal/config"
 	"github.com/voidxela/housekeeparr/internal/domain"
 	"github.com/voidxela/housekeeparr/internal/findings"
@@ -30,7 +31,14 @@ type Service struct {
 	cfg    *config.Config
 	now    func() time.Time
 	engine EngineStatus // nil when not running in the worker process
+	// executor performs action steps. It is nil in this build: no adapter
+	// has a write method, so manual actions are refused with their
+	// prerequisites. Tests set it through SetExecutor.
+	executor action.Executor
 }
+
+// SetExecutor installs the action executor (tests and future workflows).
+func (s *Service) SetExecutor(e action.Executor) { s.executor = e }
 
 // New creates a service. engine may be nil.
 func New(st *store.Store, cfg *config.Config, now func() time.Time, engine EngineStatus) *Service {
@@ -485,16 +493,24 @@ func (s *Service) Policies() ([]policy.Effective, error) {
 
 // Activity is the durable decision/audit history.
 type Activity struct {
-	Events []domain.FindingEvent `json:"finding_events"`
-	Audit  []store.AuditEvent    `json:"audit_events"`
-	Runs   []store.Run           `json:"runs"`
-	Note   string                `json:"note"`
+	Events  []domain.FindingEvent `json:"finding_events"`
+	Audit   []store.AuditEvent    `json:"audit_events"`
+	Runs    []store.Run           `json:"runs"`
+	Actions []store.Intent        `json:"actions"`
+	Journal JournalStatus         `json:"journal"`
+	Note    string                `json:"note"`
 }
 
 // Activity returns recent lifecycle and audit history.
 func (s *Service) Activity(ctx context.Context, limit int) (*Activity, error) {
-	a := &Activity{Note: "No actions exist in this release: Housekeeparr has not executed any operation against a manager or client."}
+	a := &Activity{Note: "Every action is journaled before any request is sent. This build has no write workflow that has passed its tests, so no operation has been sent to a manager or client."}
 	var err error
+	if a.Actions, err = s.st.Intents(ctx, store.IntentFilter{Limit: limit}); err != nil {
+		return nil, err
+	}
+	if a.Journal, err = s.Journal(ctx); err != nil {
+		return nil, err
+	}
 	if a.Events, err = s.st.RecentFindingEvents(ctx, limit); err != nil {
 		return nil, err
 	}

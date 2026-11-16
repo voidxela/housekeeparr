@@ -2,14 +2,21 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
+
+	"github.com/voidxela/housekeeparr/internal/demo"
+	"github.com/voidxela/housekeeparr/internal/domain"
+	"github.com/voidxela/housekeeparr/internal/store"
 )
 
 const qbitFixture = "../../internal/adapter/qbittorrent/testdata/v5.3.0-torrents_info.json"
@@ -207,5 +214,43 @@ func TestCLIErrorsAndExitCodes(t *testing.T) {
 	}
 	if code, out, _ := runCLI(t, "policy", "--config", ok); code != exitOK || !strings.Contains(out, "no_progress_window") {
 		t.Fatalf("policy: %d %s", code, out)
+	}
+}
+
+func TestPreviewActionsAndActConfirmation(t *testing.T) {
+	dir := t.TempDir()
+	d, err := demo.Generate(context.Background(), dir, time.Date(2026, 11, 1, 16, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fs, _ := d.Store.Findings(context.Background(), store.FindingFilter{})
+	d.Store.Close()
+	var id int64
+	for _, f := range fs {
+		if f.Type == domain.FindingTransferStalled {
+			id = f.ID
+		}
+	}
+	cfg := filepath.Join(dir, "housekeeparr.toml")
+	if err := os.WriteFile(cfg, []byte(demo.Config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sid := strconv.FormatInt(id, 10)
+	code, out, errOut := runCLI(t, "preview", sid, "--config", cfg)
+	if code != exitOK || !strings.Contains(out, "NOT ELIGIBLE") || !strings.Contains(out, "[FAIL] tested write workflow") ||
+		!strings.Contains(out, `"removeFromClient":false`) || !strings.Contains(out, "Nothing will be sent") {
+		t.Fatalf("preview: %d\n%s%s", code, out, errOut)
+	}
+	if code, out, _ := runCLI(t, "preview", sid, "--json", "--automatic", "--config", cfg); code != exitOK || !strings.Contains(out, `"origin": "automatic"`) {
+		t.Fatalf("preview --json: %d %s", code, out)
+	}
+	if code, _, errOut := runCLI(t, "act", sid, "--config", cfg); code != exitUsage || !strings.Contains(errOut, "--confirm") {
+		t.Fatalf("act without --confirm: %d %s", code, errOut)
+	}
+	if code, out, _ := runCLI(t, "actions", "--config", cfg); code != exitOK || !strings.Contains(out, "No actions") {
+		t.Fatalf("actions: %d %s", code, out)
+	}
+	if code, _, _ := runCLI(t, "restore-ack", "--config", cfg); code != exitUsage {
+		t.Fatalf("restore-ack without --confirm: %d", code)
 	}
 }
