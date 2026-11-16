@@ -6,7 +6,7 @@ Continue implementing Housekeeparr through the complete approved v1 scope in
 behavior. The earlier review `docs/reviews/2026-11-15.md` supplies background;
 its R1–R4 are fixed. Implement and verify concrete increments, not just plans.
 
-Checkpoint: `dev` at CHECKPOINT (session of 2026-11-16, second; 7b0d1d0..HEAD,
+Checkpoint: `dev` at `afc253e` (docs)  (session of 2026-11-16, second; 7b0d1d0..HEAD,
 not pushed). Real-instance matrix at `118f15c` from a worktree pinned to that
 commit (all five registered combinations passed, including both recovery
 workflows, the automatic test and exact search attribution; qBittorrent 4.6.7
