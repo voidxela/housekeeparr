@@ -99,6 +99,8 @@ type LimitsConfig struct {
 	RetainedTransfers   *int      `toml:"retained_transfers"`
 	RetainedGiB         *int64    `toml:"retained_gib"`
 	ActionsPerCycle     *int      `toml:"actions_per_cycle"`
+	CorrelatedStalls    *int      `toml:"correlated_stalls"`
+	CorrelatedPercent   *int      `toml:"correlated_percent"`
 }
 
 // Limits returns the effective acquisition limits with provenance.
@@ -136,6 +138,14 @@ func (c *Config) Limits() policy.Limits {
 		l.ActionsPerCycle = *c2.ActionsPerCycle
 		set("actions_per_cycle", strconv.Itoa(l.ActionsPerCycle))
 	}
+	if c2.CorrelatedStalls != nil {
+		l.CorrelatedStalls = *c2.CorrelatedStalls
+		set("correlated_stalls", strconv.Itoa(l.CorrelatedStalls))
+	}
+	if c2.CorrelatedPercent != nil {
+		l.CorrelatedPercent = *c2.CorrelatedPercent
+		set("correlated_percent", strconv.Itoa(l.CorrelatedPercent))
+	}
 	if c2.RetainedGiB != nil {
 		l.RetainedBytes = *c2.RetainedGiB << 30
 		set("retained_gib", strconv.FormatInt(*c2.RetainedGiB, 10))
@@ -160,6 +170,8 @@ func validateLimits(errf errFunc, cfg *Config) {
 	}
 	intIn("retained_transfers", l.RetainedTransfers, 1, 10000)
 	intIn("actions_per_cycle", l.ActionsPerCycle, 1, 10)
+	intIn("correlated_stalls", l.CorrelatedStalls, 2, 10000)
+	intIn("correlated_percent", l.CorrelatedPercent, 1, 100)
 	if g := cfg.Automation.Limits.RetainedGiB; g != nil && (*g < 0 || *g > 1<<20) {
 		errf("automation.limits.retained_gib", "must be between 0 (no byte ceiling) and 1048576")
 	}

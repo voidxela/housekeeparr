@@ -48,6 +48,12 @@ missing_search = false
 # At most this many automatic actions per observation cycle, one at a time.
 # actions_per_cycle = 1
 #
+# Hold automatic recovery on a client while at least this many downloads,
+# making up at least this share of its active downloads, are stalled
+# together: that suggests a shared cause, not bad releases.
+# correlated_stalls = 3
+# correlated_percent = 50
+#
 # After a verified recovery, the transfer and its content are not acted on
 # again for this long.
 # success_cooldown = "24h"

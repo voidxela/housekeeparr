@@ -23,9 +23,6 @@ const (
 	maxLiveEvaluations = 5
 	refusalWindow      = 24 * time.Hour
 	refusalsToOpen     = 2
-	// correlated stalls: at least this many qualified stalls on one
-	// client, making up at least half of its active downloads.
-	correlatedMin = 3
 )
 
 // DispatchReport summarises one automatic dispatch pass.
@@ -197,9 +194,25 @@ func (s *Service) candidates(ctx context.Context, fresh map[string]bool) ([]doma
 			}
 		}
 		if !added {
-			return out, nil
+			break
 		}
 	}
+	// Findings a live check refused last time go behind the others, so a
+	// few persistently refused ones (unmonitored content, say) cannot use
+	// up every live evaluation and starve newer findings.
+	var fresh2, refused []domain.Finding
+	for _, f := range out {
+		ev, err := s.st.Evaluation(ctx, f.ID)
+		if err != nil {
+			return nil, err
+		}
+		if ev != nil && ev.Result == store.EvalRefused {
+			refused = append(refused, f)
+		} else {
+			fresh2 = append(fresh2, f)
+		}
+	}
+	return append(fresh2, refused...), nil
 }
 
 // classify turns an ineligible proposal's blockers into a persisted
@@ -306,10 +319,12 @@ func (s *Service) breakers(ctx context.Context, now time.Time) (map[string]strin
 			stalled[t.ClientID]++
 		}
 	}
+	l := s.cfg.Limits()
 	for c, n := range stalled {
-		if n >= correlatedMin && 2*n >= active[c] {
-			open("client:"+c, fmt.Sprintf("%d of %d active downloads on %s are stalled together; that points to a shared cause (network, tracker, VPN, "+
-				"or the client itself) rather than bad releases, so automatic recovery is held there (manual actions remain possible)", n, active[c], c))
+		if n >= l.CorrelatedStalls && 100*n >= l.CorrelatedPercent*active[c] {
+			open("client:"+c, fmt.Sprintf("%d of %d active downloads on %s are stalled together (threshold %d and %d%%, from %s); that points to a shared "+
+				"cause (network, tracker, VPN, or the client itself) rather than bad releases, so automatic recovery is held there until fewer are stalled "+
+				"(manual actions remain possible)", n, active[c], c, l.CorrelatedStalls, l.CorrelatedPercent, l.From("correlated_stalls")))
 		}
 	}
 	return out, nil

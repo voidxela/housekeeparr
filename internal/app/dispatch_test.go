@@ -47,6 +47,7 @@ no_progress_recovery = true
 [automation.limits]
 acquisitions = %ACQ%
 acquisition_window = "1h"
+correlated_stalls = %CORR%
 [polling]
 interval = "10m"
 jitter = "0s"
@@ -82,7 +83,13 @@ type world struct {
 
 func newWorld(t *testing.T, mode string, acquisitions int) *world {
 	t.Helper()
-	src := strings.NewReplacer("%MODE%", mode, "%ACQ%", itoa(acquisitions)).Replace(autoConfig)
+	corr := "3"
+	if acquisitions < 0 {
+		// Negative: many acquisitions and no correlated-stall hold, for
+		// tests with many simultaneous stalls.
+		acquisitions, corr = 100, "1000"
+	}
+	src := strings.NewReplacer("%MODE%", mode, "%ACQ%", itoa(acquisitions), "%CORR%", corr).Replace(autoConfig)
 	cfg, _, err := config.Parse([]byte(src), "/x/housekeeparr.toml")
 	if err != nil {
 		t.Fatal(err)
@@ -338,5 +345,24 @@ func TestManagerOutageBlocksOnlyItsScope(t *testing.T) {
 	w.run(30 * time.Minute)
 	if len(w.radarr.Removals()) != 1 || len(w.client2.Stops()) != 1 {
 		t.Fatalf("after recovery: radarr %v stops %v", w.radarr.Removals(), w.client2.Stops())
+	}
+}
+
+// Persistently refused findings must not starve a newer eligible one.
+func TestRefusedFindingsDoNotStarveOthers(t *testing.T) {
+	w := newWorld(t, "automatic", -1)
+	for ep := int64(1); ep <= 5; ep++ {
+		h := strings.Repeat(string(rune('0'+ep)), 40)
+		w.stalled(h, ep, ep)
+		w.mgr.Unmonitor("episode:" + itoa(int(100+ep)))
+	}
+	w.run(3 * time.Hour)
+	if len(w.mgr.Removals()) != 0 {
+		t.Fatalf("acted on unmonitored content: %v", w.mgr.Removals())
+	}
+	w.stalled(hashA, 6, 6)
+	w.run(3 * time.Hour)
+	if s := w.client.Stops(); len(s) != 1 || s[0] != hashA {
+		t.Fatalf("stops %v: the eligible finding was starved by refused ones", s)
 	}
 }

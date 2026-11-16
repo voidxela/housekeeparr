@@ -126,14 +126,20 @@ type Limits struct {
 	RetainedBytes int64 `json:"retained_bytes"`
 	// ActionsPerCycle bounds automatic actions dispatched after one
 	// observation cycle; they run one at a time.
-	ActionsPerCycle int      `json:"actions_per_cycle"`
-	Sources         []Source `json:"sources"`
+	ActionsPerCycle int `json:"actions_per_cycle"`
+	// CorrelatedStalls and CorrelatedPercent hold automatic recovery on a
+	// client when at least that many downloads, making up at least that
+	// share of its active downloads, are stalled together (a shared cause
+	// rather than bad releases).
+	CorrelatedStalls  int      `json:"correlated_stalls"`
+	CorrelatedPercent int      `json:"correlated_percent"`
+	Sources           []Source `json:"sources"`
 }
 
 // DefaultLimits returns the proposed limits.
 func DefaultLimits() Limits {
 	return Limits{Acquisitions: 20, AcquisitionWindow: 24 * time.Hour, ManagerAcquisitions: 20, ContentAttempts: 3, SuccessCooldown: 24 * time.Hour,
-		RetainedTransfers: 25, ActionsPerCycle: 1}
+		RetainedTransfers: 25, ActionsPerCycle: 1, CorrelatedStalls: 3, CorrelatedPercent: 50}
 }
 
 // From returns where a limit setting came from.
