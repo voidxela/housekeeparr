@@ -156,7 +156,7 @@ table is exercised with fakes, plus the real-instance recovery runs.
 | --- | --- | --- |
 | Adapter writes and verification reads: `RemoveQueueItem` (Sonarr/Radarr, all four flags always sent; timeout = uncertain), `BlocklistEntries` and `History` (with record IDs), `Content` (episode+series or movie monitoring); qBittorrent `Stop` (`torrents/stop` on 5.x, `torrents/pause` on 4.x) | done | Contract tests plus real-instance runs. Released `BlocklistResource` has no infohash, so a blocklist entry is matched by byte-exact source title and content, and attributed to an action only if it is absent from the baseline read just before dispatch: evidence, not identity (a concurrent manual blocklisting of the same title for the same content in that interval would be indistinguishable). |
 | Recovery executor (`internal/workflow`) | done | Refuses implicit or destructive flags (`removeFromClient=true`, missing flags, a stop without explicit data retention) before any request; verifies each step by fresh reads with a bounded settle time. |
-| Complete no-progress recovery on real instances | **real-instance-tested** for Sonarr 4.0.20.3014 + qBittorrent 5.3.0 and Radarr 6.4.4.10685 + qBittorrent 5.3.0 | `internal/integration/recovery_test.go`; registered in `action.Tested`. Manual dispatch only (`act --confirm` or the web form), and only outside observe mode. The diagnosis is supplied in the test. qBittorrent 4.x is refused (privacy unknown), and the test asserts that. |
+| Complete no-progress recovery on real instances | **real-instance-tested** for Sonarr 4.0.20.3014 and Radarr 6.4.4.10685, each with qBittorrent 5.3.0, Transmission 4.0.6 and 4.1.4, Deluge 2.2.0, and rTorrent 0.9.8 | `internal/integration/recovery_test.go`; registered in `action.Tested`. Manual dispatch only (`act --confirm` or the web form), and only outside observe mode. The diagnosis is supplied in the test. qBittorrent 4.x is refused (privacy unknown), and the test asserts that. |
 | Automatic dispatch from the engine | done (simulated-application tested); real-instance automatic run remaining | After each persisted cycle (and after `run --once`), `DispatchAutomatic` evaluates open, unsnoozed findings whose client and manager were read completely that cycle, oldest first and interleaved across managers, through the same preview/planner/coordinator/gate as manual actions; at most `actions_per_cycle` (proposal 1) actions are dispatched, one at a time, and a candidate refused before any write does not use the slot. One service lock serialises manual and automatic execution (and their reconciliation). Scoped circuit breakers hold a client or manager while any action there is uncertain (until reviewed), after repeated definite refusals (24 h window), or when at least three downloads making up half of a client's active ones are stalled together (a shared cause such as network, tracker, or VPN, rather than bad releases). Each finding's latest automatic decision (dispatched, deferred with time, held with reason, refused by a live check, needs attempts review, at the retained ceiling, not permitted, waiting) is persisted (migration 0009) and shown on the finding page, in `housekeeparr finding`, and in the worker log. `internal/app/dispatch_test.go` drives the real engine with an injected clock through diagnosis, dispatch, the real coordinator and `workflow.Recovery` against simulated applications: exactly one fail and one stop across hours of later cycles; nothing in observe or paused mode, for slow progress, user pause, queued transfers, unmonitored content, an unreadable manager, or correlated stalls; pacing defers and resumes oldest-first; an accepted-but-unobserved request is never re-sent and holds the scope; an unreadable manager holds only work it could own (ownership is read from the managers configured for the transfer's client, or unmapped ones), so a Radarr outage does not stop Sonarr recovery on a client Radarr does not use. Managers sharing one client fail closed on each other's outage, because the unreadable one could own the transfer. Not yet: a real-instance automatic run (the existing real-instance runs dispatch the same coordinator directly with a supplied diagnosis) and a separate per-workflow pause control. |
 | Replacement outcome tracking (search accepted, grab, progress as separate outcomes) | done for grab, progress, completion (fixture-tested); search acceptance remaining | After a verified recovery (migration 0008) the engine records, only from complete manager reads, a replacement grab (a queue row for the same content with a different download ID, first seen after the recovery), its verified progress, and completion in the client; after 24 h without a grab it reports "no replacement grab observed", explicitly not evidence that no release exists; tracking ends after 7 days. Shown under Activity and `housekeeparr actions`. Search acceptance itself is only verified by the integration tests, not by Housekeeparr (manager command history is not read yet). |
 | Metadata recovery, preserved-data failure handling | remaining | Planner proposals exist; no tested workflow. Missing data on qBittorrent/Deluge is not visible in client state. |
@@ -168,21 +168,20 @@ table is exercised with fakes, plus the real-instance recovery runs.
 - Observation of all four clients (qBittorrent 5.3.0/4.6.7, Transmission
   4.0.6/4.1.4, rTorrent 0.9.8, Deluge 2.2.0), Sonarr, and Radarr is validated
   against real instances (see
-  [compatibility.md](compatibility.md)); correlation is validated only with
-  qBittorrent as the managers' download client. Managed content with real
-  grab history (fictional series/movies through the metadata and Torznab
-  stand-ins) is exercised for queue-removal semantics only; imports and
-  season packs are not.
-- Exclude from the interfaces (exclusions are configuration-only so far);
-  configurable budgets; automatic dispatch from the engine (the coordinator
-  exists; nothing invokes it automatically yet).
-- Stalled-grab recovery beyond the tested qBittorrent 5.3.0 combinations,
-  automatic dispatch, and outcome tracking; metadata recovery and
-  preserved-data failure handling (see milestone 3).
+  [compatibility.md](compatibility.md)), and correlation with each of the
+  four as the managers' download client. Managed content with real grab
+  history (fictional series/movies through the metadata and Torznab
+  stand-ins) is exercised for queue-removal semantics and recovery only;
+  imports and season packs are not.
+- Exclude from the interfaces (exclusions are configuration-only so far).
+- No-progress recovery: a real-instance automatic run, search acceptance as
+  a tracked outcome, a web view/reset control for attempts, and a
+  per-workflow pause control; metadata recovery and preserved-data failure
+  handling (see milestone 3).
 - Sonarr partial season-pack handling (import history, coverage evidence,
   association clearing, targeted searches).
 - Bounded proactive missing searches, budgets, and search-coverage findings.
-- Retained-data and capacity tracking.
+- Free-space measurement for retained data (counts and logical-size ceilings exist).
 - Notifications.
 - Web authentication for remote exposure (currently loopback only).
 - Container packaging, user-level systemd unit, release validation,
@@ -199,8 +198,8 @@ table is exercised with fakes, plus the real-instance recovery runs.
   queue its own replacement search at once. The torrent is not stopped by
   the manager, so separation is a separate client step. The same managed-row
   removal probes passed with Transmission 4.0.6/4.1.4, Deluge 2.2.0 and
-  rTorrent 0.9.8 as the managers' client; full Housekeeparr recovery remains
-  untested there.
+  rTorrent 0.9.8 as the managers' client, and full Housekeeparr recovery
+  now passes with each of them.
 - **Queue removal of rows without grab history is accepted but not durable.**
   Sonarr 4.0.20 and Radarr 6.4.4 return HTTP 200 to `DELETE /api/v3/queue/{id}`
   (ignore and blocklist paths, every flag explicit), but the row is tracked
