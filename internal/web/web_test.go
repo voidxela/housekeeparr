@@ -416,3 +416,27 @@ func TestActivityShowsNotifications(t *testing.T) {
 		t.Fatalf("status %d; page lacks notification states", w.Code)
 	}
 }
+
+func TestActivityShowsProactiveSearches(t *testing.T) {
+	e := setup(t)
+	now := e.d.Clock.Now()
+	aired := now.Add(-48 * time.Hour)
+	if err := e.d.Store.Write(context.Background(), func(tx *store.Tx) error {
+		_, err := tx.SaveMissingSnapshot(domain.MissingSnapshot{ManagerID: "sonarr", Complete: false, Items: []domain.MissingItem{
+			{ContentKind: "episode", ContentID: 9, Title: "Northern Line S02E09", Monitored: true, AiredAt: &aired, Available: domain.KnownValue(true)},
+			{ContentKind: "episode", ContentID: 10, Title: "Northern Line S02E10", Monitored: true, Available: domain.UnknownValue[bool]("x")},
+		}}, now)
+		if err != nil {
+			return err
+		}
+		id, next := int64(1), now.Add(24*time.Hour)
+		return tx.SetMissingSearch("sonarr", "episode:9", store.MissingSearched, "accepted", &id, &now, &next, true)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	w := e.get(t, "/activity")
+	page := w.Body.String()
+	if w.Code != 200 || !strings.Contains(page, "Northern Line S02E09") || !strings.Contains(page, "searched") || !strings.Contains(page, "unknown") {
+		t.Fatalf("status %d; proactive searches not rendered", w.Code)
+	}
+}

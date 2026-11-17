@@ -29,6 +29,13 @@
   {{range .Retained}}<tr><td>{{clock .RetainedAt}}</td><td>{{.ClientID}}</td><td>{{if .Name}}{{.Name}}{{else}}<code>{{.NativeID}}</code>{{end}}</td><td>{{if .Content}}<code>{{.ManagerID}}|{{.Content}}</code>{{end}}</td><td>{{.Disposition}}</td><td>#{{.IntentID}}</td></tr>{{end}}
   </tbody></table>{{end}}
 </section>
+<section class="card" aria-labelledby="h-missing">
+  <h2 id="h-missing">Proactive searches</h2>
+  {{if .SearchEnabled}}<p class="muted small">Missing content is read hourly from each manager. Housekeeparr searches one item at a time for monitored, available content nothing is downloading, at least 15 minutes apart and within the acquisition budgets; an item still missing afterwards waits a day, then longer. An accepted search does not mean a release was found or grabbed.</p>{{else}}<p class="muted small">Proactive searches are not enabled in any scope (<code>missing_search</code>).</p>{{end}}
+  {{if .Missing}}<table class="table compact"><thead><tr><th scope="col">Content</th><th scope="col">Available</th><th scope="col">Searches</th><th scope="col">Next</th><th scope="col">State</th></tr></thead><tbody>
+  {{range .Missing}}<tr><td>{{.Title}} <span class="muted small"><code>{{.ManagerID}}|{{.ContentKey}}</code></span></td><td>{{if .Available}}{{if deref .Available}}yes{{else}}not yet{{end}}{{else}}unknown{{end}}</td><td>{{.Searches}}{{if .LastSearchAt}} (last {{clockp .LastSearchAt}}){{end}}</td><td>{{clockp .NextSearchAt}}</td><td>{{.State}}{{if .Note}} <span class="muted small">{{.Note}}</span>{{end}}</td></tr>{{end}}
+  </tbody></table>{{end}}
+</section>
 <section class="card" aria-labelledby="h-notify">
   <h2 id="h-notify">Notifications</h2>
   {{if .NotifyTargets}}<p class="muted small">{{.NotifyTargets}} target(s) configured. Events are rate-limited per target; failed deliveries back off and are dropped after 8 attempts or a day.</p>{{else}}<p class="muted small">No notification targets are configured (<code>[[notify]]</code>).</p>{{end}}

@@ -54,6 +54,19 @@ implemented.
   SameSite=Strict, Secure off loopback; 12 h; per process), per-session
   CSRF tokens, global sign-in rate limit (5 per 15 min), local-only
   redirects, HTTP Basic for the read-only API, HSTS with TLS.
+- **Proactive missing searches, first slice** (`missing_search`,
+  migration 0015): the engine reads each manager's wanted/missing list
+  hourly (≤ 500 items) only while some scope could enable the workflow; a
+  complete read marks items gone. The dispatcher sends at most one search
+  per pass for a monitored, available, missing episode or movie that is not
+  queued (never a season or broad search), at least 15 minutes apart
+  installation-wide, within the acquisition pacing budgets and the retained
+  ceiling, through the shared coordinator (journaled, locked per content,
+  revalidated live: content monitored, nothing queued for it, manager
+  unchanged). Verification is acceptance only (a new search command for the
+  content). A still-missing item backs off 1 day, doubling to 30 days.
+  `housekeeparr missing` lists state. Spacing, read cadence and backoff are
+  proposals. Read/search adapter calls delegated to agy and reviewed.
 - Not run this session: browser check, race detector, Docker, qBittorrent
   4.6.7 diagnosis, automatic dispatch on real instances.
 
@@ -345,7 +358,12 @@ table is exercised with fakes, plus the real-instance recovery runs.
   implemented: such recoveries are refused.
 - Sonarr partial season-pack handling (import history, coverage evidence,
   association clearing, targeted searches).
-- Bounded proactive missing searches, budgets, and search-coverage findings.
+- Proactive missing searches: first slice implemented (see the 2026-11-17
+  session); still remaining are episode batching per series, priority for
+  content recovery could not replace, observing whether a search found or
+  grabbed anything (beyond acceptance) to separate "no acceptable result"
+  from "grabbed", targeted searches after partial packs, and
+  search-coverage findings (SPEC §9.2).
 - Free-space measurement for retained data (counts and logical-size ceilings exist).
 - Notifications: webhook targets (JSON or ntfy-style text) are implemented
   and fixture-tested (see the 2026-11-17 session); no real notification

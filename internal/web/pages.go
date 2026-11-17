@@ -68,6 +68,7 @@ func (s *Server) funcs() template.FuncMap {
 			return t.UTC().Format(time.RFC3339)
 		},
 		"clock": func(t time.Time) string { return t.Local().Format("Jan 2, 15:04") },
+		"deref": func(b *bool) bool { return b != nil && *b },
 		"clockp": func(t *time.Time) string {
 			if t == nil {
 				return "—"

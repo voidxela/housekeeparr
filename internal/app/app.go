@@ -530,7 +530,10 @@ type Activity struct {
 	// Notifications are the latest notification events and their delivery.
 	Notifications []store.Notification `json:"notifications,omitempty"`
 	NotifyTargets int                  `json:"notify_targets"`
-	Note          string               `json:"note"`
+	// Missing is recorded missing content with Housekeeparr's search state.
+	Missing       []store.MissingRecord `json:"missing,omitempty"`
+	SearchEnabled bool                  `json:"search_enabled"`
+	Note          string                `json:"note"`
 }
 
 // Outcomes returns the replacement outcomes of the given actions.
@@ -563,6 +566,10 @@ func (s *Service) Activity(ctx context.Context, limit int) (*Activity, error) {
 		return nil, err
 	}
 	a.NotifyTargets = len(s.cfg.Notify)
+	if a.Missing, err = s.st.MissingContent(ctx, store.MissingFilter{PresentOnly: true, Limit: 25}); err != nil {
+		return nil, err
+	}
+	a.SearchEnabled = s.cfg.MaybeEnabled(policy.WorkflowMissingSearch)
 	if a.Journal, err = s.Journal(ctx); err != nil {
 		return nil, err
 	}
