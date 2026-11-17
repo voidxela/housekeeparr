@@ -1289,3 +1289,12 @@ func TestQueuedMissingItemsDoNotStarveSearches(t *testing.T) {
 		t.Fatalf("searches %v, want the unqueued episode beyond the blocked candidates", s)
 	}
 }
+func TestMissingSearchRechecksFilePresence(t *testing.T) {
+	w := searchWorld(t, "automatic")
+	w.mgr.SetMissing(fake.MissingEpisode(102, 1, "Already imported", t0.Add(-48*time.Hour)))
+	w.mgr.SetHasFile("episode:102", true)
+	w.runSearches(time.Hour)
+	if s := w.mgr.Searches(); len(s) != 0 {
+		t.Fatalf("searched content that already has a file: %v", s)
+	}
+}

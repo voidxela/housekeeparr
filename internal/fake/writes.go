@@ -244,6 +244,14 @@ func (m *Manager) Content(_ context.Context, key string) (arr.Content, error) {
 	}
 	if hf, ok := m.w.hasFile[key]; ok {
 		c.HasFile = &hf
+	} else {
+		for _, item := range m.ms.items {
+			if fmt.Sprintf("%s:%d", item.ContentKind, item.ContentID) == key {
+				hasFile := false
+				c.HasFile = &hasFile
+				break
+			}
+		}
 	}
 	return c, nil
 }

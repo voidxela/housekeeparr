@@ -156,11 +156,14 @@ func (c *Client) Content(ctx context.Context, key string) (arr.Content, error) {
 	if !ok || kind != "movie" {
 		return arr.Content{}, fmt.Errorf("radarr content key %q is not a movie", key)
 	}
-	found, mon, _, err := c.api.Monitored(ctx, "movie", fmt.Sprintf("/api/v3/movie/%d", id))
+	found, mon, raw, err := c.api.Monitored(ctx, "movie", fmt.Sprintf("/api/v3/movie/%d", id))
 	if err != nil {
 		return arr.Content{}, err
 	}
 	out := arr.Content{Key: key, Exists: found, Monitored: found && mon}
+	if err := json.Unmarshal(raw["hasFile"], &out.HasFile); err != nil {
+		out.HasFile = nil
+	}
 	switch {
 	case !found:
 		out.Detail = "the movie no longer exists in Radarr"

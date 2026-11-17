@@ -62,7 +62,7 @@ func (r *Recovery) searchLive(ctx context.Context, p action.Proposal) (action.Li
 			live.ContentErr = key + ": " + err.Error()
 			break
 		}
-		live.Content = append(live.Content, action.ContentState{Key: cs.Key, Exists: cs.Exists, Monitored: cs.Monitored, Detail: cs.Detail})
+		live.Content = append(live.Content, action.ContentState{Key: cs.Key, Exists: cs.Exists, Monitored: cs.Monitored, HasFile: cs.HasFile, Detail: cs.Detail})
 	}
 	return live, nil
 }

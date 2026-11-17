@@ -55,6 +55,7 @@ type ContentState struct {
 	Key       string `json:"key"`
 	Exists    bool   `json:"exists"`
 	Monitored bool   `json:"monitored"`
+	HasFile   *bool  `json:"has_file,omitempty"`
 	Detail    string `json:"detail,omitempty"`
 }
 
@@ -322,6 +323,19 @@ func revalidateSearch(p Proposal, live Live) []Check {
 		}
 		add("content monitored", ok, strings.Join(details, "; "))
 	}
+	missing := len(live.Content) == len(pl.Content) && live.ContentErr == ""
+	var fileState []string
+	for _, c := range live.Content {
+		switch {
+		case c.HasFile == nil:
+			missing = false
+			fileState = append(fileState, c.Key+": file status unknown")
+		case *c.HasFile:
+			missing = false
+			fileState = append(fileState, c.Key+": already has a file")
+		}
+	}
+	add("content still missing", missing, nonEmpty(strings.Join(fileState, "; "), "the manager confirms file absence for the target"))
 	return out
 }
 
