@@ -13,9 +13,12 @@ package integration
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -37,6 +40,11 @@ func TestSonarrProactiveSearch(t *testing.T) {
 	prepareManager(t, a, env(t, "HK_IT_WORK")+"/library/tv", []int{5000, 5040})
 	sid := ensureSeries(t, a)
 	ep := episodeID(t, a, sid, 1, 11)
+	// Right after a series is added Sonarr can reject a release it accepts
+	// moments later; the harness waits (read-only interactive search) until
+	// it would accept the candidate, so the test measures Housekeeparr's
+	// search rather than Sonarr's settling.
+	waitAcceptable(t, a, mm["tv-e11-search"], url.Values{"episodeId": {fmt.Sprint(ep)}})
 	runProactiveSearch(t, a, "sonarr", mm["tv-e11-search"], fmt.Sprintf("episode:%d", ep))
 }
 
@@ -139,4 +147,31 @@ func runProactiveSearch(t *testing.T, a arrAPI, section string, e managedEntry, 
 		time.Sleep(2 * time.Second)
 	}
 	t.Fatalf("no grab of %s after the search (history %v)", e.Hash, a.history(e.Hash))
+}
+
+// waitAcceptable polls the manager's interactive release search (which
+// grabs nothing) until the fixture's release is listed without rejections.
+func waitAcceptable(t *testing.T, a arrAPI, e managedEntry, q url.Values) {
+	t.Helper()
+	var last []string
+	deadline := time.Now().Add(90 * time.Second)
+	for time.Now().Before(deadline) {
+		_, b := a.do(http.MethodGet, "/api/v3/release", q, nil)
+		var rels []struct {
+			Title      string   `json:"title"`
+			Rejected   bool     `json:"rejected"`
+			Rejections []string `json:"rejections"`
+		}
+		_ = json.Unmarshal(b, &rels)
+		for _, r := range rels {
+			if strings.HasPrefix(r.Title, e.Name) {
+				if !r.Rejected {
+					return
+				}
+				last = r.Rejections
+			}
+		}
+		time.Sleep(5 * time.Second)
+	}
+	t.Fatalf("%s never acceptable to the manager (last rejections %v)", e.Key, last)
 }
