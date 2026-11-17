@@ -125,12 +125,11 @@ do not turn a choice of defaults into a prolonged blocker for other work.
 
 ## Immediate work, in priority order
 
-1. **Search-coverage findings and search outcomes (SPEC §9.2):** follow
-   Housekeeparr's search command to completion (message "N reports
-   downloaded" on released managers — verify the wording per version),
-   read indexer status/health for source failures around it, and report
-   no-acceptable-result, incomplete coverage, and unverified coverage as
-   separate states; never treat zero results as source failure.
+1. **Search follow-ups:** search outcomes ("N reports downloaded"),
+   indexer status, `source.unavailable`/`source.none` findings and coverage
+   notes exist (see STATUS). Remaining for SPEC §9.2: rejection reasons for
+   "no acceptable result", per-search source evidence where the manager
+   exposes it, episode batching per series, and recovery-first priority.
 2. **Partial-pack workflow (SPEC §8)** with positive settled-import and
    coverage evidence on real Sonarr; this needs a stand-in season pack and
    real imports in the harness.

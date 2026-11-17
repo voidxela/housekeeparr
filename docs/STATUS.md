@@ -65,8 +65,22 @@ implemented.
   revalidated live: content monitored, nothing queued for it, manager
   unchanged). Verification is acceptance only (a new search command for the
   content). A still-missing item backs off 1 day, doubling to 30 days.
-  `housekeeparr missing` lists state. Spacing, read cadence and backoff are
-  proposals. Read/search adapter calls delegated to agy and reviewed.
+  `housekeeparr missing` and the Activity page list state. Spacing, read
+  cadence and backoff are proposals. Read/search adapter calls delegated to
+  agy and reviewed. Real-instance-tested and registered for Sonarr
+  4.0.20.3014 and Radarr 6.4.4.10685 (search accepted, release grabbed).
+- **Search outcomes and coverage (SPEC §9.1–9.2), first slice:** each
+  search is followed to its end in the manager's command list and recorded
+  as grabbed, no result ("0 reports downloaded" on the released versions,
+  never read as "no release exists"), failed, or end unverified; a
+  no-result outcome notes torrent indexers the manager had disabled at the
+  time (possible impact, not proof). Indexers and indexer status are read
+  every cycle (names, protocol and automatic-search flag only; settings,
+  URLs and keys are never decoded); `source.unavailable` (a disabled
+  automatic torrent indexer; resolves after two consecutive reads without
+  it disabled) and `source.none` (no automatic torrent indexer) findings.
+  Not yet: direct per-search source diagnostics, rejection reasons, or
+  grouping recurring source issues beyond one finding per indexer.
 - Not run this session: browser check, race detector, Docker, qBittorrent
   4.6.7 diagnosis, automatic dispatch on real instances.
 
@@ -360,10 +374,9 @@ table is exercised with fakes, plus the real-instance recovery runs.
   association clearing, targeted searches).
 - Proactive missing searches: first slice implemented (see the 2026-11-17
   session); still remaining are episode batching per series, priority for
-  content recovery could not replace, observing whether a search found or
-  grabbed anything (beyond acceptance) to separate "no acceptable result"
-  from "grabbed", targeted searches after partial packs, and
-  search-coverage findings (SPEC §9.2).
+  content recovery could not replace, targeted searches after partial
+  packs, and per-search source diagnostics (SPEC §9.2 beyond indexer
+  status).
 - Free-space measurement for retained data (counts and logical-size ceilings exist).
 - Notifications: webhook targets (JSON or ntfy-style text) are implemented
   and fixture-tested (see the 2026-11-17 session); no real notification
