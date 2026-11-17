@@ -47,6 +47,7 @@ func TestTrackerRejectionFreshness(t *testing.T) {
 		{"success newer than failure", [][3]int64{{1, now - 600, now - 60}}, domain.SourceNoFailure, true},
 		{"another enabled tracker works", [][3]int64{{1, now - 60, 0}, {1, 0, now - 30}}, domain.SourceNoFailure, true},
 		{"failure too old (stale message)", [][3]int64{{1, now - 7200, 0}}, "", false},
+		{"failure timestamp in the future", [][3]int64{{1, now + 600, 0}}, "", false},
 		{"only disabled trackers", [][3]int64{{0, now - 60, 0}}, "", false},
 		{"no trackers", nil, "", false},
 	} {

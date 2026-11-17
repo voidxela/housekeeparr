@@ -348,6 +348,7 @@ func classifyTrackers(entries []trackerEntry) domain.Signal[domain.SourceFailure
 	realCount := 0
 	hasErrMsg := false
 	allUnregistered := true
+	incomplete := false
 	for _, e := range entries {
 		if strings.HasPrefix(e.URL, "** [") {
 			continue
@@ -367,6 +368,8 @@ func classifyTrackers(entries []trackerEntry) domain.Signal[domain.SourceFailure
 			if domain.ClassifyTrackerError(e.Msg) != domain.SourceUnregistered {
 				allUnregistered = false
 			}
+		default:
+			incomplete = true
 		}
 	}
 	if realCount == 0 {
@@ -374,6 +377,9 @@ func classifyTrackers(entries []trackerEntry) domain.Signal[domain.SourceFailure
 	}
 	if hasErrMsg {
 		if allUnregistered {
+			if incomplete {
+				return domain.UnknownValue[domain.SourceFailure]("some trackers have no confirmed result")
+			}
 			return domain.KnownValue(domain.SourceUnregistered)
 		}
 		return domain.KnownValue(domain.SourceTrackerError)

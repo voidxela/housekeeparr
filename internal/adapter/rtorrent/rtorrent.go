@@ -256,6 +256,7 @@ func (c *Client) trackerResult(ctx context.Context, hash, msg string, now time.T
 		return domain.UnknownValue[domain.SourceFailure]("tracker list was malformed")
 	}
 	fresh := false
+	futureTimestamp := false
 	for _, r := range rows {
 		cols, ok := r.([]any)
 		if !ok || len(cols) != 3 {
@@ -273,12 +274,19 @@ func (c *Client) trackerResult(ctx context.Context, hash, msg string, now time.T
 		if enabled == 0 {
 			continue
 		}
+		if failed > now.Unix() || succeeded > now.Unix() {
+			futureTimestamp = true
+			continue
+		}
 		if succeeded > 0 && succeeded >= failed {
 			return domain.KnownValue(domain.SourceNoFailure)
 		}
 		if failed > 0 && now.Sub(time.Unix(failed, 0)) <= trackerFresh {
 			fresh = true
 		}
+	}
+	if futureTimestamp {
+		return domain.UnknownValue[domain.SourceFailure]("the tracker result has a future timestamp")
 	}
 	if !fresh {
 		return domain.UnknownValue[domain.SourceFailure]("the tracker message may be stale: no enabled tracker failed recently")

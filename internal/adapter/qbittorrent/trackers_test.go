@@ -254,3 +254,15 @@ func TestTrackerStatusesOf5x(t *testing.T) {
 		}
 	}
 }
+
+func TestTrackerRejectionWithUncontactedTrackerIsUnknown(t *testing.T) {
+	for _, status := range []int{1, 3, 99} {
+		got := classifyTrackers([]trackerEntry{
+			{URL: "https://t/a", Status: 5, Msg: "Unregistered torrent"},
+			{URL: "https://u/a", Status: status},
+		})
+		if got.IsKnown() {
+			t.Errorf("tracker status %d was turned into a definitive result: %+v", status, got)
+		}
+	}
+}
