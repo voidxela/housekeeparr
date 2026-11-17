@@ -555,6 +555,11 @@ func (c *Coordinator) settle(ctx context.Context, st store.Step, out json.RawMes
 	if derr != nil && definiteFailure(derr) {
 		return store.StepFailed, derr.Error(), out
 	}
+	if st.Op == OpSearch {
+		// The manager's receipt identifies the command the verifier should
+		// observe, even if another actor submits a matching search.
+		st.Outcome = out
+	}
 	obs, oerr := c.Executor.Observe(ctx, st)
 	evidence, _ := json.Marshal(struct {
 		Response    json.RawMessage `json:"response,omitempty"`

@@ -154,19 +154,38 @@ func (r *Recovery) observeSearch(ctx context.Context, st store.Step) (action.Obs
 	if base.MaxCommandID == nil {
 		return action.Observation{}, fmt.Errorf("no command baseline was recorded before the request")
 	}
+	var receipt struct {
+		CommandID int64 `json:"command_id"`
+		Response  struct {
+			CommandID int64 `json:"command_id"`
+		} `json:"response"`
+	}
+	_ = json.Unmarshal(st.Outcome, &receipt)
+	commandID := max(receipt.CommandID, receipt.Response.CommandID)
 	name := map[string]string{"episode": "EpisodeSearch", "movie": "MoviesSearch"}[tg.Kind]
 	return r.wait(ctx, func() (action.Observation, error) {
 		cmds, err := cr.Commands(ctx)
 		if err != nil {
 			return action.Observation{}, err
 		}
-		for _, c := range cmds {
-			if c.ID <= *base.MaxCommandID || !strings.EqualFold(c.Name, name) || !names(c, tg) {
+		var match *arr.Command
+		for i := range cmds {
+			c := &cmds[i]
+			if c.ID <= *base.MaxCommandID || (commandID > 0 && c.ID != commandID) ||
+				!strings.EqualFold(c.Name, name) || !names(*c, tg) {
 				continue
 			}
-			return action.Observation{Verdict: action.Holds, Detail: fmt.Sprintf("%s queued command %d (%s, status %s)", tg.ManagerID, c.ID, c.Name, c.Status)}, nil
+			if match != nil {
+				return action.Observation{Verdict: action.Unknown, Detail: "more than one new command matches the searched content"}, nil
+			}
+			match = c
 		}
-		return action.Observation{Verdict: action.NotHolds, Detail: "no new " + name + " for " + tg.Key + " in the command list"}, nil
+		if match == nil {
+			return action.Observation{Verdict: action.NotHolds, Detail: "no receipt-matching " + name + " for " + tg.Key + " in the command list"}, nil
+		}
+		evidence, _ := json.Marshal(map[string]int64{"command_id": match.ID})
+		return action.Observation{Verdict: action.Holds, Evidence: evidence,
+			Detail: fmt.Sprintf("%s queued command %d (%s, status %s)", tg.ManagerID, match.ID, match.Name, match.Status)}, nil
 	})
 }
 
@@ -174,6 +193,9 @@ func names(c arr.Command, tg action.SearchTarget) bool {
 	ids := c.EpisodeIDs
 	if tg.Kind == "movie" {
 		ids = c.MovieIDs
+	}
+	if len(ids) != len(tg.IDs) {
+		return false
 	}
 	for _, want := range tg.IDs {
 		if !contains(ids, want) {

@@ -347,13 +347,18 @@ func (s *Service) searchCommandID(ctx context.Context, intentID int64) (int64, e
 		if st.Op != action.OpSearch {
 			continue
 		}
+		type commandEvidence struct {
+			CommandID int64 `json:"command_id"`
+		}
 		var ev struct {
-			Response struct {
-				CommandID int64 `json:"command_id"`
-			} `json:"response"`
+			Response    commandEvidence `json:"response"`
+			Observation struct {
+				Evidence commandEvidence `json:"evidence"`
+			} `json:"observation"`
+			Evidence commandEvidence `json:"evidence"`
 		}
 		_ = json.Unmarshal(st.Outcome, &ev)
-		return ev.Response.CommandID, nil
+		return max(ev.Response.CommandID, ev.Observation.Evidence.CommandID, ev.Evidence.CommandID), nil
 	}
 	return 0, nil
 }

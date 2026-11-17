@@ -1,10 +1,13 @@
 package workflow
 
 import (
+	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/voidxela/housekeeparr/internal/action"
 	"github.com/voidxela/housekeeparr/internal/adapter/arr"
 	"github.com/voidxela/housekeeparr/internal/store"
 )
@@ -135,4 +138,31 @@ func TestObserveSearchTracksTheContentsSearchSeparately(t *testing.T) {
 			t.Fatalf("%+v", o.Search)
 		}
 	})
+}
+
+type commandManager struct {
+	*fakeManager
+	commands []arr.Command
+}
+
+func (m *commandManager) Commands(context.Context) ([]arr.Command, error) {
+	return m.commands, nil
+}
+
+func TestMissingSearchReceiptIdentifiesTheObservedCommand(t *testing.T) {
+	m := &commandManager{fakeManager: &fakeManager{}, commands: []arr.Command{
+		{ID: 2, Name: "EpisodeSearch", Status: "started", EpisodeIDs: []int64{9}},
+	}}
+	r := &Recovery{Managers: map[string]Manager{"sonarr": m}, Settle: time.Millisecond, Poll: time.Millisecond}
+	st := store.Step{Op: action.OpSearch, Target: json.RawMessage(`{"manager_id":"sonarr","content_kind":"episode","ids":[9],"content_key":"episode:9"}`),
+		Baseline: json.RawMessage(`{"max_command_id":1}`), Outcome: json.RawMessage(`{"command_id":3}`)}
+	obs, err := r.Observe(context.Background(), st)
+	if err != nil || obs.Verdict == action.Holds {
+		t.Fatalf("unrelated command was attributed to receipt #3: %+v, %v", obs, err)
+	}
+	st.Outcome = nil
+	m.commands = append(m.commands, arr.Command{ID: 3, Name: "EpisodeSearch", Status: "queued", EpisodeIDs: []int64{9}})
+	if obs, err := r.Observe(context.Background(), st); err != nil || obs.Verdict == action.Holds {
+		t.Fatalf("ambiguous commands were attributed to a request without a receipt: %+v, %v", obs, err)
+	}
 }
