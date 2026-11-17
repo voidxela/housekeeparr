@@ -101,6 +101,12 @@ func runProactiveSearch(t *testing.T, a arrAPI, section string, e managedEntry, 
 		}
 	}
 	if torrent == 0 {
+		for _, m := range conns.Managers {
+			if sr, ok := m.(engine.SourceReader); ok && m.ID() == section {
+				snap, err := sr.Sources(ctx)
+				t.Logf("direct read: %+v err=%v", snap, err)
+			}
+		}
 		t.Fatalf("no usable torrent source read from %s: %+v", section, srcs)
 	}
 	if fs, _ := st.Findings(ctx, store.FindingFilter{Type: engine.FindingSourceNone}); len(fs) != 0 {
