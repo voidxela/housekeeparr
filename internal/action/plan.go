@@ -86,6 +86,8 @@ func WorkflowFor(findingType string) (policy.Workflow, bool) {
 		return policy.WorkflowMetadataRecovery, true
 	case domain.FindingSourceRejected:
 		return policy.WorkflowPreservedDataFailure, true
+	case domain.FindingPartialPack:
+		return policy.WorkflowPartialPack, true
 	}
 	return "", false
 }

@@ -600,6 +600,10 @@ func (e *Engine) evaluateQueue(tx *store.Tx, managerID string, snap domain.Queue
 	}
 	for _, dl := range order {
 		g := imports[dl]
+		if meta.Kind == adapter.KindSonarr && partialPack(g.state, g.items) {
+			ev.Drafts = append(ev.Drafts, e.partialPackDraft(scope+"pack|"+dl, meta, dl, g.since, g.items, global, now))
+			continue
+		}
 		ev.Drafts = append(ev.Drafts, e.importDraft(scope+"import|"+dl, meta, dl, g.state, g.since, g.items, global, now))
 	}
 	for dl, its := range unmatched {
@@ -948,4 +952,75 @@ func nonEmptyText(s, def string) string {
 		return def
 	}
 	return s
+}
+
+// PartialPackMessage: see domain.PartialPackMessage.
+const PartialPackMessage = domain.PartialPackMessage
+
+// partialPack reports whether a settled, import-blocked download is a
+// season pack (several episode rows, one download) that Sonarr reports with
+// the partial-pack message. This only selects candidates: whether the
+// present episodes were positively imported is established from history at
+// planning and before any write.
+func partialPack(state string, items []store.QueueRecord) bool {
+	if state != "importBlocked" || len(items) < 2 {
+		return false
+	}
+	for _, it := range items {
+		if it.Latest.ContentKind != "episode" || it.Latest.EpisodeID <= 0 {
+			return false
+		}
+		found := false
+		for _, m := range it.Latest.StatusMessages {
+			found = found || m.Title == PartialPackMessage
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+func (e *Engine) partialPackDraft(key string, meta ConnMeta, dl string, since time.Time, items []store.QueueRecord, eff policy.Effective, now time.Time) findings.Draft {
+	q := items[0].Latest
+	sub := domain.Subject{Connections: []string{meta.ID}, ManagerID: meta.ID, DownloadID: dl, Content: queueContent(items), TransferName: q.Title}
+	if items[0].MatchClientID != "" && items[0].MatchNativeID != "" {
+		sub.ClientID, sub.NativeID = items[0].MatchClientID, items[0].MatchNativeID
+		sub.Connections = append(sub.Connections, items[0].MatchClientID)
+	}
+	var other []string
+	for _, m := range q.StatusMessages {
+		if m.Title != PartialPackMessage {
+			other = append(other, m.Title+": "+strings.Join(m.Messages, "; "))
+		}
+	}
+	next := now.Add(e.cfg.Polling.Interval.Duration)
+	return findings.Draft{
+		DedupKey: key, Type: domain.FindingPartialPack, Severity: domain.SeverityWarning,
+		Title:   fmt.Sprintf("Season pack partly imported: %s", q.Title),
+		Summary: fmt.Sprintf("%s imported what this pack contained but still tracks it for %d expected episodes, and reports “%s”.", meta.Name, len(items), PartialPackMessage),
+		Subject: sub,
+		Detail: domain.FindingDetail{
+			Evidence: append([]domain.Evidence{
+				{Label: "Tracked state", Value: "importBlocked / warning", At: &now, Source: meta.Name},
+				{Label: "In this state since", Value: since.UTC().Format(time.RFC3339), At: &since},
+				{Label: "Expected episodes (queue rows)", Value: strings.Join(queueContent(items), ", ")},
+			}, func() []domain.Evidence {
+				var out []domain.Evidence
+				for _, o := range other {
+					out = append(out, domain.Evidence{Label: "Other manager message", Value: o, Source: meta.Name})
+				}
+				return out
+			}()...),
+			Confidence: "Candidate only: which episodes were imported is established from the manager's import history for this download, and episode files, when an action is planned and again before it is sent.",
+			Limitations: []string{
+				"An expected range is the manager's context, not proof of what the release contains.",
+				"Any other import message (a sample, a missing audio track, a mapping problem) makes the cause uncertain, and nothing is cleared.",
+			},
+			Eligibility: e.modeEligibility("Partial-pack handling clears only the stale association and searches the still-missing episodes individually; the torrent, its files, and the imports are kept."),
+			NextSteps:   []string{fmt.Sprintf("Review the item in %s → Activity → Queue; the episodes it did not import are still expected.", meta.Name)},
+			Links:       []domain.Link{{Label: meta.Name + " queue", URL: meta.BaseURL + "/activity/queue"}},
+		},
+		PolicyID: eff.ID, PolicyRevision: eff.Revision, EvidenceAt: now, NextEvaluationAt: &next,
+	}
 }

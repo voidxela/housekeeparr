@@ -76,6 +76,9 @@ func (s *Service) Preview(ctx context.Context, findingID int64, origin action.Or
 	if out.Journal, err = s.Journal(ctx); err != nil {
 		return nil, err
 	}
+	if f.Type == domain.FindingPartialPack {
+		return s.previewPack(ctx, f, origin, out)
+	}
 	in := action.PlanInput{Finding: *f, Origin: origin, PollInterval: s.cfg.Polling.Interval.Duration,
 		ConfigRevision: s.cfg.Revision, Tested: action.Tested, Now: s.now(), Limits: s.cfg.Limits()}
 	if f.Subject.ClientID != "" && f.Subject.NativeID != "" {

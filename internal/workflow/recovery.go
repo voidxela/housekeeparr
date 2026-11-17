@@ -183,6 +183,9 @@ func (r *Recovery) Live(ctx context.Context, p action.Proposal) (action.Live, er
 	if p.Workflow == string(policy.WorkflowMissingSearch) {
 		return r.searchLive(ctx, p)
 	}
+	if p.Workflow == string(policy.WorkflowPartialPack) {
+		return r.packLive(ctx, p)
+	}
 	pl := p.Planned
 	var live action.Live
 	c, ok := r.Clients[pl.ClientID]
@@ -300,6 +303,9 @@ func (r *Recovery) Baseline(ctx context.Context, st store.Step) (json.RawMessage
 	if st.Op == action.OpSearch {
 		return r.searchBaseline(ctx, st)
 	}
+	if st.Op == action.OpPackIgnore {
+		return r.packBaseline(ctx, st)
+	}
 	if st.Op != "manager.queue.fail" {
 		return nil, nil
 	}
@@ -350,6 +356,8 @@ func (r *Recovery) Dispatch(ctx context.Context, st store.Step) (json.RawMessage
 	switch st.Op {
 	case action.OpSearch:
 		return r.dispatchSearch(ctx, st)
+	case action.OpPackIgnore:
+		return r.dispatchPack(ctx, st)
 	case "manager.queue.fail":
 		var tg queueTarget
 		var req queueRequest
@@ -415,6 +423,8 @@ func (r *Recovery) Observe(ctx context.Context, st store.Step) (action.Observati
 	switch st.Op {
 	case action.OpSearch:
 		return r.observeSearch(ctx, st)
+	case action.OpPackIgnore:
+		return r.observePack(ctx, st)
 	case "manager.queue.fail":
 		var tg queueTarget
 		var req queueRequest

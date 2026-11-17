@@ -43,6 +43,7 @@ const (
 	FindingMetadataTimeout   = "transfer.metadata_timeout"
 	FindingTransferError     = "transfer.client_error"
 	FindingSourceRejected    = "transfer.source_rejected"
+	FindingPartialPack       = "import.partial_pack"
 	FindingImportAttention   = "import.attention"
 	FindingQueueUnmatched    = "queue.unmatched"
 	FindingQueueAmbiguous    = "queue.ambiguous_ownership"
@@ -133,3 +134,12 @@ type FindingEvent struct {
 	Actor     string    `json:"actor"` // system, cli, web
 	Detail    string    `json:"detail"`
 }
+
+// PartialPackMessage is released Sonarr 4.0.20's status message for a pack
+// whose expected episodes were not all imported, and AlreadyImportedPrefix
+// the per-file message for a file it already imported (observed; see
+// docs/compatibility.md, "Partial season-pack probe").
+const (
+	PartialPackMessage    = "One or more episodes expected in this release were not imported or missing from the release"
+	AlreadyImportedPrefix = "Episode file already imported at "
+)

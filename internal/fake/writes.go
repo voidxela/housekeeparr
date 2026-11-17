@@ -39,6 +39,7 @@ type managerWrites struct {
 	removeErr   error
 	removeNoop  bool
 	unmonitored map[string]bool
+	hasFile     map[string]bool
 	// commands is the simulated command list; a blocklisting removal with
 	// redownload not skipped queues the manager-native search, as the
 	// released managers do (trigger "unspecified").
@@ -147,6 +148,22 @@ func (m *Manager) RemoveQueueItem(_ context.Context, queueID int64, f arr.Remove
 		if q.QueueID != queueID {
 			continue
 		}
+		if !f.Blocklist {
+			// The ignore path stops tracking the whole download: every row
+			// leaves, one downloadIgnored record per row (Sonarr 4.0.20).
+			var keep []domain.QueueItem
+			for _, o := range m.items {
+				if strings.EqualFold(o.DownloadID, q.DownloadID) {
+					m.w.nextID++
+					m.w.history = append(m.w.history, histEntry{HistoryEvent: arr.HistoryEvent{ID: m.w.nextID, EventType: "downloadIgnored", Date: m.now(),
+						EpisodeID: o.EpisodeID}, downloadID: o.DownloadID})
+					continue
+				}
+				keep = append(keep, o)
+			}
+			m.items = keep
+			return nil
+		}
 		m.items = append(m.items[:i:i], m.items[i+1:]...)
 		event := "downloadIgnored"
 		if f.Blocklist {
@@ -221,10 +238,14 @@ func (m *Manager) History(_ context.Context, downloadID string) ([]arr.HistoryEv
 func (m *Manager) Content(_ context.Context, key string) (arr.Content, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	c := arr.Content{Key: key, Exists: true, Monitored: true, Detail: "monitored"}
 	if m.w.unmonitored[key] {
-		return arr.Content{Key: key, Exists: true, Detail: "unmonitored"}, nil
+		c.Monitored, c.Detail = false, "unmonitored"
 	}
-	return arr.Content{Key: key, Exists: true, Monitored: true, Detail: "monitored"}, nil
+	if hf, ok := m.w.hasFile[key]; ok {
+		c.HasFile = &hf
+	}
+	return c, nil
 }
 
 // Removals returns every queue removal requested, with its flags.
@@ -270,4 +291,24 @@ func (c *Client) Stops() []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return append([]string(nil), c.stops...)
+}
+
+// SetHasFile sets whether content has a file (reported by Content).
+func (m *Manager) SetHasFile(key string, has bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.w.hasFile == nil {
+		m.w.hasFile = map[string]bool{}
+	}
+	m.w.hasFile[key] = has
+}
+
+// AddImport records a downloadFolderImported history record for an episode
+// of a download.
+func (m *Manager) AddImport(downloadID string, episodeID int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.w.nextID++
+	m.w.history = append(m.w.history, histEntry{HistoryEvent: arr.HistoryEvent{ID: m.w.nextID, EventType: "downloadFolderImported", Date: m.now(),
+		EpisodeID: episodeID}, downloadID: downloadID})
 }

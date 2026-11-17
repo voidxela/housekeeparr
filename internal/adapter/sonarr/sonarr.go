@@ -185,6 +185,10 @@ func (c *Client) Content(ctx context.Context, key string) (arr.Content, error) {
 		out.Detail = "the episode no longer exists in Sonarr"
 		return out, nil
 	}
+	var hasFile bool
+	if json.Unmarshal(raw["hasFile"], &hasFile) == nil {
+		out.HasFile = &hasFile
+	}
 	var seriesID int64
 	if json.Unmarshal(raw["seriesId"], &seriesID) != nil || seriesID <= 0 {
 		return arr.Content{}, fmt.Errorf("sonarr episode %d has no series id", id)

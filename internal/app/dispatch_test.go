@@ -1137,3 +1137,106 @@ func TestUnknownSourceStatusIsNotHealthy(t *testing.T) {
 		t.Fatalf("an unknown status counted toward recovery: %+v", srcs)
 	}
 }
+
+const packRule = "\n[[rule]]\nname = \"packs\"\npriority = 1\n[rule.automation]\npartial_pack = true\n[rule.match]\nmanager = \"sonarr\"\n"
+
+// packWorld has a completed season pack on qbit whose Sonarr rows (E01-E03,
+// IDs 201-203) are import-blocked with the partial-pack message, E01 and
+// E02 imported from it (history and files), E03 neither.
+func packWorld(t *testing.T, mutate func(w *world, rows []domain.QueueItem) []domain.QueueItem) *world {
+	w := newWorldWith(t, "automatic", 20, packRule)
+	action.Tested = append(action.Tested, action.TestedWorkflow{Workflow: policy.WorkflowPartialPack, Manager: adapter.KindSonarr, ManagerVersion: "0.0.0-fake"})
+	w.client.SetTransfers(fake.Transfer(hashA, "Show.S02", domain.StateComplete, 4*gib, 4*gib, t0))
+	var rows []domain.QueueItem
+	for i, ep := range []int64{1, 2, 3} {
+		q := fake.Episode(int64(10+i), hashA, "Show.S02", "Show", 2, ep)
+		q.TrackedState, q.TrackedStatus, q.Status = domain.KnownValue("importBlocked"), domain.KnownValue("warning"), "completed"
+		q.StatusMessages = []domain.StatusMessage{{Title: domain.PartialPackMessage},
+			{Title: "Show.S02E01.mkv", Messages: []string{domain.AlreadyImportedPrefix + "11/17/2026 14:50:03"}},
+			{Title: "Show.S02E02.mkv", Messages: []string{domain.AlreadyImportedPrefix + "11/17/2026 14:50:03"}}}
+		rows = append(rows, q)
+	}
+	w.mgr.AddImport(hashA, 201)
+	w.mgr.AddImport(hashA, 202)
+	w.mgr.SetHasFile("episode:201", true)
+	w.mgr.SetHasFile("episode:202", true)
+	w.mgr.SetHasFile("episode:203", false)
+	if mutate != nil {
+		rows = mutate(w, rows)
+	}
+	w.mgr.SetQueue(rows...)
+	return w
+}
+
+// SPEC §8 / §13.4 scenario 4 with simulated applications: only the stale
+// association is cleared, once, through the ignore path; nothing is sent to
+// the client; uncertainty refuses.
+func TestPartialPackEndToEnd(t *testing.T) {
+	w := packWorld(t, nil)
+	w.run(2 * time.Hour)
+	r := w.mgr.Removals()
+	if len(r) != 1 || r[0] != (arr.RemoveFlags{SkipRedownload: true}) {
+		t.Fatalf("removals %+v (want exactly one ignore-path removal)", r)
+	}
+	if s := w.client.Stops(); len(s) != 0 {
+		t.Fatalf("the client was touched: %v", s)
+	}
+	snap, _ := w.mgr.Queue(context.Background())
+	if len(snap.Items) != 0 {
+		t.Fatalf("rows left %+v", snap.Items)
+	}
+	acts, _ := w.svc.Actions(context.Background(), 10)
+	if len(acts) != 1 || acts[0].Workflow != string(policy.WorkflowPartialPack) || acts[0].State != store.IntentSucceeded {
+		t.Fatalf("actions %+v", acts)
+	}
+	fs, _ := w.st.Findings(context.Background(), store.FindingFilter{Type: domain.FindingPartialPack})
+	if len(fs) != 1 || fs[0].State != domain.FindingResolved {
+		t.Fatalf("finding %+v", fs)
+	}
+	// The association returning would be refused, not cleared again.
+	for i, ep := range []int64{1, 2, 3} {
+		q := fake.Episode(int64(20+i), hashA, "Show.S02", "Show", 2, ep)
+		q.TrackedState, q.TrackedStatus, q.Status = domain.KnownValue("importBlocked"), domain.KnownValue("warning"), "completed"
+		q.StatusMessages = []domain.StatusMessage{{Title: domain.PartialPackMessage}}
+		snap.Items = append(snap.Items, q)
+	}
+	w.mgr.SetQueue(snap.Items...)
+	w.run(2 * time.Hour)
+	if r := w.mgr.Removals(); len(r) != 1 {
+		t.Fatalf("cleared again after the association returned: %+v", r)
+	}
+}
+
+func TestPartialPackUncertaintyRefuses(t *testing.T) {
+	for name, mutate := range map[string]func(*world, []domain.QueueItem) []domain.QueueItem{
+		"another import message": func(_ *world, rows []domain.QueueItem) []domain.QueueItem {
+			for i := range rows {
+				rows[i].StatusMessages = append(rows[i].StatusMessages, domain.StatusMessage{Title: "Show.S02E03.mkv", Messages: []string{"No audio tracks detected"}})
+			}
+			return rows
+		},
+		"no import record": func(w *world, rows []domain.QueueItem) []domain.QueueItem {
+			w.mgr.SetHasFile("episode:202", true)
+			w.mgr.SetHasFile("episode:203", true) // a file not imported from this download
+			return rows
+		},
+		"nothing missing": func(w *world, rows []domain.QueueItem) []domain.QueueItem {
+			w.mgr.AddImport(hashA, 203)
+			w.mgr.SetHasFile("episode:203", true)
+			return rows
+		},
+		"not settled long enough": nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := packWorld(t, mutate)
+			d := 2 * time.Hour
+			if mutate == nil {
+				d = 20 * time.Minute // under the 30-minute import settle
+			}
+			w.run(d)
+			if r := w.mgr.Removals(); len(r) != 0 {
+				t.Fatalf("cleared despite uncertainty: %+v", r)
+			}
+		})
+	}
+}

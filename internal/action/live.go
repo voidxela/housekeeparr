@@ -82,6 +82,9 @@ type Live struct {
 	// a replacement itself (the recovery's only replacement owner).
 	Redownload    *Redownload `json:"redownload,omitempty"`
 	RedownloadErr string      `json:"redownload_error,omitempty"`
+	// Pack is the import evidence for a partial-pack clearance.
+	Pack    *PackEvidence `json:"pack,omitempty"`
+	PackErr string        `json:"pack_error,omitempty"`
 }
 
 // Redownload is the manager's redownload configuration and the grab's
@@ -119,6 +122,9 @@ var acquisitionOps = map[string]bool{"manager.queue.fail": true}
 func Revalidate(p Proposal, i int, live Live) []Check {
 	if p.Workflow == string(policy.WorkflowMissingSearch) {
 		return revalidateSearch(p, live)
+	}
+	if p.Workflow == string(policy.WorkflowPartialPack) {
+		return revalidatePack(p, live)
 	}
 	pl := p.Planned
 	var out []Check
@@ -315,6 +321,52 @@ func revalidateSearch(p Proposal, live Live) []Check {
 			details = append(details, fmt.Sprintf("%s exists=%v monitored=%v", c.Key, c.Exists, c.Monitored))
 		}
 		add("content monitored", ok, strings.Join(details, "; "))
+	}
+	return out
+}
+
+// revalidatePack re-checks a partial-pack clearance immediately before the
+// write: the same rows are still tracked, nothing else is reported, and the
+// import evidence is positive and complete.
+func revalidatePack(p Proposal, live Live) []Check {
+	pl := p.Planned
+	var out []Check
+	add := func(name string, ok bool, detail string) {
+		out = append(out, Check{Name: name, Satisfied: ok, Hard: true, Detail: detail})
+	}
+	add("manager version unchanged", normVersion(live.ManagerVersion) == normVersion(pl.ManagerVersion),
+		fmt.Sprintf("planned %s, now %s", pl.ManagerVersion, nonEmpty(live.ManagerVersion, "unknown")))
+	want := map[string]bool{}
+	for _, k := range pl.Content {
+		want[k] = true
+	}
+	got := map[string]bool{}
+	var bad []string
+	for _, r := range live.Associations {
+		if k, ok := r.ContentKey(); ok {
+			got[k] = true
+		}
+		ts, _ := r.TrackedState.Get()
+		if ts != "importBlocked" {
+			bad = append(bad, fmt.Sprintf("%s is %s", r.Title, nonEmpty(ts, "unknown")))
+		}
+	}
+	same := len(got) == len(want) && len(live.Unread) == 0
+	for k := range want {
+		same = same && got[k]
+	}
+	add("same pack rows", same && len(bad) == 0, fmt.Sprintf("planned %d rows, now %d; %s", len(want), len(live.Associations),
+		nonEmpty(strings.Join(append(bad, live.Unread...), "; "), "all import-blocked")))
+	switch {
+	case live.PackErr != "":
+		add("positive import evidence", false, "could not be read: "+live.PackErr)
+	case live.Pack == nil:
+		add("positive import evidence", false, "not read")
+	default:
+		ev := live.Pack
+		ok := len(ev.Imported) > 0 && len(ev.Missing) > 0 && len(ev.Unexplained) == 0 && len(ev.Imported)+len(ev.Missing) == len(want)
+		add("positive import evidence", ok, fmt.Sprintf("imported (history record and file) %v; missing (neither) %v%s", ev.Imported, ev.Missing,
+			prefixed("; uncertain: ", strings.Join(ev.Unexplained, "; "))))
 	}
 	return out
 }

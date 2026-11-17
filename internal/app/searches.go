@@ -349,3 +349,69 @@ func (s *Service) coverageNote(ctx context.Context, managerID string, at time.Ti
 	}
 	return "", nil
 }
+
+// previewPack plans the clearance of a partial season pack.
+func (s *Service) previewPack(ctx context.Context, f *domain.Finding, origin action.Origin, out *ActionPreview) (*ActionPreview, error) {
+	now := s.now()
+	in := action.PackPlanInput{Finding: *f, Origin: origin, ConfigRevision: s.cfg.Revision, Tested: action.Tested, Now: now}
+	in.Scope = policy.Subject{ManagerID: f.Subject.ManagerID, ClientID: f.Subject.ClientID, NativeID: f.Subject.NativeID}
+	var err error
+	if in.Policy, err = s.cfg.Resolve(in.Scope); err != nil {
+		return nil, err
+	}
+	rows, err := s.st.QueueItems(ctx, store.QueueFilter{ManagerID: f.Subject.ManagerID, PresentOnly: true})
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range rows {
+		if strings.EqualFold(r.DownloadID, f.Subject.DownloadID) {
+			in.Rows = append(in.Rows, r)
+		}
+	}
+	recs, err := s.st.Connections(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range recs {
+		if c.ID == f.Subject.ManagerID {
+			in.ManagerKind, in.ManagerProbe = adapter.Kind(c.Kind), c.Probe
+		}
+	}
+	pauses, err := s.st.WorkflowPauses(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if p, ok := pauses[string(policy.WorkflowPartialPack)]; ok {
+		in.Paused = &p
+	}
+	if in.Locks, err = s.st.HeldLocks(ctx); err != nil {
+		return nil, err
+	}
+	if in.Cooldowns, err = s.st.ActiveCooldowns(ctx, now); err != nil {
+		return nil, err
+	}
+	// An earlier clearance of the same download that succeeded: a tracked
+	// association again means the clearance did not hold.
+	done, err := s.st.Intents(ctx, store.IntentFilter{States: []store.IntentState{store.IntentSucceeded}, Limit: 500})
+	if err != nil {
+		return nil, err
+	}
+	for _, d := range done {
+		var sub struct {
+			DownloadID string `json:"download_id"`
+		}
+		if d.Workflow == string(policy.WorkflowPartialPack) && json.Unmarshal(d.Subject, &sub) == nil && strings.EqualFold(sub.DownloadID, f.Subject.DownloadID) {
+			in.Handled = d.ID
+		}
+	}
+	p := action.PlanPack(in)
+	if out.Journal.RestoreHold != nil {
+		p.Prerequisites = append(p.Prerequisites, action.Check{Name: "state matches the action journal", Hard: true, Detail: out.Journal.RestoreHold.Reason})
+	}
+	if !out.Journal.Writable {
+		p.Prerequisites = append(p.Prerequisites, action.Check{Name: "writable state store", Hard: true,
+			Detail: "this process opened the state store read-only (another Housekeeparr process owns it)"})
+	}
+	out.Workflow, out.Proposal, out.Policy = p.Workflow, p, in.Policy
+	return out, nil
+}

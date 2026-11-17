@@ -505,6 +505,9 @@ type HistoryEvent struct {
 	// for the blocklist entry; the queue row's title can differ (a magnet
 	// without metadata is listed under the client's placeholder name).
 	SourceTitle string `json:"source_title,omitempty"`
+	// EpisodeID is the Sonarr episode the record is for (0 for Radarr or
+	// when not reported); a pack writes one record per episode.
+	EpisodeID int64 `json:"episode_id,omitempty"`
 }
 
 // History returns the newest history records for a download id, newest
@@ -516,13 +519,16 @@ func (c *Client) History(ctx context.Context, downloadID string) ([]HistoryEvent
 			EventType   string    `json:"eventType"`
 			SourceTitle string    `json:"sourceTitle"`
 			DownloadID  string    `json:"downloadId"`
+			EpisodeID   int64     `json:"episodeId"`
 			Date        time.Time `json:"date"`
 			Data        struct {
 				ReleaseSource string `json:"releaseSource"`
 			} `json:"data"`
 		} `json:"records"`
 	}
-	q := url.Values{"page": {"1"}, "pageSize": {"50"}, "downloadId": {strings.ToUpper(downloadID)}, "sortKey": {"date"}, "sortDirection": {"descending"}}
+	// One record per episode and event: 200 covers a large pack's grab,
+	// imports and an ignore; older records beyond it are not returned.
+	q := url.Values{"page": {"1"}, "pageSize": {"200"}, "downloadId": {strings.ToUpper(downloadID)}, "sortKey": {"date"}, "sortDirection": {"descending"}}
 	if err := c.Get(ctx, "history", "/api/v3/history", q, &pg); err != nil {
 		return nil, err
 	}
@@ -535,7 +541,8 @@ func (c *Client) History(ctx context.Context, downloadID string) ([]HistoryEvent
 			return nil, httpx.Malformed(c.app+".history", fmt.Errorf("record without id"))
 		}
 		if strings.EqualFold(r.DownloadID, downloadID) {
-			out = append(out, HistoryEvent{ID: *r.ID, EventType: r.EventType, Date: r.Date, ReleaseSource: r.Data.ReleaseSource, SourceTitle: r.SourceTitle})
+			out = append(out, HistoryEvent{ID: *r.ID, EventType: r.EventType, Date: r.Date, ReleaseSource: r.Data.ReleaseSource, SourceTitle: r.SourceTitle,
+				EpisodeID: r.EpisodeID})
 		}
 	}
 	return out, nil
@@ -676,6 +683,8 @@ type Content struct {
 	Key       string `json:"key"`
 	Exists    bool   `json:"exists"`
 	Monitored bool   `json:"monitored"`
+	// HasFile is whether the manager has a file for it (nil when not read).
+	HasFile *bool `json:"has_file,omitempty"`
 	// Detail explains how monitoring was established (for example, that
 	// the series is unmonitored although the episode is not).
 	Detail string `json:"detail,omitempty"`
