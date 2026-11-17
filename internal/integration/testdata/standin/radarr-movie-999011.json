@@ -1,0 +1,35 @@
+{
+ "tmdbId": 999011,
+ "imdbId": "tt9990011",
+ "title": "Housekeeparr Tenth Fixture Film",
+ "originalTitle": "Housekeeparr Tenth Fixture Film",
+ "titleSlug": "999011",
+ "overview": "Fictional film served by the Housekeeparr integration stand-in.",
+ "year": 2012,
+ "inCinema": "2012-03-01T00:00:00Z",
+ "physicalRelease": "2012-06-01T00:00:00Z",
+ "digitalRelease": "2012-05-15T00:00:00Z",
+ "runtime": 100,
+ "originalLanguage": "en",
+ "status": "Released",
+ "studio": "Fixture Studio",
+ "movieRatings": {
+  "tmdb": {
+   "count": 1,
+   "value": 7.0,
+   "type": "user"
+  }
+ },
+ "ratings": [],
+ "genres": [],
+ "keywords": [],
+ "alternativeTitles": [],
+ "translations": [],
+ "certifications": [],
+ "images": [],
+ "credits": {
+  "cast": [],
+  "crew": []
+ },
+ "recommendations": []
+}

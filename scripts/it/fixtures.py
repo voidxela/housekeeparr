@@ -113,6 +113,8 @@ def main(out, save):
     # loopback, inside the namespace), for the preserved-data failure tests.
     reject = os.environ.get("HK_IT_REJECT_ANNOUNCE", TRACKER)
     release("tv-e09-unregistered", "Housekeeparr.Fixture.Show.S01E09.1080p.WEB-DL.x264-HKFIX", 4 * MB, tracker=reject, kind="tv", tvdbId=999001, season=1, episode=9)
+    release("tv-e10-unregistered-private", "Housekeeparr.Fixture.Show.S01E10.1080p.WEB-DL.x264-HKFIX", 4 * MB, private=True, tracker=reject, kind="tv", tvdbId=999001, season=1, episode=10)
+    release("film-j-unregistered-private", "Housekeeparr.Tenth.Fixture.Film.2012.1080p.WEB-DL.x264-HKFIX", 4 * MB, private=True, tracker=reject, kind="movie", tmdbId=999011, imdbId="tt9990011")
     release("film-i-unregistered", "Housekeeparr.Ninth.Fixture.Film.2013.1080p.WEB-DL.x264-HKFIX", 4 * MB, tracker=reject, kind="movie", tmdbId=999010, imdbId="tt9990010")
     # Magnet-only releases for random hashes: no .torrent and no payload, so
     # their metadata can never arrive (the metadata-recovery tests).

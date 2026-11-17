@@ -240,6 +240,42 @@ func TestRadarrPreservedDataFailureWorkflow(t *testing.T) {
 	runRecoveryFor(t, a, rc, e, "MoviesSearch", policy.WorkflowPreservedDataFailure)
 }
 
+// A private torrent its tracker rejects follows private_recovery's default
+// keep_running: the grab is failed and blocklisted, the torrent never
+// stopped (user decision 2026-11-17).
+func TestSonarrPrivatePreservedDataFailureWorkflow(t *testing.T) {
+	mm := managedManifest(t)
+	a := arrAPI{t: t, base: env(t, "HK_IT_SONARR_URL"), key: env(t, "HK_IT_SONARR_KEY")}
+	prepareManager(t, a, env(t, "HK_IT_WORK")+"/library/tv", []int{5000, 5040})
+	sid := ensureSeries(t, a)
+	ep := episodeID(t, a, sid, 1, 10)
+	e := mm["tv-e10-unregistered-private"]
+	waitGrab(t, a, e, map[string]any{"name": "EpisodeSearch", "episodeIds": []int{ep}}, url.Values{"episodeId": {fmt.Sprint(ep)}})
+	settleIncomplete(t, e)
+	if !settleRejected(t, e) {
+		return
+	}
+	runRecoveryMode(t, a, sonarrClient(t), e, "EpisodeSearch", policy.WorkflowPreservedDataFailure, policy.PrivateKeepRunning)
+}
+
+func TestRadarrPrivatePreservedDataFailureWorkflow(t *testing.T) {
+	mm := managedManifest(t)
+	a := arrAPI{t: t, base: env(t, "HK_IT_RADARR_URL"), key: env(t, "HK_IT_RADARR_KEY")}
+	prepareManager(t, a, env(t, "HK_IT_WORK")+"/library/movies", []int{2000, 2040})
+	e := mm["film-j-unregistered-private"]
+	id := addMovie(t, a, e.Managed.TmdbID)
+	waitGrab(t, a, e, map[string]any{"name": "MoviesSearch", "movieIds": []int{id}}, url.Values{"movieId": {fmt.Sprint(id)}})
+	settleIncomplete(t, e)
+	if !settleRejected(t, e) {
+		return
+	}
+	rc, err := radarr.New(radarr.Options{ID: "radarr", BaseURL: env(t, "HK_IT_RADARR_URL"), APIKey: env(t, "HK_IT_RADARR_KEY"), Timeout: 15 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runRecoveryMode(t, a, rc, e, "MoviesSearch", policy.WorkflowPreservedDataFailure, policy.PrivateKeepRunning)
+}
+
 // settleRejected waits until the client reports the tracker's rejection.
 // It returns false (after checking the signal is unsupported, not
 // misreported) for clients whose adapter does not classify tracker results.

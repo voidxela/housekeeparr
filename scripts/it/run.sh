@@ -567,7 +567,7 @@ start_sonarr() {
 		MANAGED_PROBES+=(TestSonarrManagedRemovalSemantics)
 		# The full recovery workflow runs through whichever client the
 		# managers use (--manager-client).
-		MANAGED_PROBES+=(TestSonarrRecoveryWorkflow TestSonarrMetadataRecoveryWorkflow TestSonarrPrivateRecoveryWorkflow TestSonarrPreservedDataFailureWorkflow)
+		MANAGED_PROBES+=(TestSonarrRecoveryWorkflow TestSonarrMetadataRecoveryWorkflow TestSonarrPrivateRecoveryWorkflow TestSonarrPreservedDataFailureWorkflow TestSonarrPrivatePreservedDataFailureWorkflow)
 	fi
 }
 
@@ -578,7 +578,7 @@ start_radarr() {
 	PROBES+=(TestRadarrQueueRemovalSemantics)
 	if [ "$STANDIN" = 1 ]; then
 		MANAGED_PROBES+=(TestRadarrManagedRemovalSemantics)
-		MANAGED_PROBES+=(TestRadarrRecoveryWorkflow TestRadarrMetadataRecoveryWorkflow TestRadarrPrivateRecoveryWorkflow TestRadarrPreservedDataFailureWorkflow)
+		MANAGED_PROBES+=(TestRadarrRecoveryWorkflow TestRadarrMetadataRecoveryWorkflow TestRadarrPrivateRecoveryWorkflow TestRadarrPreservedDataFailureWorkflow TestRadarrPrivatePreservedDataFailureWorkflow)
 	fi
 }
 

@@ -34,11 +34,10 @@ State at the end of the 2026-11-17 session (`dev`; see STATUS for commits):
   behaviour unchanged). Client errors are diagnosis only. Effects: fail +
   blocklist (manager-native redownload), then stop retaining data. Live
   check re-reads the rejection; "no import in progress" requires the
-  manager to track the grab as downloading. Private/unknown privacy:
-  observation (SPEC default) — **open product question for the user**:
-  should a private unregistered torrent follow `private_recovery`
-  (blocklist, leave the torrent alone)? Do not extend the decision without
-  asking.
+  manager to track the grab as downloading. A torrent known to be private
+  follows `private_recovery` (user decision 2026-11-17; default
+  `keep_running`); unknown privacy stays observation-only for this workflow
+  (not decided by the user; ask before extending).
 - Real-instance: see compatibility.md "Preserved-data failure runs" for
   exactly which versions passed and what was registered.
 
@@ -115,8 +114,7 @@ do not turn a choice of defaults into a prolonged blocker for other work.
    recorded (qBittorrent has no tracker-result signal; rTorrent's message
    can be stale — both stay unsupported until a fresh structured signal is
    established). Register only what passes.
-2. **Ask the user** the private-unregistered question above while
-   continuing; record the answer in SPEC §6/§7.2.
+2. (Done 2026-11-17: private unregistered torrents follow `private_recovery`.)
 3. **Batch follow-ups:** real-instance automatic metadata dispatch and
    automatic preserved-data dispatch; a kept-running original completing
    after replacement; qBittorrent 4.6.7 unknown-privacy recovery and its
