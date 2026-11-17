@@ -145,7 +145,7 @@ prefetch() {
 	rm -rf "$scratch"
 }
 if [ "$NETNS" = 1 ] && [ -z "${HK_IT_IN_NETNS:-}" ]; then
-	command -v unshare >/dev/null && command -v ip >/dev/null || { echo "unshare and ip are required for network isolation (or pass --no-netns)" >&2; exit 2; }
+	command -v unshare >/dev/null || { echo "unshare is required for network isolation (or pass --no-netns)" >&2; exit 2; }
 	prefetch
 	# -m: a private mount namespace, so the managers' metadata hosts can be
 	# redirected to the loopback stand-in by bind-mounting a private hosts
@@ -154,10 +154,8 @@ if [ "$NETNS" = 1 ] && [ -z "${HK_IT_IN_NETNS:-}" ]; then
 fi
 if [ -n "${HK_IT_IN_NETNS:-}" ]; then
 	verify_loopback_only
-	if ! loopback_ready; then
-		ip link set lo up
-		loopback_ready || { echo "network namespace loopback is unusable" >&2; exit 2; }
-	fi
+	loopback_ready || enable_loopback
+	loopback_ready || { echo "network namespace loopback is unusable" >&2; exit 2; }
 	echo "running in an isolated loopback-only network namespace" >&2
 	# Keep loopback fixture requests direct even on hosts with proxy settings.
 	unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy

@@ -51,3 +51,18 @@ except OSError:
     raise SystemExit(1)
 PY
 }
+
+# Linux SIOCGIFFLAGS/SIOCSIFFLAGS, scoped to the new namespace. Unlike
+# "ip link set lo up", this does not require a working netlink socket.
+enable_loopback() {
+	python3 - <<'PY'
+import fcntl
+import socket
+import struct
+
+with socket.socket() as sock:
+    request = struct.pack("16sh", b"lo", 0)
+    flags = struct.unpack_from("16sh", fcntl.ioctl(sock, 0x8913, request))[1]
+    fcntl.ioctl(sock, 0x8914, struct.pack("16sh", b"lo", flags | 1))
+PY
+}
