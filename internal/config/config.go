@@ -314,6 +314,7 @@ type PolicyOverrides struct {
 	ImportSettle             *Duration `toml:"import_settle"`
 	MinProgressBytes         *int64    `toml:"min_progress_bytes"`
 	RequirePiecesUnavailable *bool     `toml:"require_pieces_unavailable"`
+	SourceConfirmWindow      *Duration `toml:"source_confirm_window"`
 }
 
 // ConnectionCommon holds transport settings shared by every connection.
@@ -919,6 +920,9 @@ func ruleConflicts(a, b RuleConfig) []string {
 	if ap.RequirePiecesUnavailable != nil && bp.RequirePiecesUnavailable != nil && *ap.RequirePiecesUnavailable != *bp.RequirePiecesUnavailable {
 		conflicts = append(conflicts, "policy.require_pieces_unavailable")
 	}
+	if ap.SourceConfirmWindow != nil && bp.SourceConfirmWindow != nil && ap.SourceConfirmWindow.Duration != bp.SourceConfirmWindow.Duration {
+		conflicts = append(conflicts, "policy.source_confirm_window")
+	}
 	for _, wf := range policy.AllWorkflows() {
 		k := string(wf)
 		av, aok := a.Automation[k]
@@ -1217,6 +1221,7 @@ func (c *Config) Resolve(sub policy.Subject) (policy.Effective, error) {
 		"import_settle":              s.ImportSettle.String(),
 		"min_progress_bytes":         strconv.FormatInt(s.MinProgressBytes, 10),
 		"require_pieces_unavailable": strconv.FormatBool(s.RequirePiecesUnavailable),
+		"source_confirm_window":      s.SourceConfirmWindow.String(),
 	}
 	eff := policy.Effective{
 		ID:            subjectID(sub),
@@ -1410,7 +1415,7 @@ func applyWorkflows(enabled map[policy.Workflow]bool, fromMap map[policy.Workflo
 var settingNames = []string{
 	"new_download_grace", "no_progress_window", "near_complete_ratio", "near_complete_window",
 	"min_observations", "max_observation_gap", "metadata_timeout", "import_settle", "min_progress_bytes",
-	"require_pieces_unavailable",
+	"require_pieces_unavailable", "source_confirm_window",
 }
 
 func apply(s *policy.Settings, src map[string]string, o PolicyOverrides, from string) {
@@ -1443,6 +1448,9 @@ func apply(s *policy.Settings, src map[string]string, o PolicyOverrides, from st
 	}
 	if o.RequirePiecesUnavailable != nil {
 		s.RequirePiecesUnavailable, src["require_pieces_unavailable"] = *o.RequirePiecesUnavailable, from
+	}
+	if o.SourceConfirmWindow != nil {
+		s.SourceConfirmWindow, src["source_confirm_window"] = o.SourceConfirmWindow.Duration, from
 	}
 }
 

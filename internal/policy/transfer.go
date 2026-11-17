@@ -73,9 +73,8 @@ const (
 	DiagnosisSourceUnregistered Diagnosis = "source_unregistered"
 )
 
-// SourceConfirmWindow is the qualifying time a tracker rejection must
-// persist, without verified progress, before it is a diagnosis. Proposed
-// value, not a validated default.
+// SourceConfirmWindow is the proposed default confirmation window (see
+// Settings.SourceConfirmWindow), not a validated default.
 const SourceConfirmWindow = 30 * time.Minute
 
 // AvailabilityEvidence summarises piece availability over the qualifying
@@ -481,15 +480,19 @@ func evaluateSource(a *Assessment, in TransferInput, s Settings) {
 	run := samples[from:]
 	n, elapsed := qualifying(run, a.GraceEnds, s.PollInterval)
 	since := run[0].At.UTC().Format(time.RFC3339)
-	if n < s.MinObservations || elapsed < SourceConfirmWindow {
+	window := s.SourceConfirmWindow
+	if window <= 0 {
+		window = SourceConfirmWindow
+	}
+	if n < s.MinObservations || elapsed < window {
 		a.Details = append(a.Details, fmt.Sprintf("The tracker rejects this torrent as not registered (since %s, no verified progress): "+
 			"%d of %d observations and %s of %s confirmation counted before a source-failure diagnosis.", since, n, s.MinObservations,
-			roundDur(elapsed), roundDur(SourceConfirmWindow)))
+			roundDur(elapsed), roundDur(window)))
 		return
 	}
 	a.Status, a.Diagnosis = StatusQualified, DiagnosisSourceUnregistered
 	a.Observations, a.Elapsed, a.QualifiesAt = n, elapsed, nil
-	a.Window, a.WindowReason = SourceConfirmWindow, "source-failure confirmation (proposed)"
+	a.Window, a.WindowReason = window, "source-failure confirmation (source_confirm_window)"
 	a.Headline = fmt.Sprintf("The tracker rejects this torrent as not registered, without verified progress, on %d consecutive observations over %s (since %s).",
 		n, roundDur(elapsed), since)
 	a.Limitations = append(a.Limitations, "The rejection is the tracker's message as the client reports it; Housekeeparr cannot confirm why the tracker no longer accepts the torrent.")

@@ -24,6 +24,9 @@ type Settings struct {
 	ImportSettle             time.Duration `json:"import_settle"`
 	MinProgressBytes         int64         `json:"min_progress_bytes"`
 	RequirePiecesUnavailable bool          `json:"require_pieces_unavailable"`
+	// SourceConfirmWindow is how long a tracker's rejection must persist,
+	// without verified progress, before it is a diagnosis (SPEC §7.2).
+	SourceConfirmWindow time.Duration `json:"source_confirm_window"`
 	// ClockTolerance bounds disagreement between wall-clock and monotonic
 	// elapsed time within one process before a clock jump is declared.
 	ClockTolerance time.Duration `json:"clock_tolerance"`
@@ -44,6 +47,7 @@ func DefaultSettings() Settings {
 		ImportSettle:             30 * time.Minute,
 		MinProgressBytes:         1,
 		RequirePiecesUnavailable: false,
+		SourceConfirmWindow:      30 * time.Minute,
 		ClockTolerance:           2 * time.Minute,
 	}
 }
@@ -55,7 +59,7 @@ func (s Settings) Validate() error {
 		return fmt.Errorf("poll interval must be positive")
 	case s.NewDownloadGrace < 0:
 		return fmt.Errorf("new_download_grace must not be negative")
-	case s.NoProgressWindow <= 0 || s.NearCompleteWindow <= 0 || s.MetadataTimeout <= 0 || s.ImportSettle <= 0:
+	case s.NoProgressWindow <= 0 || s.NearCompleteWindow <= 0 || s.MetadataTimeout <= 0 || s.ImportSettle <= 0 || s.SourceConfirmWindow <= 0:
 		return fmt.Errorf("diagnosis windows must be positive")
 	case s.NearCompleteRatio <= 0 || s.NearCompleteRatio > 1:
 		return fmt.Errorf("near_complete_ratio must be in (0, 1]")
@@ -75,10 +79,10 @@ func (s Settings) Validate() error {
 // assessment so explanations can be tied to the policy that produced them.
 func (s Settings) Revision() string {
 	h := sha256.New()
-	fmt.Fprintf(h, "v2|%d|%d|%d|%g|%d|%d|%d|%d|%d|%d|%d|%t",
+	fmt.Fprintf(h, "v3|%d|%d|%d|%g|%d|%d|%d|%d|%d|%d|%d|%t|%d",
 		s.PollInterval, s.NewDownloadGrace, s.NoProgressWindow, s.NearCompleteRatio,
 		s.NearCompleteWindow, s.MinObservations, s.MaxObservationGap, s.MetadataTimeout,
-		s.ImportSettle, s.MinProgressBytes, s.ClockTolerance, s.RequirePiecesUnavailable)
+		s.ImportSettle, s.MinProgressBytes, s.ClockTolerance, s.RequirePiecesUnavailable, s.SourceConfirmWindow)
 	return hex.EncodeToString(h.Sum(nil))[:12]
 }
 

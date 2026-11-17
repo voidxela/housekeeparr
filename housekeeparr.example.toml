@@ -171,6 +171,10 @@ format = "text"  # text, json
 # deselected files where client availability covers the whole torrent) then
 # never qualify.
 # require_pieces_unavailable = false
+#
+# How long a tracker's "not registered" rejection must persist, without
+# verified progress, before preserved-data failure handling may act.
+# source_confirm_window = "30m"
 
 # Notifications (optional). Each target is a webhook; its URL is a secret
 # reference because webhook URLs usually embed tokens. Events: a finding
