@@ -42,6 +42,10 @@ type MissingRecord struct {
 	NextSearchAt *time.Time `json:"next_search_at,omitempty"`
 	State        string     `json:"state"`
 	Note         string     `json:"note,omitempty"`
+	// Origin is "missing" or "pack" (a partial pack's follow-up, from the
+	// action OriginIntent).
+	Origin       string `json:"origin"`
+	OriginIntent *int64 `json:"origin_intent,omitempty"`
 }
 
 // MissingKey is the content key of a missing item.
@@ -90,17 +94,17 @@ func (t *Tx) SaveMissingSnapshot(s domain.MissingSnapshot, now time.Time) (int, 
 }
 
 const missingCols = `manager_id, content_key, series_id, title, aired_at, available, first_seen, last_seen, present, gone_at, searches,
-	last_search_at, last_intent_id, next_search_at, state, note`
+	last_search_at, last_intent_id, next_search_at, state, note, origin, origin_intent`
 
 func scanMissing(rows *sql.Rows) ([]MissingRecord, error) {
 	defer rows.Close()
 	var out []MissingRecord
 	for rows.Next() {
 		var r MissingRecord
-		var series, aired, avail, gone, lastSearch, intent, next sql.NullInt64
+		var series, aired, avail, gone, lastSearch, intent, next, originIntent sql.NullInt64
 		var first, last int64
 		if err := rows.Scan(&r.ManagerID, &r.ContentKey, &series, &r.Title, &aired, &avail, &first, &last, &r.Present, &gone, &r.Searches,
-			&lastSearch, &intent, &next, &r.State, &r.Note); err != nil {
+			&lastSearch, &intent, &next, &r.State, &r.Note, &r.Origin, &originIntent); err != nil {
 			return nil, err
 		}
 		r.SeriesID = series.Int64
@@ -112,6 +116,9 @@ func scanMissing(rows *sql.Rows) ([]MissingRecord, error) {
 		}
 		if intent.Valid {
 			r.LastIntentID = &intent.Int64
+		}
+		if originIntent.Valid {
+			r.OriginIntent = &originIntent.Int64
 		}
 		out = append(out, r)
 	}
@@ -139,7 +146,7 @@ func (s *Store) MissingContent(ctx context.Context, f MissingFilter) ([]MissingR
 	if f.Limit <= 0 {
 		f.Limit = 1000
 	}
-	q += " ORDER BY searches ASC, COALESCE(last_search_at, 0) ASC, COALESCE(aired_at, 0) DESC LIMIT ?"
+	q += " ORDER BY (origin = 'pack') DESC, searches ASC, COALESCE(last_search_at, 0) ASC, COALESCE(aired_at, 0) DESC LIMIT ?"
 	args = append(args, f.Limit)
 	rows, err := s.r.QueryContext(ctx, q, args...)
 	if err != nil {
@@ -180,4 +187,22 @@ func (s *Store) LastMissingSearch(ctx context.Context) (*time.Time, error) {
 		return nil, err
 	}
 	return ptrMS(v), nil
+}
+
+// MarkPackFollowUp records that a cleared partial pack (action intentID)
+// did not contain this episode: its next search is a targeted follow-up
+// under the partial_pack permission. A row is created when the missing
+// list has not been read yet (availability then stays unknown until it is).
+func (t *Tx) MarkPackFollowUp(managerID, key, title string, intentID int64, now time.Time) error {
+	_, err := t.exec(`INSERT INTO missing_content(manager_id, content_key, title, first_seen, last_seen, origin, origin_intent, next_search_at)
+		VALUES(?, ?, ?, ?, ?, 'pack', ?, NULL)
+		ON CONFLICT(manager_id, content_key) DO UPDATE SET origin='pack', origin_intent=excluded.origin_intent, next_search_at=NULL,
+			state=CASE WHEN state IN ('gone') THEN 'not_searched' ELSE state END`, managerID, key, title, ms(now), ms(now), intentID)
+	return err
+}
+
+// SetMissingOrigin changes why an item is searched.
+func (t *Tx) SetMissingOrigin(managerID, key, origin string) error {
+	_, err := t.exec(`UPDATE missing_content SET origin=? WHERE manager_id=? AND content_key=?`, origin, managerID, key)
+	return err
 }

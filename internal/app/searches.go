@@ -70,7 +70,11 @@ func (s *Service) PreviewSearch(ctx context.Context, managerID, key string, orig
 	if err != nil {
 		return nil, err
 	}
-	if p, ok := pauses[string(policy.WorkflowMissingSearch)]; ok {
+	pw := policy.WorkflowMissingSearch
+	if it.Origin == "pack" {
+		pw = policy.WorkflowPartialPack
+	}
+	if p, ok := pauses[string(pw)]; ok {
 		in.Paused = &p
 	}
 	if in.Retained, err = s.st.RetainedUsage(ctx); err != nil {
@@ -132,8 +136,8 @@ func (s *Service) DispatchSearches(ctx context.Context, fresh map[string]bool) (
 		rep.Skipped = "mode is " + string(s.cfg.Mode)
 	case s.cfg.Automation.EmergencyStop:
 		rep.Skipped = "emergency stop is set"
-	case !s.cfg.MaybeEnabled(policy.WorkflowMissingSearch):
-		rep.Skipped = "missing_search is not enabled in any scope"
+	case !s.cfg.MaybeEnabled(policy.WorkflowMissingSearch) && !s.cfg.MaybeEnabled(policy.WorkflowPartialPack):
+		rep.Skipped = "neither missing_search nor partial_pack is enabled in any scope"
 	}
 	if rep.Skipped != "" {
 		return rep, nil
@@ -206,6 +210,13 @@ func (s *Service) sendSearch(ctx context.Context, it store.MissingRecord, p *act
 		count := res.State == store.IntentSucceeded || res.State == store.IntentUncertain
 		if err := tx.SetMissingSearch(it.ManagerID, it.ContentKey, state, note, &id, &now, &next, count); err != nil {
 			return err
+		}
+		// A pack follow-up gets one targeted search; afterwards the item is
+		// ordinary missing content.
+		if count && it.Origin == "pack" {
+			if err := tx.SetMissingOrigin(it.ManagerID, it.ContentKey, "missing"); err != nil {
+				return err
+			}
 		}
 		return notify.EnqueueEvent(tx, s.cfg.Notify, notify.Event{DedupKey: fmt.Sprintf("search|%d", id), Kind: notify.KindAction, Severity: sev,
 			Title: "Search for missing " + it.Title + ": " + string(res.State), Body: note}, now)
@@ -417,4 +428,30 @@ func (s *Service) previewPack(ctx context.Context, f *domain.Finding, origin act
 	}
 	out.Workflow, out.Proposal, out.Policy = p.Workflow, p, in.Policy
 	return out, nil
+}
+
+// afterAction runs the local follow-ups of a verified action. After a
+// partial pack's association is cleared, the episodes the live evidence
+// still finds missing (no import record from the pack, no file) are marked
+// for one targeted individual search each (SPEC §8); availability and
+// monitoring are checked again when each search is planned.
+func (s *Service) afterAction(ctx context.Context, f domain.Finding, p action.Proposal, res action.Result) error {
+	if p.Workflow != string(policy.WorkflowPartialPack) || res.State != store.IntentSucceeded || s.executor == nil {
+		return nil
+	}
+	live, err := s.executor.Live(ctx, p)
+	if err != nil || live.Pack == nil {
+		// The clearance stands; the episodes stay ordinary missing content.
+		return nil
+	}
+	now := s.now()
+	return s.st.Write(ctx, func(tx *store.Tx) error {
+		for _, id := range live.Pack.Missing {
+			key := fmt.Sprintf("episode:%d", id)
+			if err := tx.MarkPackFollowUp(p.Planned.ManagerID, key, f.Title+" ("+key+")", res.IntentID, now); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }

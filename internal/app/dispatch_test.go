@@ -1241,3 +1241,34 @@ func TestPartialPackUncertaintyRefuses(t *testing.T) {
 		})
 	}
 }
+
+// After a partial pack is cleared, the episode it did not contain gets one
+// targeted individual search under the partial_pack permission alone
+// (missing_search is not enabled), and then is ordinary missing content.
+func TestPartialPackTargetedSearch(t *testing.T) {
+	w := packWorld(t, nil)
+	action.Tested = append(action.Tested, action.TestedWorkflow{Workflow: policy.WorkflowMissingSearch, Manager: adapter.KindSonarr, ManagerVersion: "0.0.0-fake"})
+	w.mgr.SetMissing(fake.MissingEpisode(203, 1, "Show S02E03", t0.Add(-72*time.Hour)), fake.MissingEpisode(150, 1, "Show S01E50", t0.Add(-24*time.Hour)))
+	reps := w.runSearches(2 * time.Hour)
+	if r := w.mgr.Removals(); len(r) != 1 {
+		t.Fatalf("clearance %+v", r)
+	}
+	if s := w.mgr.Searches(); len(s) == 0 {
+		it, _ := w.st.MissingRecord(context.Background(), "sonarr", "episode:203")
+		t.Logf("record %+v", it)
+		for _, r := range reps[len(reps)-3:] {
+			t.Logf("pass %+v", r)
+		}
+	}
+	if s := w.mgr.Searches(); len(s) != 1 || s[0][0] != 203 {
+		t.Fatalf("searches %v (want only the pack's missing episode, never a season, never other missing content)", s)
+	}
+	it, _ := w.st.MissingRecord(context.Background(), "sonarr", "episode:203")
+	if it.Origin != "missing" || it.Searches != 1 {
+		t.Fatalf("after its targeted search: %+v", it)
+	}
+	other, _ := w.st.MissingRecord(context.Background(), "sonarr", "episode:150")
+	if other == nil || other.Searches != 0 {
+		t.Fatalf("ordinary missing content searched without missing_search: %+v", other)
+	}
+}

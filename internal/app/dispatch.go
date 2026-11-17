@@ -122,6 +122,9 @@ func (s *Service) DispatchAutomatic(ctx context.Context, fresh map[string]bool) 
 			default:
 				dispatched++
 				ev.Result, ev.IntentID, outcome = store.EvalDispatched, res.IntentID, res.State
+				if err := s.afterAction(ctx, f, *pv.Proposal, res); err != nil {
+					return rep, err
+				}
 				ev.Detail = fmt.Sprintf("action #%d %s: %s", res.IntentID, res.State, res.Detail)
 				if err != nil {
 					ev.Detail += " (" + err.Error() + ")"

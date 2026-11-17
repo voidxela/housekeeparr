@@ -134,7 +134,16 @@ func PlanSearch(in SearchPlanInput) *Proposal {
 		}
 	}
 	add("no conflicting action", len(held) == 0, nonEmpty(strings.Join(held, "; "), "nothing holds "+p.Locks[0]))
-	p.Prerequisites = append(p.Prerequisites, PolicyCheck(in.Policy, wf, in.Origin), PauseCheck(in.Paused, wf), capacityCheck(in.Retained, limits))
+	// A partial pack's follow-up is permitted by partial_pack (SPEC §8);
+	// every other search by missing_search. The search mechanics (and the
+	// tested registry) are the same.
+	perm := wf
+	if it.Origin == "pack" {
+		perm = policy.WorkflowPartialPack
+		p.Permission = string(perm)
+		p.Effects = append(p.Effects, fmt.Sprintf("a targeted follow-up of the partial pack cleared by action #%d, which did not contain this episode", ptrInt(it.OriginIntent)))
+	}
+	p.Prerequisites = append(p.Prerequisites, PolicyCheck(in.Policy, perm, in.Origin), PauseCheck(in.Paused, perm), capacityCheck(in.Retained, limits))
 	p.Budgets = acquisitionClaims(limits, it.ManagerID, nil)
 	name := map[string]string{"episode": "EpisodeSearch", "movie": "MoviesSearch"}[kind]
 	p.Operations = []Operation{{
@@ -144,7 +153,7 @@ func PlanSearch(in SearchPlanInput) *Proposal {
 		Expect:      raw(map[string]any{"command_listed": true}),
 		Description: fmt.Sprintf("Ask %s to search for %s (%s)", it.ManagerID, it.Title, name),
 	}}
-	p.Effects = []string{fmt.Sprintf("%s searches its enabled indexers for %s alone (never a season or a broad search) and may grab a release under its own profiles", it.ManagerID, it.Title)}
+	p.Effects = append([]string{fmt.Sprintf("%s searches its enabled indexers for %s alone (never a season or a broad search) and may grab a release under its own profiles", it.ManagerID, it.Title)}, p.Effects...)
 	p.SideEffects = []string{
 		"one manager search can query every enabled indexer and grab a release; Housekeeparr counts it as one acquisition but cannot bound the manager's own requests",
 		fmt.Sprintf("if it is still missing afterwards, it is not searched again for %s (then longer, up to 30 days); a completed search does not mean a release exists or was grabbed",
@@ -154,4 +163,11 @@ func PlanSearch(in SearchPlanInput) *Proposal {
 	p.Evidence = raw(map[string]any{"missing": it})
 	p.Fingerprint = digest(fmt.Sprintf("search|%s|%s|%d|%s", it.ManagerID, it.ContentKey, it.Searches, mv))[:16]
 	return p
+}
+
+func ptrInt(p *int64) int64 {
+	if p == nil {
+		return 0
+	}
+	return *p
 }

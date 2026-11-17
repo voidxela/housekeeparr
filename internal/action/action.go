@@ -67,7 +67,11 @@ type Operation struct {
 
 // Proposal is an evaluated, previewable action.
 type Proposal struct {
-	Workflow       string          `json:"workflow"`
+	Workflow string `json:"workflow"`
+	// Permission is the workflow whose automation permission and pause
+	// govern the proposal when it differs from Workflow (a partial pack's
+	// targeted search runs the missing_search mechanics under partial_pack).
+	Permission     string          `json:"permission,omitempty"`
 	Origin         Origin          `json:"origin"`
 	FindingID      *int64          `json:"finding_id,omitempty"`
 	Subject        json.RawMessage `json:"subject"`
@@ -848,4 +852,12 @@ func trackOutcome(tx *store.Tx, id int64, subject json.RawMessage, steps []store
 			OldClientID: sub.ClientID, StartedAt: now, Search: store.SearchOutcome{Since: since, AfterID: b.MaxCommandID}})
 	}
 	return nil
+}
+
+// Governing returns the workflow whose permission and pause apply.
+func (p Proposal) Governing() policy.Workflow {
+	if p.Permission != "" {
+		return policy.Workflow(p.Permission)
+	}
+	return policy.Workflow(p.Workflow)
 }

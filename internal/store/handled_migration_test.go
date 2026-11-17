@@ -342,3 +342,48 @@ func TestForwardMigrationV16SourceStatusKnown(t *testing.T) {
 		t.Fatalf("%+v", list)
 	}
 }
+
+// Schema 17 → 18: existing missing content is ordinary ("missing"); a pack
+// follow-up marks an existing row or creates one, prioritised first.
+func TestForwardMigrationV17MissingOrigin(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(dir, dbFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, _ := migrationFS.ReadDir("migrations")
+	for _, e := range entries {
+		if e.Name() >= "0018" {
+			break
+		}
+		body, _ := migrationFS.ReadFile("migrations/" + e.Name())
+		if _, err := db.Exec(string(body)); err != nil {
+			t.Fatalf("%s: %v", e.Name(), err)
+		}
+	}
+	for _, q := range []string{
+		"INSERT INTO meta(key, value) VALUES('schema_version','17'),('data_origin','live'),('instance_id','v17inst'),('created_at','0')",
+		"INSERT INTO missing_content(manager_id, content_key, title, first_seen, last_seen) VALUES('sonarr','episode:1','old',1,1)",
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+	s, err := Open(ctx, dir, Options{})
+	if err != nil {
+		t.Fatalf("open v17 database: %v", err)
+	}
+	defer s.Close()
+	if r, _ := s.MissingRecord(ctx, "sonarr", "episode:1"); r == nil || r.Origin != "missing" {
+		t.Fatalf("%+v", r)
+	}
+	if err := s.Write(ctx, func(tx *Tx) error { return tx.MarkPackFollowUp("sonarr", "episode:9", "pack E09", 7, time.Unix(2, 0)) }); err != nil {
+		t.Fatal(err)
+	}
+	list, _ := s.MissingContent(ctx, MissingFilter{})
+	if len(list) != 2 || list[0].ContentKey != "episode:9" || list[0].Origin != "pack" || *list[0].OriginIntent != 7 {
+		t.Fatalf("%+v", list)
+	}
+}

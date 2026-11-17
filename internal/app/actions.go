@@ -194,6 +194,13 @@ func (s *Service) Act(ctx context.Context, findingID int64, actor Actor) (*Actio
 		return pv, nil, ErrNoExecutor
 	}
 	res, err := c.Execute(ctx, *pv.Proposal)
+	if err == nil {
+		if fd, ferr := s.st.Finding(ctx, findingID); ferr == nil && fd != nil {
+			if ferr := s.afterAction(ctx, *fd, *pv.Proposal, res); ferr != nil {
+				return pv, &res, ferr
+			}
+		}
+	}
 	return pv, &res, err
 }
 
@@ -259,14 +266,14 @@ func (g gate) Blockers(ctx context.Context, p action.Proposal) []action.Check {
 	if pol.Revision != p.PolicyRevision {
 		block("policy unchanged", fmt.Sprintf("the effective policy changed since the preview (revision %s, now %s)", p.PolicyRevision, pol.Revision))
 	}
-	if c := action.PolicyCheck(pol, policy.Workflow(p.Workflow), p.Origin); !c.Satisfied {
+	if c := action.PolicyCheck(pol, p.Governing(), p.Origin); !c.Satisfied {
 		out = append(out, c)
 	}
 	pauses, err := g.s.st.WorkflowPauses(ctx)
 	if err != nil {
 		block("workflow not paused", "pauses could not be read: "+err.Error())
-	} else if pz, ok := pauses[p.Workflow]; ok {
-		out = append(out, action.PauseCheck(&pz, policy.Workflow(p.Workflow)))
+	} else if pz, ok := pauses[string(p.Governing())]; ok {
+		out = append(out, action.PauseCheck(&pz, p.Governing()))
 	}
 	return out
 }

@@ -479,7 +479,7 @@ const (
 // readMissing refreshes the missing lists of managers read successfully
 // this cycle. A failure is logged and leaves the stored list unchanged.
 func (e *Engine) readMissing(ctx context.Context, results []*fetched) {
-	if !e.cfg.MaybeEnabled(policy.WorkflowMissingSearch) {
+	if !e.cfg.MaybeEnabled(policy.WorkflowMissingSearch) && !e.cfg.MaybeEnabled(policy.WorkflowPartialPack) {
 		return
 	}
 	ok := map[string]bool{}
