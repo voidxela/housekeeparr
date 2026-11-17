@@ -307,3 +307,36 @@ type HealthSnapshot struct {
 	CollectedAt time.Time    `json:"collected_at"`
 	Items       []HealthItem `json:"items"`
 }
+
+// MissingItem is one monitored, missing episode or movie as its manager
+// reports it (Sonarr/Radarr wanted/missing), for proactive searches
+// (SPEC §9.1). Availability follows the manager's own settings.
+type MissingItem struct {
+	ManagerID string `json:"manager_id"`
+	// ContentKind is "episode" or "movie"; ContentID is the manager's ID.
+	ContentKind string `json:"content_kind"`
+	ContentID   int64  `json:"content_id"`
+	SeriesID    int64  `json:"series_id,omitempty"`
+	Season      int    `json:"season,omitempty"`
+	Episode     int    `json:"episode,omitempty"`
+	Title       string `json:"title"`
+	Monitored   bool   `json:"monitored"`
+	// AiredAt is the episode's air date, or the movie's release date the
+	// manager uses for availability, when known.
+	AiredAt *time.Time `json:"aired_at,omitempty"`
+	// Available is the manager's own judgement that the content is
+	// released/available (Radarr isAvailable; Sonarr: aired). Unknown is
+	// not available.
+	Available Signal[bool] `json:"available"`
+}
+
+// MissingSnapshot is one bounded read of a manager's missing list.
+type MissingSnapshot struct {
+	ManagerID   string        `json:"manager_id"`
+	CollectedAt time.Time     `json:"collected_at"`
+	Items       []MissingItem `json:"items"`
+	// Total is the manager's reported total; Complete is true only when
+	// every reported item was read (Total within the read bound).
+	Total    int  `json:"total"`
+	Complete bool `json:"complete"`
+}
