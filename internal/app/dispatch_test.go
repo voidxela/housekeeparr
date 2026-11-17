@@ -1272,3 +1272,20 @@ func TestPartialPackTargetedSearch(t *testing.T) {
 		t.Fatalf("ordinary missing content searched without missing_search: %+v", other)
 	}
 }
+
+func TestQueuedMissingItemsDoNotStarveSearches(t *testing.T) {
+	w := searchWorld(t, "automatic")
+	var missing []domain.MissingItem
+	var queue []domain.QueueItem
+	for id := int64(1); id <= 25; id++ {
+		missing = append(missing, fake.MissingEpisode(100+id, 1, "Queued episode", t0.Add(-time.Hour)))
+		queue = append(queue, fake.Episode(id, hashD, "Queued episode", "Show", 1, id))
+	}
+	missing = append(missing, fake.MissingEpisode(126, 1, "Unqueued episode", t0.Add(-48*time.Hour)))
+	w.mgr.SetMissing(missing...)
+	w.mgr.SetQueue(queue...)
+	w.runSearches(time.Hour)
+	if s := w.mgr.Searches(); len(s) != 1 || s[0][0] != 126 {
+		t.Fatalf("searches %v, want the unqueued episode beyond the blocked candidates", s)
+	}
+}

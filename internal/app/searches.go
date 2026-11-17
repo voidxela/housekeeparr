@@ -125,7 +125,8 @@ type SearchReport struct {
 
 // DispatchSearches sends at most one proactive search after a cycle: the
 // first eligible missing item of a manager read completely this cycle,
-// never-searched and least-recently-searched first. It runs only in
+// never-searched and least-recently-searched first. Cached blockers do
+// not consume the limit on live evaluations. It runs only in
 // automatic mode with missing_search enabled for the item's scope.
 func (s *Service) DispatchSearches(ctx context.Context, fresh map[string]bool) (SearchReport, error) {
 	var rep SearchReport
@@ -164,7 +165,6 @@ func (s *Service) DispatchSearches(ctx context.Context, fresh map[string]bool) (
 		if !fresh[it.ManagerID] {
 			continue
 		}
-		rep.Evaluated++
 		pv, err := s.PreviewSearch(ctx, it.ManagerID, it.ContentKey, action.OriginAutomatic)
 		if err != nil {
 			return rep, err
@@ -179,7 +179,11 @@ func (s *Service) DispatchSearches(ctx context.Context, fresh map[string]bool) (
 			}
 			continue
 		}
-		return s.sendSearch(ctx, it, pv.Proposal, rep)
+		rep.Evaluated++
+		rep, err = s.sendSearch(ctx, it, pv.Proposal, rep)
+		if err != nil || rep.IntentID != 0 {
+			return rep, err
+		}
 	}
 	return rep, nil
 }
