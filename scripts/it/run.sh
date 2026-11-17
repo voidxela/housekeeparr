@@ -268,11 +268,21 @@ for t in json.load(open(manifest)):
     else:
         curl(*common, "-F", "torrents=@%s/%s.torrent" % (tdir, t["name"]), qbt + "/api/v2/torrents/add")
 time.sleep(3)
+def idle(limit=60):
+    # No torrent checking (or queued to check). qBittorrent 4.6.7 left a
+    # torrent in checkingDL at 0% for good when a recheck was requested
+    # while earlier checks were still queued, so rechecks go one at a time.
+    end = time.time() + limit
+    while time.time() < end:
+        if not any(r["state"].startswith("checking") for r in json.loads(curl(qbt + "/api/v2/torrents/info"))):
+            return
+        time.sleep(0.5)
 for t in json.load(open(manifest)):
     if t.get("deselect"):
         idx = t["files"].index(t["deselect"])
         curl("--data", "hash=%s&id=%d&priority=0" % (t["hash"], idx), qbt + "/api/v2/torrents/filePrio")
     if t.get("data", "none") != "none":  # verify any torrent with local data
+        idle()
         curl("--data", "hashes=" + t["hash"], qbt + "/api/v2/torrents/recheck")
     if t["key"] == "stopped":
         act(t["hash"], "stop", "pause")
