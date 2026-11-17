@@ -86,9 +86,15 @@ func (s *Service) PreviewSearch(ctx context.Context, managerID, key string, orig
 	if in.Cooldowns, err = s.st.ActiveCooldowns(ctx, now); err != nil {
 		return nil, err
 	}
+	if pending, err := s.st.MissingContent(ctx, store.MissingFilter{State: store.MissingSearched, Limit: 1}); err != nil {
+		return nil, err
+	} else if len(pending) > 0 {
+		in.Searching = fmt.Sprintf("%s is still following the search for %s; check its command queue if it remains running",
+			pending[0].ManagerID, pending[0].ContentKey)
+	}
 	if last, err := s.st.LastMissingSearch(ctx); err != nil {
 		return nil, err
-	} else if last != nil && now.Sub(*last) < SearchSpacing {
+	} else if in.Searching == "" && last != nil && now.Sub(*last) < SearchSpacing {
 		in.Searching = fmt.Sprintf("the last search was sent %s ago; searches are at least %s apart (one at a time)",
 			policy.HumanDuration(now.Sub(*last)), policy.HumanDuration(SearchSpacing))
 	}
@@ -243,7 +249,7 @@ const searchFollow = time.Hour
 // distinguishes the manager's report of downloads from acceptance; it does
 // not evaluate source coverage.
 func (s *Service) followSearches(ctx context.Context, now time.Time) error {
-	items, err := s.st.MissingContent(ctx, store.MissingFilter{Limit: 1000})
+	items, err := s.st.MissingContent(ctx, store.MissingFilter{State: store.MissingSearched, Limit: 1000})
 	if err != nil {
 		return err
 	}
@@ -267,11 +273,14 @@ func (s *Service) followSearches(ctx context.Context, now time.Time) error {
 			}
 		}
 		state, note := "", ""
+		active := false
 		for _, c := range cmds[it.ManagerID] {
 			if cid == 0 || c.ID != cid {
 				continue
 			}
 			switch c.Status {
+			case "queued", "started":
+				active = true
 			case "completed":
 				if m := reportsRE.FindStringSubmatch(c.Message); m != nil {
 					if m[1] == "0" {
@@ -292,7 +301,7 @@ func (s *Service) followSearches(ctx context.Context, now time.Time) error {
 				state, note = store.MissingSearchFail, "the manager's search command ended "+c.Status+": "+c.Message
 			}
 		}
-		if state == "" && now.Sub(*it.LastSearchAt) > searchFollow {
+		if state == "" && !active && now.Sub(*it.LastSearchAt) > searchFollow {
 			state, note = store.MissingEndUnknown, "the search's end was not observed in the manager's command list within "+policy.HumanDuration(searchFollow)
 		}
 		if state == "" {

@@ -1383,3 +1383,29 @@ func TestMissingEvidenceFromFutureCannotAuthorizeSearch(t *testing.T) {
 		t.Fatalf("searched using missing evidence dated in the future: %v", s)
 	}
 }
+
+func TestRunningSearchBlocksLaterSearchAfterSpacing(t *testing.T) {
+	w := searchWorld(t, "automatic")
+	ctx := context.Background()
+	w.mgr.SetMissing(fake.MissingEpisode(102, 1, "First", t0.Add(-time.Hour)), fake.MissingEpisode(103, 1, "Second", t0.Add(-2*time.Hour)))
+	w.runSearches(10 * time.Minute)
+	cmds, err := w.mgr.Commands(ctx)
+	if err != nil || len(cmds) != 1 {
+		t.Fatalf("expected one initial search command, got %+v, %v", cmds, err)
+	}
+	active := cmds[0]
+	active.Status = "started"
+	w.mgr.ClearCommands()
+	w.mgr.AddCommand(active)
+	w.runSearches(30 * time.Minute)
+	if s := w.mgr.Searches(); len(s) != 1 {
+		t.Fatalf("overlapped a still-running search after the spacing period: %v", s)
+	}
+	active.Status = "completed"
+	w.mgr.ClearCommands()
+	w.mgr.AddCommand(active)
+	w.runSearches(10 * time.Minute)
+	if s := w.mgr.Searches(); len(s) != 2 || s[1][0] != 103 {
+		t.Fatalf("next search did not proceed once the first completed: %v", s)
+	}
+}

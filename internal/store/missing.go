@@ -84,7 +84,7 @@ func (t *Tx) SaveMissingSnapshot(s domain.MissingSnapshot, now time.Time) (int, 
 	if !s.Complete {
 		return 0, nil
 	}
-	res, err := t.exec(`UPDATE missing_content SET present=0, gone_at=?, state='gone' WHERE manager_id=? AND present=1 AND last_seen < ?`,
+	res, err := t.exec(`UPDATE missing_content SET present=0, gone_at=?, state=CASE WHEN state='searched' THEN state ELSE 'gone' END WHERE manager_id=? AND present=1 AND last_seen < ?`,
 		ms(now), s.ManagerID, ms(now))
 	if err != nil {
 		return 0, err
@@ -129,6 +129,7 @@ func scanMissing(rows *sql.Rows) ([]MissingRecord, error) {
 type MissingFilter struct {
 	ManagerID   string
 	PresentOnly bool
+	State       string
 	Limit       int
 }
 
@@ -142,6 +143,10 @@ func (s *Store) MissingContent(ctx context.Context, f MissingFilter) ([]MissingR
 	}
 	if f.PresentOnly {
 		q += " AND present=1"
+	}
+	if f.State != "" {
+		q += " AND state=?"
+		args = append(args, f.State)
 	}
 	if f.Limit <= 0 {
 		f.Limit = 1000
