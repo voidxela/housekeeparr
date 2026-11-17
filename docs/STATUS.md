@@ -10,6 +10,85 @@ repository · **unverified** = implemented, but behaviour against real
 released applications has not been established · **remaining** = not
 implemented.
 
+## Review and remediation — 2026-11-17
+
+The branch starts at `origin/dev` commit `3d08077`. The Go source
+checkpoint is `9fe5f3f`. The session tested its identical local source
+tree at `d8898f7`. GitHub commits use the account's GitHub attribution.
+The compatibility table records the tested source checkpoints and their
+published equivalents. Each product defect below has a regression test.
+
+| Finding and fix | Commits |
+| --- | --- |
+| Blocked missing-list candidates starved eligible items. Separate cached eligibility checks from the live evaluation bound, and leave installation spacing available when no search was sent. | `83a1456`, `e6e446c` |
+| Searches could act on an episode imported after polling, a rescheduled title, or future-dated evidence. Re-read file and availability state, and renew missing-list reads on a backward clock step. | `8c4ea80`, `8845f9e`, `bf90f42` |
+| Search spacing alone permitted overlapping commands. Follow active commands, avoid duplicating a manager search already covering the target, and identify a specific accepted command through its receipt. | `04989d0`, `d853984`, `9fe5f3f` |
+| A process exit could lose accepted-search backoff. Record the outcome, attempt and next eligible time in the journal transaction, including reconciliation. Truncated missing-content responses now produce an actionable finding. | `00b1cc2`, `32c5461` |
+| Pack clearance could use stale row IDs, missing pack diagnostics, an untested live client version, a no-longer-complete torrent, or an unhealthy manager. Recheck these facts and serialise on the transfer and content locks. Restart import settling after evidence changes, observation gaps and clock steps. | `b040e85`, `2faaa0c`, `997b016` |
+| Pack clearance could ignore an episode exclusion and lose the originating transfer permission or targeted follow-ups. Check affected episode scopes, carry the originating transfer into search planning, and record follow-ups transactionally with verified clearance. | `3d51ff3`, `8501d0f` |
+| A client-stop failure could lose a verified manager replacement. Record that effect before later steps. Keep actions with skipped steps held after restart, and reject automatic replay of the same possibly effective plan after operator review. | `bd1c943`, `57de7d6` |
+| An HTTP 408 on a write could be classified as definite refusal. Keep its outcome uncertain. | `8076af4` |
+| Concurrent sign-ins could exceed the failure limit. Enforce check and update under one mutex for both form and Basic authentication. | `cc030ba` |
+| A redirect could forward a webhook to a different endpoint. Titles and adjacent URL path segments could expose credentials. Refuse redirect delivery and sanitize titles, paths and fragments. | `6ebedc9`, `ec1b835` |
+| Fixture startup could advance after readiness deadlines. Use bounded checks and diagnose denied qBittorrent session sockets. Verify loopback isolation, require the verified stopped fixture to settle, and pin amd64 Debian dependencies. | `0ae736f`, `7ac5e5a`, `fbb1793`, `3761a38`, `a1be01a`, `5c7115a` |
+
+### Trial timing and unattended recovery
+
+The accepted numeric defaults stand. `acb5072` exposes the existing
+missing-search schedule under `[search]` and preserves the selected backoff
+in the journal. No scope or default-value amendment to SPEC was needed.
+
+| Control and default | Failure modes and interactions |
+| --- | --- |
+| Transfer poll 10 min, jitter up to 30 s, request timeout 30 s, concurrency 4 | Faster polling raises load and can turn ordinary delays into failed reads. Slower polling postpones qualification and can miss short-lived command evidence. |
+| Grace 30 min, no-progress window 90 min, 4 h at 95% complete, 3 qualifying observations, 1 verified byte minimum progress | Grace starts at the known added time or first observation. Only post-grace evidence contributes. The elapsed windows dominate the observation count at default cadence. Shorter windows can displace rare healthy downloads, while longer windows occupy slots with dead grabs. Genuine verified progress resets the baseline. |
+| Observation gap 2 × poll interval, clock tolerance 2 min | A qualifying interval contributes at most one nominal poll. Short gap tolerances penalize normal jitter, while broad tolerances connect less reliable evidence. On restart, stored timestamps provide gap checks and within-process monotonic evidence is unavailable. |
+| Metadata 60 min, source rejection confirmation 30 min | Both need sustained post-grace evidence. Short values can catch slow DHT boot or a brief tracker incident. Long values occupy slots with failed grabs. Scoped privacy and correlated-stall checks still apply. |
+| Import settle 30 min | Manager refresh and import retries need time to finish. Short settle can expose unfinished work to clearance, and long settle delays a genuinely incomplete pack. Positive history, file and current queue evidence remain required. |
+| 20 acquisitions globally and per manager per rolling 24 h, one automatic recovery per pass, three content attempts before reviewed reset, 24 h success cooldown | Low pacing delays a large backlog. High pacing amplifies the manager's upstream fan-out. Rolling capacity returns on its own. Exhausted repeat attempts need review. Retained count 25, optional logical-byte limit and the retained-data view explain capacity holds. |
+| Correlated hold 3 and 50%, refusal hold 2 in 24 h, five live recovery evaluations per pass | Smaller thresholds catch more widespread failures and also hold more independent stalls. Three dead grabs on a small client can stay held until the network, tracker or independently affected items are checked. The finding records the hold. A short refusal window permits repeated rejected writes, and a long one delays recovery after repair. |
+| Missing sweep 1 h, freshness 2 h, 500 items per manager | Short freshness may expire useful evidence during slow polling. Long freshness relies on older manager state. The incomplete-list finding exposes work outside the cap and live checks guard selected titles. |
+| Search spacing 15 min, one active Housekeeparr command, follow 1 h, backoff 24 h doubling to 30 days | A known active command stays held beyond the follow window. Short backoff repeats work against sparse sources, while long backoff delays finding a release newly indexed weeks later. A verified no-result item stays retryable. |
+| Preview TTL 5 min, executor settle 15 s with 1 s polling, immediate replacement observation up to 30 s | Short windows cause extra preview refreshes and review of otherwise normal upstream latency. Long ones retain locks and delay competing work. The coordinator checks live state and a timeout remains uncertain. |
+| Manager-native command follow 1 h, legacy clock tolerance 1 min, no grab observed after 24 h, replacement tracking 7 days | Short observation windows lose late commands and grabs. Long windows add API requests and attribution ambiguity. Command baselines and independent download outcomes limit ambiguity. |
+| Notifications 10 per target per hour, digest after 5 openings, 8 attempts, initial 1 min retry capped at 1 h, age 24 h, timeout 10 s | Lower limits can age out useful warnings, while larger limits and timeouts can prolong cycles after outages. The outbox records drops. Successful delivery immediately before a crash can still be repeated. |
+| Web sessions 12 h, five sign-in failures per 15 min, HTTP header/read/write/idle 5/15/30/60 s | Short windows can interrupt operators on slow connections, while long windows increase exposure. The global failure limit applies to both authentication entry points. |
+| rTorrent tracker freshness 1 h. rTorrent and qBittorrent cap supplemental tracker reads at 25 per listing | Short freshness or a smaller cap can screen out relevant tracker evidence. More permissive settings can use stale tracker decisions or exhaust the poll. Unsampled tracker evidence stays unknown. |
+
+### Verification and remaining review work
+
+- Go 1.27.4 on Linux amd64 kernel 6.18.57, Intel Xeon Platinum 8573C. The
+  CPU reports 57-bit virtual addressing. A mapping at `1<<46` succeeded
+  and `1<<47` was unavailable, consistent with the lower half of a 48-bit
+  virtual address space. The baseline `go test -race -count=1 ./...` at
+  `3d08077` passed.
+- At the local source checkpoint `d8898f7`, build, vet, repository-wide
+  gofmt, uncached tests, and the `CGO_ENABLED=0` static binary build all
+  passed. The host disconnected before final full and repeated race results
+  were available and before the last selected real-instance runs could
+  start. The added amd64 Deluge packages were fetched and checksum-verified,
+  and Python loaded libtorrent 2.0.11.0 on the fixture host. No Deluge
+  instance was started in this session.
+- The unselected qBittorrent 5.3.0 run with both managers passed 19 of 24.
+  Five preserved-data checks stopped at a denied client socket operation
+  before any Housekeeparr workflow write. The eight-test rTorrent selection
+  passed. See [compatibility.md](compatibility.md#review-and-remediation-runs--2026-11-17)
+  for exact selections, versions and source checkpoints.
+- Reviewed the 0013–0018 schema consumers and ran the existing store suite,
+  including the v12 handled-identity and v15 source-status forward opens.
+  This review required no new migration. The write registry keeps its
+  earlier exact-version evidence.
+- Still to verify: the final changed pack and search contracts on released
+  instances, full and repeated race checks on the final code, and a
+  qBittorrent runner with working BitTorrent sockets in the isolated
+  namespace. Remaining selected clients include Deluge and Transmission.
+- Remaining review work includes wiring compiled-in notification, session,
+  refusal, executor, preview and outcome/tracker timings to config,
+  multi-page pack history and larger wanted queues, tracker cap starvation,
+  retention of pack origins, and further fault injection for malformed and
+  partial responses and real TLS/proxy sessions. Production-length daemon
+  trial windows have yet to be exercised.
+
 ## Session of 2026-11-17 — what changed
 
 - **R11–R13 fixed** with regression tests (the review's two reproductions
@@ -501,6 +580,6 @@ budgets required by the specification are also *remaining*.
 
 ## Environment limitations observed during development
 
-- `go test -race` cannot run on the development host (ThreadSanitizer:
-  unsupported 39-bit VMA range). Concurrency code has not been race-checked.
+- The old aarch64 runner could not run the race detector because of its
+  39-bit VMA. The amd64 review runner passed the baseline full race suite.
 - No container runtime was available, so no container image has been built.
