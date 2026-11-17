@@ -339,6 +339,20 @@ stopped, and not recorded as retained**.
 | 2026-11-16 (`c5e050a`) | both managers with qBittorrent 5.3.0; rTorrent 0.9.8 | **passed** |
 | 2026-11-16 (`7925ce2`) | both managers with Deluge 2.2.0; Transmission 4.0.6; Transmission 4.1.4 | **passed** |
 
+### Runs after the shared blocklist-matching change (session of 2026-11-16, third)
+
+| Date | Commit and selection | Versions | Result |
+| --- | --- | --- | --- |
+| 2026-11-16 | `e072d85`, `--only '^Test(Sonarr\|Radarr)RecoveryWorkflow$'` | both managers with Deluge 2.2.0; Transmission 4.0.6; Transmission 4.1.4 (one run each) | **passed**: public no-progress recovery with blocklist evidence matched by the grab's source title |
+| 2026-11-16 | `e072d85`, `--only TestAutomaticRecovery` | both managers with qBittorrent 5.3.0 | **passed** (production `run --once` binary) |
+| 2026-11-16 | `7437981`, **unselected** (the harness's default path, first full run since `--only`, the four new required probes and the magnet/private fixtures were added) | qBittorrent 5.3.0 + Sonarr 4.0.20.3014 + Radarr 6.4.4.10685 | **all 16 required tests passed**: observation, queue and managed removal semantics, no-progress, metadata and private recovery for both managers, then automatic dispatch with a kept-running private torrent and a stopped magnet present in the client |
+
+Not re-run after `c5e050a`: automatic dispatch on Deluge, rTorrent and
+Transmission (last at `118f15c`), and rTorrent's observation tests. Commit
+`8efd56d` (unknown privacy treated as private) changes planning only for
+transfers whose privacy is unknown, which none of the registered client
+versions report; it has no real-instance run.
+
 `private_recovery = "stop"` uses the same two steps as public recovery and
 was not run separately on a private torrent; `"observe"` sends nothing
 (fixture-tested).

@@ -152,16 +152,19 @@ baseline exists, and a 1-hour follow window.
 - **Shared executor change:** blocklist evidence is matched by the grabbed
   release's title. Re-run on real instances for qBittorrent 5.3.0 and
   rTorrent 0.9.8 (no-progress, metadata, private) and for Deluge and both
-  Transmission versions (metadata, private); the Deluge/Transmission
-  no-progress tests and every automatic-dispatch test were **not** re-run
-  after it (their last runs are at `118f15c`).
+  Transmission versions (metadata, private, then no-progress at `e072d85`);
+  the automatic-dispatch test re-ran on qBittorrent 5.3.0 only, and a full
+  unselected qBittorrent 5.3.0 run passed at `7437981`. Automatic dispatch
+  on the other clients was **not** re-run (last at `118f15c`).
+- **Unknown privacy is treated as private** in no-progress recovery (user
+  decision), configurable per scope; fixture-tested only.
 - **Harness:** `scripts/it/run.sh --only REGEX` runs selected registered
   tests (still required to pass); magnet and private managed fixtures.
 - Proposals awaiting a decision: metadata stalls count toward the
   correlated-stall hold; transfers a recovery already handled are left out
   of it; a metadata-stage transfer is retained as zero bytes.
-- Not run this session: browser check, race detector, Docker, the
-  real-instance automatic-dispatch test, qBittorrent 4.6.7 diagnosis.
+- Not run this session: browser check, race detector, Docker, qBittorrent
+  4.6.7 diagnosis, real-instance automatic dispatch of metadata recovery.
 
 ## Session of 2026-11-16 (second) — what changed
 
