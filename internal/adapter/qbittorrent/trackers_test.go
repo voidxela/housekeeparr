@@ -236,3 +236,21 @@ func TestTrackerEndpointFailuresDoNotFailListing(t *testing.T) {
 		t.Fatalf("marshalled snapshot leaked tracker URL or passkey")
 	}
 }
+
+// qBittorrent 5 reports a tracker's failure answer as status 5 ("tracker
+// error") and an unreachable tracker as 6, which is never a rejection.
+func TestTrackerStatusesOf5x(t *testing.T) {
+	for _, tc := range []struct {
+		entries []trackerEntry
+		want    domain.SourceFailure
+	}{
+		{[]trackerEntry{{URL: "https://t/a", Status: 5, Msg: "Unregistered torrent"}}, domain.SourceUnregistered},
+		{[]trackerEntry{{URL: "https://t/a", Status: 5, Msg: "Passkey not found"}}, domain.SourceTrackerError},
+		{[]trackerEntry{{URL: "https://t/a", Status: 6, Msg: "Connection refused"}}, domain.SourceTrackerError},
+		{[]trackerEntry{{URL: "https://t/a", Status: 5, Msg: "Unregistered torrent"}, {URL: "https://u/a", Status: 6}}, domain.SourceTrackerError},
+	} {
+		if v, ok := classifyTrackers(tc.entries).Get(); !ok || v != tc.want {
+			t.Errorf("%+v: got %v (known %v)", tc.entries, v, ok)
+		}
+	}
+}

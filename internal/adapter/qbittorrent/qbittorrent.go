@@ -356,7 +356,13 @@ func classifyTrackers(entries []trackerEntry) domain.Signal[domain.SourceFailure
 		if e.Status == 2 {
 			return domain.KnownValue(domain.SourceNoFailure)
 		}
-		if e.Status == 4 && strings.TrimSpace(e.Msg) != "" {
+		// 4 "not working" (4.x and 5.x); qBittorrent 5 also reports 5
+		// "tracker error" (the tracker answered with a failure) and 6
+		// "unreachable", which is never a rejection.
+		switch {
+		case e.Status == 6:
+			hasErrMsg, allUnregistered = true, false
+		case (e.Status == 4 || e.Status == 5) && strings.TrimSpace(e.Msg) != "":
 			hasErrMsg = true
 			if domain.ClassifyTrackerError(e.Msg) != domain.SourceUnregistered {
 				allUnregistered = false

@@ -290,7 +290,8 @@ func settleRejected(t *testing.T, e managedEntry) bool {
 		}
 		time.Sleep(2 * time.Second)
 	}
-	t.Fatalf("%s: tracker rejection never reported (last %s/%s source %+v message %+v)", e.Key, last.NativeState, last.StateClass, last.SourceFailure, last.ClientMessage)
+	t.Fatalf("%s: tracker rejection never reported (last %s/%s source %s %q: %q)", e.Key, last.NativeState, last.StateClass, last.SourceFailure.Status,
+		last.SourceFailure.Value, last.SourceFailure.Note)
 	return false
 }
 
