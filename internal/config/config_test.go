@@ -430,6 +430,28 @@ no_progress_recovery = false
 			contains: []string{"enable-qbit", "disable-sonarr", "no_progress_recovery"},
 		},
 		{
+			name: "equal priority conflict on require_pieces_unavailable",
+			extra: `
+[[rule]]
+name = "require-unavail"
+priority = 7
+[rule.match]
+client = "qbit"
+[rule.policy]
+require_pieces_unavailable = true
+
+[[rule]]
+name = "allow-unknown"
+priority = 7
+[rule.match]
+privacy = "public"
+[rule.policy]
+require_pieces_unavailable = false
+`,
+			field:    "rule[1]",
+			contains: []string{"require-unavail", "allow-unknown", "policy.require_pieces_unavailable"},
+		},
+		{
 			name:     "override unknown key",
 			extra:    "\n[[override]]\ntransfer = \"qbit|abc\"\nreason = \"why\"\nextra = true\n",
 			field:    "override.extra",
@@ -994,5 +1016,106 @@ url = "http://127.0.0.1:9091"
 	}
 	if got := strings.Join(cfg.ManagersFor("tr"), ","); got != "radarr,radarr4k" {
 		t.Fatalf("tr owners %s", got)
+	}
+}
+
+func TestRequirePiecesUnavailableScopesAndProvenance(t *testing.T) {
+	// Default is false with built-in proposed default provenance.
+	defCfg := mustParse(t, minimal)
+	defEff, err := defCfg.Resolve(policy.Subject{ClientID: "qbit"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if defEff.Settings.RequirePiecesUnavailable {
+		t.Fatal("default RequirePiecesUnavailable must be false")
+	}
+	findSource := func(eff policy.Effective) policy.Source {
+		for _, s := range eff.Sources {
+			if s.Setting == "require_pieces_unavailable" {
+				return s
+			}
+		}
+		t.Fatalf("require_pieces_unavailable missing from Sources: %+v", eff.Sources)
+		return policy.Source{}
+	}
+	if src := findSource(defEff); src.Value != "false" || src.From != "built-in proposed default" {
+		t.Fatalf("default source = %+v", src)
+	}
+
+	// Exercise global [policy], connection [qbittorrent.policy], [[rule]], and [[override]].
+	src := strings.Replace(minimal,
+		`password = "file:/run/secrets/qbit"`,
+		"password = \"file:/run/secrets/qbit\"\n[qbittorrent.policy]\nrequire_pieces_unavailable = false", 1)
+	src += `
+[[transmission]]
+id = "tr"
+url = "http://127.0.0.1:9091"
+
+[policy]
+require_pieces_unavailable = true
+
+[[rule]]
+name = "qbit-private-require"
+priority = 10
+[rule.match]
+client = "qbit"
+privacy = "private"
+[rule.policy]
+require_pieces_unavailable = true
+
+[[override]]
+transfer = "qbit|deadbeef"
+reason = "allow without availability"
+[override.policy]
+require_pieces_unavailable = false
+`
+	cfg := mustParse(t, src)
+
+	// Global / unoverridden connection inherits [policy] = true.
+	trEff, err := cfg.Resolve(policy.Subject{ClientID: "tr"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !trEff.Settings.RequirePiecesUnavailable {
+		t.Error("tr should inherit global require_pieces_unavailable = true")
+	}
+	if s := findSource(trEff); s.Value != "true" || s.From != "config [policy]" {
+		t.Errorf("tr source = %+v", s)
+	}
+
+	// Connection [qbittorrent.policy] overrides global [policy] to false.
+	qbitPub, err := cfg.Resolve(policy.Subject{ClientID: "qbit", Privacy: "public"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if qbitPub.Settings.RequirePiecesUnavailable {
+		t.Error("qbit public should use connection policy false")
+	}
+	if s := findSource(qbitPub); s.Value != "false" || s.From != "config [qbittorrent.qbit.policy]" {
+		t.Errorf("qbit public source = %+v", s)
+	}
+
+	// Rule overrides connection policy to true for private torrents on qbit.
+	qbitPriv, err := cfg.Resolve(policy.Subject{ClientID: "qbit", Privacy: "private"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !qbitPriv.Settings.RequirePiecesUnavailable {
+		t.Error("qbit private should use rule true")
+	}
+	if s := findSource(qbitPriv); s.Value != "true" || s.From != `config rule "qbit-private-require" (priority 10)` {
+		t.Errorf("qbit private source = %+v", s)
+	}
+
+	// Override overrides rule back to false.
+	ovEff, err := cfg.Resolve(policy.Subject{ClientID: "qbit", NativeID: "deadbeef", Privacy: "private"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ovEff.Settings.RequirePiecesUnavailable {
+		t.Error("override should set require_pieces_unavailable = false")
+	}
+	if s := findSource(ovEff); s.Value != "false" || s.From != "config override transfer qbit|deadbeef" {
+		t.Errorf("override source = %+v", s)
 	}
 }

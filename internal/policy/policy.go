@@ -13,16 +13,17 @@ import (
 
 // Settings are the effective diagnosis settings for one scope.
 type Settings struct {
-	PollInterval       time.Duration `json:"poll_interval"`
-	NewDownloadGrace   time.Duration `json:"new_download_grace"`
-	NoProgressWindow   time.Duration `json:"no_progress_window"`
-	NearCompleteRatio  float64       `json:"near_complete_ratio"`
-	NearCompleteWindow time.Duration `json:"near_complete_window"`
-	MinObservations    int           `json:"min_observations"`
-	MaxObservationGap  time.Duration `json:"max_observation_gap"`
-	MetadataTimeout    time.Duration `json:"metadata_timeout"`
-	ImportSettle       time.Duration `json:"import_settle"`
-	MinProgressBytes   int64         `json:"min_progress_bytes"`
+	PollInterval             time.Duration `json:"poll_interval"`
+	NewDownloadGrace         time.Duration `json:"new_download_grace"`
+	NoProgressWindow         time.Duration `json:"no_progress_window"`
+	NearCompleteRatio        float64       `json:"near_complete_ratio"`
+	NearCompleteWindow       time.Duration `json:"near_complete_window"`
+	MinObservations          int           `json:"min_observations"`
+	MaxObservationGap        time.Duration `json:"max_observation_gap"`
+	MetadataTimeout          time.Duration `json:"metadata_timeout"`
+	ImportSettle             time.Duration `json:"import_settle"`
+	MinProgressBytes         int64         `json:"min_progress_bytes"`
+	RequirePiecesUnavailable bool          `json:"require_pieces_unavailable"`
 	// ClockTolerance bounds disagreement between wall-clock and monotonic
 	// elapsed time within one process before a clock jump is declared.
 	ClockTolerance time.Duration `json:"clock_tolerance"`
@@ -32,17 +33,18 @@ type Settings struct {
 // starting proposals, not validated recommendations.
 func DefaultSettings() Settings {
 	return Settings{
-		PollInterval:       10 * time.Minute,
-		NewDownloadGrace:   30 * time.Minute,
-		NoProgressWindow:   90 * time.Minute,
-		NearCompleteRatio:  0.95,
-		NearCompleteWindow: 4 * time.Hour,
-		MinObservations:    3,
-		MaxObservationGap:  20 * time.Minute,
-		MetadataTimeout:    60 * time.Minute,
-		ImportSettle:       30 * time.Minute,
-		MinProgressBytes:   1,
-		ClockTolerance:     2 * time.Minute,
+		PollInterval:             10 * time.Minute,
+		NewDownloadGrace:         30 * time.Minute,
+		NoProgressWindow:         90 * time.Minute,
+		NearCompleteRatio:        0.95,
+		NearCompleteWindow:       4 * time.Hour,
+		MinObservations:          3,
+		MaxObservationGap:        20 * time.Minute,
+		MetadataTimeout:          60 * time.Minute,
+		ImportSettle:             30 * time.Minute,
+		MinProgressBytes:         1,
+		RequirePiecesUnavailable: false,
+		ClockTolerance:           2 * time.Minute,
 	}
 }
 
@@ -73,10 +75,10 @@ func (s Settings) Validate() error {
 // assessment so explanations can be tied to the policy that produced them.
 func (s Settings) Revision() string {
 	h := sha256.New()
-	fmt.Fprintf(h, "v1|%d|%d|%d|%g|%d|%d|%d|%d|%d|%d|%d",
+	fmt.Fprintf(h, "v2|%d|%d|%d|%g|%d|%d|%d|%d|%d|%d|%d|%t",
 		s.PollInterval, s.NewDownloadGrace, s.NoProgressWindow, s.NearCompleteRatio,
 		s.NearCompleteWindow, s.MinObservations, s.MaxObservationGap, s.MetadataTimeout,
-		s.ImportSettle, s.MinProgressBytes, s.ClockTolerance)
+		s.ImportSettle, s.MinProgressBytes, s.ClockTolerance, s.RequirePiecesUnavailable)
 	return hex.EncodeToString(h.Sum(nil))[:12]
 }
 

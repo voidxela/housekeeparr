@@ -144,6 +144,13 @@ format = "text"  # text, json
 # metadata_timeout = "60m"
 # import_settle = "30m"
 # min_progress_bytes = 1       # verified-byte increase that counts as progress
+#
+# When true, no-progress recovery waits for positive evidence across the
+# qualifying window that connected peers lack the wanted pieces. Clients or
+# states without specific availability evidence (unknown availability, or
+# deselected files where client availability covers the whole torrent) then
+# never qualify.
+# require_pieces_unavailable = false
 
 [[sonarr]]
 id = "sonarr"

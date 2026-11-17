@@ -344,6 +344,100 @@ func TestRevisionIsStableAndSensitive(t *testing.T) {
 	if a.Revision() == b.Revision() {
 		t.Fatal("revision insensitive to changes")
 	}
+	c := DefaultSettings()
+	c.RequirePiecesUnavailable = true
+	if a.Revision() == c.Revision() {
+		t.Fatal("revision insensitive to RequirePiecesUnavailable")
+	}
+}
+
+func TestRequirePiecesUnavailable(t *testing.T) {
+	notAll := func(s *Sample) { s.AllFilesWanted = domain.KnownValue(false) }
+
+	cases := []struct {
+		name      string
+		opts      []func(*Sample)
+		wantAvail AvailabilityEvidence
+		wantDesc  string
+	}{
+		{
+			name:      "unknown availability",
+			opts:      nil,
+			wantAvail: AvailUnknown,
+			wantDesc:  "unknown",
+		},
+		{
+			name:      "not specific to wanted data",
+			opts:      []func(*Sample){avail(0.2), notAll},
+			wantAvail: AvailNotSpecific,
+			wantDesc:  "not specific to wanted data",
+		},
+		{
+			name:      "available among connected peers",
+			opts:      []func(*Sample){avail(1.5)},
+			wantAvail: AvailSeenComplete,
+			wantDesc:  "available among connected peers",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newSampler().every(0, 120, 10, domain.StateDownloading, gib, tc.opts...)
+			in := input(s.out, 0)
+
+			// Default (RequirePiecesUnavailable == false): qualifies.
+			off := EvaluateTransfer(in, DefaultSettings(), at(120))
+			if off.Status != StatusQualified || off.Diagnosis != DiagnosisNoProgress {
+				t.Fatalf("with setting off: got %s/%s (%s), want qualified/no_progress", off.Status, off.Diagnosis, off.Headline)
+			}
+			if off.Availability != tc.wantAvail {
+				t.Fatalf("with setting off: availability = %s, want %s", off.Availability, tc.wantAvail)
+			}
+
+			// RequirePiecesUnavailable == true: must not qualify.
+			st := DefaultSettings()
+			st.RequirePiecesUnavailable = true
+			on := EvaluateTransfer(in, st, at(120))
+			if on.Status != StatusObserving || on.Diagnosis != DiagnosisNone {
+				t.Fatalf("with setting on: got %s/%s (%s), want observing/none", on.Status, on.Diagnosis, on.Headline)
+			}
+			if on.Availability != tc.wantAvail {
+				t.Fatalf("with setting on: availability = %s, want %s", on.Availability, tc.wantAvail)
+			}
+			if on.QualifiesAt != nil {
+				t.Fatalf("with setting on: QualifiesAt = %v, want nil (must not promise qualification by time alone)", on.QualifiesAt)
+			}
+			for _, sub := range []string{"elapsed", "connected peers lack the wanted pieces", tc.wantDesc} {
+				if !strings.Contains(on.Headline, sub) {
+					t.Errorf("headline %q missing %q", on.Headline, sub)
+				}
+			}
+		})
+	}
+
+	t.Run("lacking availability still qualifies as no_progress_pieces_unavailable", func(t *testing.T) {
+		s := newSampler().every(0, 120, 10, domain.StateDownloading, gib, avail(0.6))
+		st := DefaultSettings()
+		st.RequirePiecesUnavailable = true
+		a := EvaluateTransfer(input(s.out, 0), st, at(120))
+		if a.Status != StatusQualified || a.Diagnosis != DiagnosisNoProgressUnavailable || a.Availability != AvailLacking {
+			t.Fatalf("got %s/%s (%s), avail=%s", a.Status, a.Diagnosis, a.Headline, a.Availability)
+		}
+	})
+
+	t.Run("metadata timeout unaffected", func(t *testing.T) {
+		meta := func(s *Sample) {
+			s.WantedBytes = domain.UnknownValue[int64]("no metadata")
+			s.VerifiedBytes = domain.UnknownValue[int64]("no metadata")
+		}
+		s := newSampler().every(0, 90, 10, domain.StateMetadata, 0, meta)
+		st := DefaultSettings()
+		st.RequirePiecesUnavailable = true
+		a := EvaluateTransfer(input(s.out, 0), st, at(90))
+		if a.Status != StatusQualified || a.Diagnosis != DiagnosisMetadataTimeout {
+			t.Fatalf("got %s/%s (%s), want qualified/metadata_timeout", a.Status, a.Diagnosis, a.Headline)
+		}
+	})
 }
 
 func TestWantedOnlyAvailabilityIgnoresFileSelection(t *testing.T) {

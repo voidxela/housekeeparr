@@ -270,15 +270,16 @@ type LogConfig struct {
 
 // PolicyOverrides are optional diagnosis settings. A nil field inherits.
 type PolicyOverrides struct {
-	NewDownloadGrace   *Duration `toml:"new_download_grace"`
-	NoProgressWindow   *Duration `toml:"no_progress_window"`
-	NearCompleteRatio  *float64  `toml:"near_complete_ratio"`
-	NearCompleteWindow *Duration `toml:"near_complete_window"`
-	MinObservations    *int      `toml:"min_observations"`
-	MaxObservationGap  *Duration `toml:"max_observation_gap"`
-	MetadataTimeout    *Duration `toml:"metadata_timeout"`
-	ImportSettle       *Duration `toml:"import_settle"`
-	MinProgressBytes   *int64    `toml:"min_progress_bytes"`
+	NewDownloadGrace         *Duration `toml:"new_download_grace"`
+	NoProgressWindow         *Duration `toml:"no_progress_window"`
+	NearCompleteRatio        *float64  `toml:"near_complete_ratio"`
+	NearCompleteWindow       *Duration `toml:"near_complete_window"`
+	MinObservations          *int      `toml:"min_observations"`
+	MaxObservationGap        *Duration `toml:"max_observation_gap"`
+	MetadataTimeout          *Duration `toml:"metadata_timeout"`
+	ImportSettle             *Duration `toml:"import_settle"`
+	MinProgressBytes         *int64    `toml:"min_progress_bytes"`
+	RequirePiecesUnavailable *bool     `toml:"require_pieces_unavailable"`
 }
 
 // ConnectionCommon holds transport settings shared by every connection.
@@ -849,6 +850,9 @@ func ruleConflicts(a, b RuleConfig) []string {
 	if ap.MinProgressBytes != nil && bp.MinProgressBytes != nil && *ap.MinProgressBytes != *bp.MinProgressBytes {
 		conflicts = append(conflicts, "policy.min_progress_bytes")
 	}
+	if ap.RequirePiecesUnavailable != nil && bp.RequirePiecesUnavailable != nil && *ap.RequirePiecesUnavailable != *bp.RequirePiecesUnavailable {
+		conflicts = append(conflicts, "policy.require_pieces_unavailable")
+	}
 	for _, wf := range policy.AllWorkflows() {
 		k := string(wf)
 		av, aok := a.Automation[k]
@@ -1136,16 +1140,17 @@ func (c *Config) Resolve(sub policy.Subject) (policy.Effective, error) {
 	}
 
 	vals := map[string]string{
-		"poll_interval":        s.PollInterval.String(),
-		"new_download_grace":   s.NewDownloadGrace.String(),
-		"no_progress_window":   s.NoProgressWindow.String(),
-		"near_complete_ratio":  strconv.FormatFloat(s.NearCompleteRatio, 'g', -1, 64),
-		"near_complete_window": s.NearCompleteWindow.String(),
-		"min_observations":     strconv.Itoa(s.MinObservations),
-		"max_observation_gap":  s.MaxObservationGap.String(),
-		"metadata_timeout":     s.MetadataTimeout.String(),
-		"import_settle":        s.ImportSettle.String(),
-		"min_progress_bytes":   strconv.FormatInt(s.MinProgressBytes, 10),
+		"poll_interval":              s.PollInterval.String(),
+		"new_download_grace":         s.NewDownloadGrace.String(),
+		"no_progress_window":         s.NoProgressWindow.String(),
+		"near_complete_ratio":        strconv.FormatFloat(s.NearCompleteRatio, 'g', -1, 64),
+		"near_complete_window":       s.NearCompleteWindow.String(),
+		"min_observations":           strconv.Itoa(s.MinObservations),
+		"max_observation_gap":        s.MaxObservationGap.String(),
+		"metadata_timeout":           s.MetadataTimeout.String(),
+		"import_settle":              s.ImportSettle.String(),
+		"min_progress_bytes":         strconv.FormatInt(s.MinProgressBytes, 10),
+		"require_pieces_unavailable": strconv.FormatBool(s.RequirePiecesUnavailable),
 	}
 	eff := policy.Effective{
 		ID:            subjectID(sub),
@@ -1339,6 +1344,7 @@ func applyWorkflows(enabled map[policy.Workflow]bool, fromMap map[policy.Workflo
 var settingNames = []string{
 	"new_download_grace", "no_progress_window", "near_complete_ratio", "near_complete_window",
 	"min_observations", "max_observation_gap", "metadata_timeout", "import_settle", "min_progress_bytes",
+	"require_pieces_unavailable",
 }
 
 func apply(s *policy.Settings, src map[string]string, o PolicyOverrides, from string) {
@@ -1368,6 +1374,9 @@ func apply(s *policy.Settings, src map[string]string, o PolicyOverrides, from st
 	}
 	if o.MinProgressBytes != nil {
 		s.MinProgressBytes, src["min_progress_bytes"] = *o.MinProgressBytes, from
+	}
+	if o.RequirePiecesUnavailable != nil {
+		s.RequirePiecesUnavailable, src["require_pieces_unavailable"] = *o.RequirePiecesUnavailable, from
 	}
 }
 

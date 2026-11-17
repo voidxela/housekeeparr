@@ -363,6 +363,14 @@ func evaluateNoProgress(a *Assessment, in TransferInput, s Settings, now time.Ti
 		return
 	}
 	if a.Observations >= s.MinObservations && a.Elapsed >= window {
+		if s.RequirePiecesUnavailable && a.Availability != AvailLacking {
+			a.Status = StatusObserving
+			a.Headline = fmt.Sprintf("No verified progress for %s %s (no-progress window of %s has elapsed), but this policy requires positive evidence that connected peers lack the wanted pieces; piece availability is currently %s.",
+				roundDur(noProgressFor), sinceProgress, roundDur(window), availabilityDescription(a.Availability))
+			a.Details = append(a.Details, fmt.Sprintf("%d of %d required observations; %s of %s qualifying time counted.",
+				a.Observations, s.MinObservations, roundDur(a.Elapsed), roundDur(window)))
+			return
+		}
 		a.Status = StatusQualified
 		a.Diagnosis = DiagnosisNoProgress
 		if a.Availability == AvailLacking {
@@ -418,6 +426,21 @@ func availabilityEvidence(run []Sample, graceEnds time.Time) AvailabilityEvidenc
 		return AvailLacking
 	}
 	return AvailSeenComplete
+}
+
+func availabilityDescription(ev AvailabilityEvidence) string {
+	switch ev {
+	case AvailUnknown:
+		return "unknown"
+	case AvailNotSpecific:
+		return "not specific to wanted data"
+	case AvailLacking:
+		return "lacking among connected peers"
+	case AvailSeenComplete:
+		return "available among connected peers"
+	default:
+		return string(ev)
+	}
 }
 
 func evaluateMetadata(a *Assessment, in TransferInput, s Settings, now time.Time) {
