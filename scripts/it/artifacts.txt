@@ -12,10 +12,15 @@ radarr 6.4.4.10685 x86_64 a1d726129535e739d4efaf93b5fdd771bb1c78349f55ceac70e365
 # Debian trixie packages: fetched with `apt-get download` (archive-signed) and
 # extracted into the cache, never installed. Checksums pin the exact builds.
 deb:rtorrent 0.9.8-1.1+b1 aarch64 b026372e496dbd836de4b09dd84f1945f3eecb344b4c03e900b229eec41fbb71 apt:rtorrent=0.9.8-1.1+b1 debian-trixie-archive
+deb:rtorrent 0.9.8-1.1 x86_64 72f22dd20cb363975e1894c9def9420873ed4d6c1f6df17d5c0725dde2c1d2f0 https://deb.debian.org/debian/pool/main/r/rtorrent/rtorrent_0.9.8-1.1_amd64.deb debian-trixie-signed-packages
 deb:libtorrent21t64 0.13.8-2.1+b2 aarch64 e5119f2fb5c9e04a5f6d38b2c5855de7cb8582cbcd9448a213109eebe904a78c apt:libtorrent21t64=0.13.8-2.1+b2 debian-trixie-archive
+deb:libtorrent21t64 0.13.8-2.1+b2 x86_64 627bb79c760641a4ce9040ee48fc62fcef13605e89a2d11ffa8c08e67aa66e7c https://deb.debian.org/debian/pool/main/libt/libtorrent/libtorrent21t64_0.13.8-2.1+b2_amd64.deb debian-trixie-signed-packages
 deb:libxmlrpc-core-c3t64 1.59.03-10 aarch64 7a02696cc8a3f64661624cf5965a24e0035066ee774fcdae98daa8dd65119fb2 apt:libxmlrpc-core-c3t64=1.59.03-10 debian-trixie-archive
+deb:libxmlrpc-core-c3t64 1.59.03-10 x86_64 1de175bb56ee5cbc7570db7463778ab12d23c4dc7a6457664891e4e5b4c18dc6 https://deb.debian.org/debian/pool/main/x/xmlrpc-c/libxmlrpc-core-c3t64_1.59.03-10_amd64.deb debian-trixie-signed-packages
 deb:libxmlrpc-util4 1.59.03-10 aarch64 24cedd3c83e8bae5aea92ac65979216a3169e615e0ff15d1cd693a3c49fef2ba apt:libxmlrpc-util4=1.59.03-10 debian-trixie-archive
+deb:libxmlrpc-util4 1.59.03-10 x86_64 03a43dcede31d8f4ffa6a522f104ac566005bee15fe4e88b1ea1870c35ebb40c https://deb.debian.org/debian/pool/main/x/xmlrpc-c/libxmlrpc-util4_1.59.03-10_amd64.deb debian-trixie-signed-packages
 deb:lighttpd 1.4.79-2 aarch64 52b3dd58f9bf55154d00d8f54a914bdcb88113ba62323f2ed325f5ae20000379 apt:lighttpd=1.4.79-2 debian-trixie-archive
+deb:lighttpd 1.4.79-2 x86_64 18bd2c0da4b0f31d961c4952cbca7396650a151f8b743efbb60dcf2e34ad3328 https://deb.debian.org/debian/pool/main/l/lighttpd/lighttpd_1.4.79-2_amd64.deb debian-trixie-signed-packages
 deb:deluge-common 2.2.0-1 aarch64 2f8ede245228827df8909ec8b9dfcb9d0b15c11e11cc9d6f4d2a2f27cba4b2a6 apt:deluge-common=2.2.0-1 debian-trixie-archive
 deb:deluge-web 2.2.0-1 aarch64 b157b9cb7cae5e11f9d56d9ef1e9b32e87b6e3a064478aeae759a124b1c04582 apt:deluge-web=2.2.0-1 debian-trixie-archive
 deb:deluged 2.2.0-1 aarch64 ad9c509a6fc13cc607edbc6337df4a5e840312e31c3622362bdfe427b818b807 apt:deluged=2.2.0-1 debian-trixie-archive
@@ -60,10 +65,18 @@ deb:python3-zipp 3.21.0-1 aarch64 6cd0f768a5e5c574c7ae4b9d56603f8399b31de7321670
 deb:python3-zope.interface 7.2-1+b1 aarch64 68597be85ee5f10fed3a6a4cfda29c003247da0c575e47d66f2a6f00add90361 apt:python3-zope.interface=7.2-1+b1 debian-trixie-archive
 # Build tools for scripts/it/build-transmission.sh when the host lacks them.
 deb:cmake-data 3.31.6-2 aarch64 d9060145be892f43cd1888024114ceab019c81479d4b0a3383fe14cebe2295cb apt:cmake-data=3.31.6-2 debian-trixie-archive
+deb:cmake-data 3.31.6-2 x86_64 d9060145be892f43cd1888024114ceab019c81479d4b0a3383fe14cebe2295cb https://deb.debian.org/debian/pool/main/c/cmake/cmake-data_3.31.6-2_all.deb debian-trixie-signed-packages
 deb:cmake 3.31.6-2 aarch64 983aa00debd072f7bfae69f93b1b9e4628da0a914c3745b9022e4cd60215493b apt:cmake=3.31.6-2 debian-trixie-archive
+deb:cmake 3.31.6-2 x86_64 dee2fc94973325240604ffbca677a3f16b462fb6520946bd81be1ecbac770a02 https://deb.debian.org/debian/pool/main/c/cmake/cmake_3.31.6-2_amd64.deb debian-trixie-signed-packages
 deb:libarchive13t64 3.7.4-4+deb13u1 aarch64 9dc7897bc1c83b03a69c581018010fbd9723ce199b99433639343d8b3a5bcf81 apt:libarchive13t64=3.7.4-4+deb13u1 debian-trixie-archive
+deb:libarchive13t64 3.7.4-4+deb13u1 x86_64 12e06195a899e8db371803ed70111fc7302573d3ed84e967d3d48ef2d543ace8 https://deb.debian.org/debian/pool/main/liba/libarchive/libarchive13t64_3.7.4-4+deb13u1_amd64.deb debian-trixie-signed-packages
 deb:libcurl4-openssl-dev 8.14.1-2+deb13u5 aarch64 df32deabd874f03b0690a75217fa44042fdf84650b98011ad38aed59266c03c5 apt:libcurl4-openssl-dev=8.14.1-2+deb13u5 debian-trixie-archive
+deb:libcurl4-openssl-dev 8.14.1-2+deb13u5 x86_64 c3f637fde2904732cac10669b9ad774268ba331f2f9de29c53dcdac3bc092e8a https://deb.debian.org/debian/pool/main/c/curl/libcurl4-openssl-dev_8.14.1-2+deb13u5_amd64.deb debian-trixie-signed-packages
 deb:libjsoncpp26 1.9.6-3 aarch64 346da1614a66ae07549243f2abf1dc5fdcc590a4ccb408458b5ea7ef7997477d apt:libjsoncpp26=1.9.6-3 debian-trixie-archive
+deb:libjsoncpp26 1.9.6-3 x86_64 fd0b75839fe7b1a08df49e4203b1fb042df4f7d982db8d91c1fd7bdbcd4b1460 https://deb.debian.org/debian/pool/main/libj/libjsoncpp/libjsoncpp26_1.9.6-3_amd64.deb debian-trixie-signed-packages
 deb:librhash1 1.4.5-1 aarch64 3bee5b995ee3219779d0f50b2622b0fbc05bb89c69fa833c83d685a3c88aa73d apt:librhash1=1.4.5-1 debian-trixie-archive
+deb:librhash1 1.4.5-1 x86_64 9bf56d7d8ce3e7680a0dd8e3cfe8acdf50e0aa3b98b0a907cf744a4d1711af72 https://deb.debian.org/debian/pool/main/r/rhash/librhash1_1.4.5-1_amd64.deb debian-trixie-signed-packages
 deb:libuv1t64 1.50.0-2 aarch64 a9be0f24d7686ba94a6ef4f3c638079c6b39c4263306860d51046c4125d065f4 apt:libuv1t64=1.50.0-2 debian-trixie-archive
+deb:libuv1t64 1.50.0-2 x86_64 5fec8035002e0c745b64d1c5b3e1dc42790d1a77574315b976cf3e4aab9ddc0a https://deb.debian.org/debian/pool/main/libu/libuv1/libuv1t64_1.50.0-2_amd64.deb debian-trixie-signed-packages
 deb:ninja-build 1.12.1-1+b1 aarch64 4afc3194ca4d4f051893f169daa48ba9eac769d76f3f13839e5ad0a9688b5fe6 apt:ninja-build=1.12.1-1+b1 debian-trixie-archive
+deb:ninja-build 1.12.1-1 x86_64 bc172ce9270bd6fcd6d5335a83ff9d3c7ba0d13ec624cfdfa1b5aa06901dc453 https://deb.debian.org/debian/pool/main/n/ninja-build/ninja-build_1.12.1-1_amd64.deb debian-trixie-signed-packages
