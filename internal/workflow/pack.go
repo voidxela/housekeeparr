@@ -22,6 +22,23 @@ func (r *Recovery) packLive(ctx context.Context, p action.Proposal) (action.Live
 		live.Unread = append(live.Unread, pl.ManagerID)
 		return live, nil
 	}
+	if c, ok := r.Clients[pl.ClientID]; ok {
+		if probe, err := c.Probe(ctx); err == nil {
+			live.ClientVersion = probe.Version
+		}
+		t, present, err := r.transfer(ctx, pl.ClientID, pl.NativeID)
+		if err != nil {
+			return live, err
+		}
+		if present {
+			live.Transfer = &t
+		}
+	}
+	if health, err := m.Health(ctx); err == nil {
+		live.Health = health.Items
+	} else {
+		live.HealthErr = err.Error()
+	}
 	if mp, err := m.Probe(ctx); err == nil {
 		live.ManagerVersion = mp.Version
 	}

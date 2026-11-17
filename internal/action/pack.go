@@ -95,7 +95,7 @@ func PlanPack(in PackPlanInput) *Proposal {
 			"client_id": f.Subject.ClientID, "native_id": f.Subject.NativeID}), CreatedAt: in.Now, ExpiresAt: in.Now.Add(ttl),
 		LiveChecks: []string{"every row of the download is still in the queue, import-blocked with the partial-pack message and nothing else",
 			"the manager's import history for the download covers exactly the episodes that have files; the others have none",
-			"the manager version is unchanged"}}
+			"both application versions are unchanged, the torrent remains complete, and manager health supports the workflow"}}
 	fid := f.ID
 	p.FindingID = &fid
 	add := func(name string, ok bool, detail string) {
@@ -141,6 +141,9 @@ func PlanPack(in PackPlanInput) *Proposal {
 			"that is a failure to diagnose, not to repeat", in.Handled))
 	}
 	var keys []string
+	if f.Subject.ClientID != "" && f.Subject.NativeID != "" {
+		p.Locks = append(p.Locks, TransferLock(f.Subject.ClientID, f.Subject.NativeID))
+	}
 	for _, id := range ids {
 		keys = append(keys, fmt.Sprintf("episode:%d", id))
 		p.Locks = append(p.Locks, ContentLock(f.Subject.ManagerID, fmt.Sprintf("episode:%d", id)))
@@ -171,7 +174,8 @@ func PlanPack(in PackPlanInput) *Proposal {
 		"nothing is sent to the download client: the torrent keeps seeding with all its files",
 		"the episodes the pack did not contain stay missing; they are searched individually (never by season) by proactive searches where enabled",
 	}
-	p.Planned = Planned{ManagerID: f.Subject.ManagerID, ManagerVersion: mv, QueueID: queueID, DownloadID: f.Subject.DownloadID, Content: keys}
+	p.Planned = Planned{ClientID: f.Subject.ClientID, NativeID: f.Subject.NativeID, ClientVersion: cv,
+		ManagerID: f.Subject.ManagerID, ManagerVersion: mv, QueueID: queueID, DownloadID: f.Subject.DownloadID, Content: keys}
 	p.Evidence = raw(map[string]any{"finding": f.ID, "rows": len(ids)})
 	p.Fingerprint = digest(fmt.Sprintf("pack|%s|%s|%v|%s", f.Subject.ManagerID, strings.ToLower(f.Subject.DownloadID), ids, mv))[:16]
 	return p

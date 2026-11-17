@@ -1530,3 +1530,49 @@ func TestMissingSearchRechecksAvailability(t *testing.T) {
 		t.Fatalf("searched after the manager no longer considered the item available: %v", s)
 	}
 }
+
+func TestPartialPackRefusesChangedClientVersion(t *testing.T) {
+	w := packWorld(t, nil)
+	ctx := context.Background()
+	var fresh map[string]bool
+	for i := 0; i < 5; i++ {
+		w.clock.Advance(10 * time.Minute)
+		fresh = w.eng.Cycle(ctx, nil).Fresh()
+	}
+	w.client.SetProbe(adapter.Probe{App: "qBittorrent", Version: "v9.0.0"})
+	if _, err := w.svc.DispatchAutomatic(ctx, fresh); err != nil {
+		t.Fatal(err)
+	}
+	if r := w.mgr.Removals(); len(r) != 0 {
+		t.Fatalf("cleared a pack whose live client version is outside the tested combination: %+v", r)
+	}
+}
+
+func TestPartialPackRequiresLiveCompletionAndHealth(t *testing.T) {
+	cases := map[string]func(*world){
+		"torrent incomplete": func(w *world) {
+			w.client.SetTransfers(fake.Transfer(hashA, "Show.S02", domain.StateDownloading, 2*gib, 4*gib, t0))
+		},
+		"manager download-client unhealthy": func(w *world) {
+			w.mgr.SetHealth(domain.HealthItem{Source: "DownloadClientStatusCheck", Type: "error", Message: "download client unavailable"})
+		},
+	}
+	for name, change := range cases {
+		t.Run(name, func(t *testing.T) {
+			w := packWorld(t, nil)
+			ctx := context.Background()
+			var fresh map[string]bool
+			for i := 0; i < 5; i++ {
+				w.clock.Advance(10 * time.Minute)
+				fresh = w.eng.Cycle(ctx, nil).Fresh()
+			}
+			change(w)
+			if _, err := w.svc.DispatchAutomatic(ctx, fresh); err != nil {
+				t.Fatal(err)
+			}
+			if r := w.mgr.Removals(); len(r) != 0 {
+				t.Fatalf("cleared without current completion and manager health evidence: %+v", r)
+			}
+		})
+	}
+}

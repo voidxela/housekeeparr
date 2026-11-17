@@ -356,6 +356,16 @@ func revalidatePack(p Proposal, live Live) []Check {
 	}
 	add("manager version unchanged", normVersion(live.ManagerVersion) == normVersion(pl.ManagerVersion),
 		fmt.Sprintf("planned %s, now %s", pl.ManagerVersion, nonEmpty(live.ManagerVersion, "unknown")))
+	add("client version unchanged", live.ClientVersion != "" && normVersion(live.ClientVersion) == normVersion(pl.ClientVersion),
+		fmt.Sprintf("planned %s, now %s", pl.ClientVersion, nonEmpty(live.ClientVersion, "unknown")))
+	add("pack transfer remains complete", live.Transfer != nil && live.Transfer.StateClass == domain.StateComplete,
+		"the correlated client must still list the pack as complete")
+	if live.HealthErr != "" {
+		add("manager health", false, "health could not be read: "+live.HealthErr)
+	} else {
+		bad := RelevantHealth(live.Health)
+		add("manager health", len(bad) == 0, nonEmpty(strings.Join(bad, "; "), "no download-client or search-indexer failure reported"))
+	}
 	want := map[string]bool{}
 	for _, k := range pl.Content {
 		want[k] = true
