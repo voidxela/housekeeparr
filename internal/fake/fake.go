@@ -162,6 +162,7 @@ type Manager struct {
 	partial   bool
 	reads     int
 	w         managerWrites
+	ms        missingState
 }
 
 // NewManager creates a fake Sonarr-kind manager.

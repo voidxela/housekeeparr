@@ -29,6 +29,31 @@ implemented.
   kept-running transfers (the private integration assertion was updated to
   expect a `running` record), capacity gating, client-scoped handled
   identity, preview text.
+- **User decisions (2026-11-17):** private and unknown-privacy torrents
+  rejected as unregistered follow `private_recovery` (default
+  `keep_running`). Real-instance-tested (private variant) with Transmission
+  4.0.6/4.1.4 and Deluge 2.2.0; the batch also re-ran the private
+  keep-running recovery with its changed retained-record assertion.
+- **Tracker classification on all four clients:** Transmission
+  `error = 2`; Deluge `tracker_status` (agy, reviewed); qBittorrent
+  `torrents/trackers` for active downloads, at most 25 per listing (agy,
+  reviewed; statuses 5/6 of qBittorrent 5 added after the first real run
+  found no classification); rTorrent `d.message` counted only when an
+  enabled tracker's latest failure is recent (≤ 1 h) and newer than its
+  latest success (`t.multicall`). See compatibility.md for which passed on
+  real instances.
+- **Notifications** (`[[notify]]`, migration 0014): durable outbox written
+  in the cycle's transaction; findings opened (more than five at once
+  become one digest), resolutions of delivered findings, automatic action
+  outcomes, exhausted attempts, and the retained ceiling (daily); persisted
+  hourly limit per target, backoff, drop after 8 attempts or 24 h; URLs are
+  secret references and never logged; `housekeeparr notifications` and the
+  Activity page show delivery. Bounds are proposals.
+- **Web authentication** (`web.password`, `allowed_hosts`, `tls_cert`/
+  `tls_key` or `trusted_proxy`): signed session cookies (HttpOnly,
+  SameSite=Strict, Secure off loopback; 12 h; per process), per-session
+  CSRF tokens, global sign-in rate limit (5 per 15 min), local-only
+  redirects, HTTP Basic for the read-only API, HSTS with TLS.
 - Not run this session: browser check, race detector, Docker, qBittorrent
   4.6.7 diagnosis, automatic dispatch on real instances.
 
@@ -245,7 +270,7 @@ baseline exists, and a 1-hour follow window.
 | Area | Status | Notes |
 | --- | --- | --- |
 | Go module, toolchain, build/vet/test commands | done | See [AGENTS.md](../AGENTS.md). |
-| Versioned TOML configuration, validation, secret references (`env:`/`file:`) | done | Literal secrets, unknown keys, non-loopback web binds, plain HTTP to non-local hosts, and unimplemented integrations are rejected. |
+| Versioned TOML configuration, validation, secret references (`env:`/`file:`) | done | Literal secrets, unknown keys, non-loopback web binds without authentication, allowed hosts and TLS (or a declared TLS-terminating proxy), plain HTTP to non-local hosts, and unimplemented integrations are rejected. |
 | Effective policy resolution with per-setting provenance | done | Global defaults → `[policy]`/`[automation.workflows]` → `[<client>.<id>.policy]` → `[[rule]]` by priority → `[[override]]`; `[[exclude]]` always applies. See milestone 2. |
 | Embedded state store, OS-level single-writer lock, read-only opens | done | SQLite (pure Go), WAL, `synchronous=FULL`, `flock`. Unix only; other platforms refuse to run as writer. |
 | Versioned forward migrations with pre-migration backup | done | v1 → v2 tested against a real v1 database. |
@@ -265,7 +290,7 @@ baseline exists, and a 1-hour follow window.
 | Web interface: overview, needs attention, finding detail with ack/snooze/reopen, downloads, download detail, activity, connections & policy, JSON API, `/healthz` | done | Loopback only; Host allowlist, strict CSP, same-origin + CSRF checks on mutations. Exercised in tests and manually via `curl`; not yet reviewed in a real browser. |
 | Demo mode (`housekeeparr demo`) | done | Real engine over scripted fakes and a simulated clock; state marked `demo`, refused as live state; persistent banner in UI and CLI. |
 | Integration harness against disposable released instances (`scripts/it/run.sh`) | done | Pinned, checksum-verified qBittorrent 5.3.0 / 4.6.7 and Sonarr 4.0.20 releases on loopback with locally generated torrents (closed-port tracker, DHT/PeX/LSD off). Executed and passing on 2026-11-15 (aarch64). Selectable per application (`--clients`, `--managers`); a required test that skips fails the run. Transmission is built from pinned release tarballs (`scripts/it/build-transmission.sh`); rTorrent and lighttpd come from pinned Debian packages extracted into the cache, never installed. Deluge 2.2.0 likewise. Runs are isolated in a loopback-only network namespace by default. |
-| Packaging: `Dockerfile` (distroless, non-root, headless by default), user-level systemd unit | unverified | Written but never built or run here (no container runtime or user systemd session). The web interface cannot be exposed from a container until authentication exists. See `packaging/README.md`. |
+| Packaging: `Dockerfile` (distroless, non-root, headless by default), user-level systemd unit | unverified | Written but never built or run here (no container runtime or user systemd session). Remote access from a container needs `web.password`, `allowed_hosts` and TLS or `trusted_proxy` (authentication exists since 2026-11-17; not exercised in a container). See `packaging/README.md`. |
 
 ## Milestone 2 — policy and durable action foundation (in progress)
 
@@ -322,8 +347,13 @@ table is exercised with fakes, plus the real-instance recovery runs.
   association clearing, targeted searches).
 - Bounded proactive missing searches, budgets, and search-coverage findings.
 - Free-space measurement for retained data (counts and logical-size ceilings exist).
-- Notifications.
-- Web authentication for remote exposure (currently loopback only).
+- Notifications: webhook targets (JSON or ntfy-style text) are implemented
+  and fixture-tested (see the 2026-11-17 session); no real notification
+  service was exercised, and source-coverage notifications await coverage
+  findings.
+- Web authentication: implemented and tested with in-process requests;
+  not browser-checked, and TLS serving was not exercised with a real
+  certificate.
 - Container packaging, user-level systemd unit, release validation,
   performance budgets, security review.
 

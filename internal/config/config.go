@@ -1575,3 +1575,25 @@ func validateNotify(errf errFunc, cfg *Config) {
 		}
 	}
 }
+
+// MaybeEnabled reports whether any scope could enable the workflow's
+// automation (globally, by a rule, or by an override). It decides whether
+// the inputs a workflow needs are read at all; the effective policy of
+// each subject still decides what may run.
+func (c *Config) MaybeEnabled(wf policy.Workflow) bool {
+	k := string(wf)
+	if c.Automation.Workflows[k] {
+		return true
+	}
+	for _, r := range c.Rules {
+		if r.Automation[k] {
+			return true
+		}
+	}
+	for _, o := range c.Overrides {
+		if o.Automation[k] {
+			return true
+		}
+	}
+	return false
+}

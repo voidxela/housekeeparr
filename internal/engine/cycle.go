@@ -9,8 +9,10 @@ import (
 
 	"github.com/voidxela/housekeeparr/internal/adapter"
 	"github.com/voidxela/housekeeparr/internal/adapter/arr"
+	"github.com/voidxela/housekeeparr/internal/domain"
 	"github.com/voidxela/housekeeparr/internal/findings"
 	"github.com/voidxela/housekeeparr/internal/notify"
+	"github.com/voidxela/housekeeparr/internal/policy"
 	"github.com/voidxela/housekeeparr/internal/redact"
 	"github.com/voidxela/housekeeparr/internal/store"
 )
@@ -78,6 +80,7 @@ func (e *Engine) Cycle(ctx context.Context, next *time.Time) CycleReport {
 		return fail(fmt.Errorf("persist cycle: %w", err))
 	}
 	e.setStoreErr(nil)
+	e.readMissing(ctx, results)
 	for _, f := range results {
 		cr := ConnResult{ID: f.id, Kind: f.kind, Skipped: f.skipped, OK: f.err == nil && f.skipped == "", Duration: f.duration,
 			Complete: (f.transfer == nil || f.transfer.Complete) && (f.queue == nil || f.queue.Complete)}
@@ -457,4 +460,66 @@ func (e *Engine) correlate(tx *store.Tx, managerID string, index store.TransferI
 		}
 	}
 	return nil
+}
+
+// MissingReader is a manager whose missing list can be read.
+type MissingReader interface {
+	Missing(ctx context.Context, maxItems int) (domain.MissingSnapshot, error)
+}
+
+// Missing-list reads (implementation proposals): at most once per
+// missingInterval per manager, bounded to missingMax items, and only while
+// some scope could enable proactive searches.
+const (
+	missingInterval = time.Hour
+	missingMax      = 500
+)
+
+// readMissing refreshes the missing lists of managers read successfully
+// this cycle. A failure is logged and leaves the stored list unchanged.
+func (e *Engine) readMissing(ctx context.Context, results []*fetched) {
+	if !e.cfg.MaybeEnabled(policy.WorkflowMissingSearch) {
+		return
+	}
+	ok := map[string]bool{}
+	for _, f := range results {
+		if f.queue != nil && f.err == nil {
+			ok[f.id] = true
+		}
+	}
+	for _, m := range e.conns.Managers {
+		mr, can := m.(MissingReader)
+		if !can || !ok[m.ID()] {
+			continue
+		}
+		now := e.clock.Now()
+		e.mu.Lock()
+		last, seen := e.missingRead[m.ID()]
+		e.mu.Unlock()
+		if seen && now.Sub(last) < missingInterval {
+			continue
+		}
+		snap, err := mr.Missing(ctx, missingMax)
+		if err != nil {
+			e.log.Warn("missing list not read", "manager", m.ID(), "class", adapter.ClassOf(err), "error", errorText(err))
+			continue
+		}
+		snap.ManagerID = m.ID()
+		var gone int
+		if err := e.st.Write(ctx, func(tx *store.Tx) error {
+			var err error
+			gone, err = tx.SaveMissingSnapshot(snap, now)
+			return err
+		}); err != nil {
+			e.log.Error("missing list not saved", "manager", m.ID(), "err", err)
+			continue
+		}
+		e.mu.Lock()
+		if e.missingRead == nil {
+			e.missingRead = map[string]time.Time{}
+		}
+		e.missingRead[m.ID()] = now
+		e.mu.Unlock()
+		e.log.Info("missing list read", "manager", m.ID(), "items", len(snap.Items), "total", snap.Total, "complete", snap.Complete, "no_longer_missing", gone)
+	}
 }

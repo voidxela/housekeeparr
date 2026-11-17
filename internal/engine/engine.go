@@ -66,11 +66,13 @@ type Engine struct {
 	// cycle's transaction (automatic dispatch).
 	afterCycle func(ctx context.Context, rep CycleReport)
 
-	mu       sync.Mutex
-	probes   map[string]probeState
-	last     *CycleReport
-	storeErr error
-	started  time.Time
+	mu     sync.Mutex
+	probes map[string]probeState
+	// missingRead is when each manager's missing list was last read.
+	missingRead map[string]time.Time
+	last        *CycleReport
+	storeErr    error
+	started     time.Time
 }
 
 type probeState struct {

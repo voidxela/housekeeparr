@@ -906,3 +906,37 @@ func TestAutomationOutcomesAreNotified(t *testing.T) {
 		t.Fatalf("want one action notification, got %v", kinds)
 	}
 }
+
+const missingRule = "\n[[rule]]\nname = \"searches\"\npriority = 1\n[rule.automation]\nmissing_search = true\n[rule.match]\nmanager = \"sonarr\"\n"
+
+// Missing lists are read only while proactive searches could be enabled,
+// at most hourly per manager, and only a complete read marks items gone.
+func TestMissingListsAreReadBoundedly(t *testing.T) {
+	w := newWorld(t, "observe", 20)
+	w.mgr.SetMissing(fake.MissingEpisode(11, 3, "Show S01E11", t0.Add(-48*time.Hour)))
+	w.run(time.Hour)
+	if n := w.mgr.MissingReads(); n != 0 {
+		t.Fatalf("read %d times with missing_search enabled nowhere", n)
+	}
+	w = newWorldWith(t, "observe", 20, missingRule)
+	w.mgr.SetMissing(fake.MissingEpisode(11, 3, "Show S01E11", t0.Add(-48*time.Hour)), fake.MissingEpisode(12, 3, "Show S01E12", t0.Add(-24*time.Hour)))
+	w.run(2 * time.Hour)
+	if n := w.mgr.MissingReads(); n != 2 {
+		t.Fatalf("12 cycles over 2h read the list %d times, want 2 (hourly)", n)
+	}
+	list, _ := w.st.MissingContent(context.Background(), store.MissingFilter{PresentOnly: true})
+	if len(list) != 2 {
+		t.Fatalf("stored %+v", list)
+	}
+	w.mgr.PartialMissing(true)
+	w.mgr.SetMissing(fake.MissingEpisode(12, 3, "Show S01E12", t0.Add(-24*time.Hour)))
+	w.run(time.Hour)
+	if list, _ := w.st.MissingContent(context.Background(), store.MissingFilter{PresentOnly: true}); len(list) != 2 {
+		t.Fatalf("an incomplete read removed items: %+v", list)
+	}
+	w.mgr.PartialMissing(false)
+	w.run(time.Hour)
+	if list, _ := w.st.MissingContent(context.Background(), store.MissingFilter{PresentOnly: true}); len(list) != 1 || list[0].ContentKey != "episode:12" {
+		t.Fatalf("after a complete read: %+v", list)
+	}
+}
