@@ -28,6 +28,19 @@ preserved_data_failure = false
 partial_pack = false
 missing_search = false
 
+# How no-progress recovery treats a torrent the client reports as private,
+# or whose privacy it cannot report (it may be private). Tracker obligations
+# attach to data already downloaded, and a stopped torrent no longer seeds.
+#   "keep_running" (default): fail and blocklist the dead grab in the manager
+#       so it fetches a replacement, and leave the torrent running in the
+#       client. Nothing is stopped; the stuck torrent keeps its active slot
+#       until you stop or remove it yourself.
+#   "stop": also stop the torrent (keeping it and its data), as for public
+#       torrents. Choose this only where your tracker's rules allow it.
+#   "observe": never act on private or unknown-privacy torrents.
+# Can also be set in a [[rule]] or [[override]] (private_recovery = "...").
+# private_recovery = "keep_running"
+
 [automation.unknown_privacy]
 # Recovery never acts on a transfer the client reports as private. A magnet
 # that never received its metadata always has unknown privacy: no supported

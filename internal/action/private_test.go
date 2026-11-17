@@ -1,0 +1,83 @@
+package action
+
+import (
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/voidxela/housekeeparr/internal/domain"
+	"github.com/voidxela/housekeeparr/internal/policy"
+)
+
+func hasOp(p *Proposal, op string) bool {
+	return slices.ContainsFunc(p.Operations, func(o Operation) bool { return o.Op == op })
+}
+
+// No-progress recovery of a private (or possibly private) torrent: by
+// default the grab is failed and blocklisted and the torrent is left
+// running; stopping it too, or not acting at all, are scoped choices.
+func TestPrivateNoProgressRecoveryModes(t *testing.T) {
+	privacies := map[string]domain.Signal[bool]{"private": domain.KnownValue(true), "unknown": domain.UnknownValue[bool]("not reported by 4.x")}
+	for pname, priv := range privacies {
+		for _, tc := range []struct {
+			mode           policy.PrivateMode
+			eligible, stop bool
+		}{
+			{policy.PrivateKeepRunning, true, false},
+			{policy.PrivateStop, true, true},
+			{policy.PrivateObserve, false, false},
+			{"", false, false}, // a policy that does not state it fails closed
+		} {
+			t.Run(pname+"/"+string(tc.mode), func(t *testing.T) {
+				in := planInput()
+				in.Transfer.Latest.Private = priv
+				in.Policy.PrivateRecovery, in.Policy.PrivateRecoveryFrom = tc.mode, "test"
+				p, _ := Plan(in)
+				c := find(p.Prerequisites, "public transfer")
+				if c == nil || c.Satisfied != tc.eligible || c.Detail == "" {
+					t.Fatalf("privacy check %+v", c)
+				}
+				if !tc.eligible {
+					if p.PrivateMode != "" {
+						t.Fatal("refused plan records a private mode")
+					}
+					return
+				}
+				if p.PrivateMode != tc.mode || !hasOp(p, "manager.queue.fail") || hasOp(p, "client.stop") != tc.stop {
+					t.Fatalf("mode %q ops %+v", p.PrivateMode, p.Operations)
+				}
+				if !tc.stop {
+					if find(p.Prerequisites, "retained-data ceiling") != nil {
+						t.Fatal("a torrent that is not stopped was counted as retained")
+					}
+					if !slices.ContainsFunc(p.Effects, func(e string) bool { return strings.Contains(e, "not stopped") }) {
+						t.Fatalf("effects do not say the torrent keeps running: %v", p.Effects)
+					}
+				}
+				// Before the write the transfer is still private: accepted.
+				if lc := find(Revalidate(*p, 0, matching(*p, false)), "public transfer"); lc == nil || !lc.Satisfied {
+					t.Fatalf("live: %+v", lc)
+				}
+			})
+		}
+	}
+}
+
+// A public torrent is unaffected by the private mode, and the mode does
+// not extend to other workflows.
+func TestPrivateModeScope(t *testing.T) {
+	in := planInput()
+	in.Policy.PrivateRecovery = policy.PrivateObserve
+	p, _ := Plan(in)
+	if c := find(p.Prerequisites, "public transfer"); !c.Satisfied || !hasOp(p, "client.stop") || p.PrivateMode != "" {
+		t.Fatalf("public transfer changed by the private mode: %+v", c)
+	}
+	in = metadataInput()
+	optIn(&in)
+	in.Transfer.Latest.Private = domain.KnownValue(true)
+	in.Policy.PrivateRecovery = policy.PrivateKeepRunning
+	p, _ = Plan(in)
+	if c := find(p.Prerequisites, "public transfer"); c.Satisfied {
+		t.Fatalf("private_recovery applied to metadata recovery: %+v", c)
+	}
+}

@@ -253,9 +253,27 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 	priv, known := t.Latest.Private.Get()
 	optIn, optFrom := in.Policy.AllowsUnknownPrivacy(wf)
 	optIn = optIn && policy.UnknownPrivacyDefined(wf)
+	stop := wf != policy.WorkflowPreservedDataFailure
+	what := "private"
+	if !known {
+		what = "of unknown privacy (" + t.Latest.Private.String() + "), so it may be private"
+	}
+	from := nonEmpty(in.Policy.PrivateRecoveryFrom, "no policy stated")
 	switch {
 	case known && !priv:
 		add("public transfer", true, true, "the client reports the torrent as public")
+	case wf == policy.WorkflowNoProgressRecovery && in.Policy.PrivateRecovery == policy.PrivateKeepRunning:
+		p.PrivateMode, stop = policy.PrivateKeepRunning, false
+		add("public transfer", true, true, "the torrent is "+what+": the grab is failed and blocklisted in the manager so a replacement can be fetched, "+
+			"and the torrent is left running in the client, so nothing is stopped against tracker obligations (private_recovery = \"keep_running\", from "+
+			from+"). It keeps its active slot until you stop or remove it")
+	case wf == policy.WorkflowNoProgressRecovery && in.Policy.PrivateRecovery == policy.PrivateStop:
+		p.PrivateMode = policy.PrivateStop
+		add("public transfer", true, true, "the torrent is "+what+"; this scope chose to stop it as well (private_recovery = \"stop\", from "+from+
+			"): it will no longer seed its partial data, which you have judged compatible with your tracker's rules")
+	case wf == policy.WorkflowNoProgressRecovery:
+		add("public transfer", false, true, "the torrent is "+what+", and this scope keeps such transfers observation-only (private_recovery = \"observe\", from "+
+			from+"); \"keep_running\" would blocklist the grab and leave the torrent running")
 	case known && priv:
 		add("public transfer", false, true, "private torrents are observation-only for recovery: stopping or replacing one may conflict with tracker obligations")
 	case optIn:
@@ -304,7 +322,10 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 		p.Effects = append(p.Effects, fmt.Sprintf("%s blocklists this exact release (%q) and stops tracking it", row.ManagerID, row.Latest.Title),
 			fmt.Sprintf("%s starts its own replacement search (manager-native redownload); Housekeeparr does not search as well", row.ManagerID))
 	}
-	if wf != policy.WorkflowPreservedDataFailure {
+	if !stop && wf != policy.WorkflowPreservedDataFailure {
+		p.Effects = append(p.Effects, "the torrent is not stopped: it stays active in the client with all its data and keeps seeding what it has")
+	}
+	if stop {
 		p.Operations = append(p.Operations, Operation{
 			Op:          "client.stop",
 			Target:      raw(map[string]string{"client_id": t.ClientID, "native_id": t.NativeID}),
@@ -320,7 +341,7 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 		add("retained-data ceiling", retainedOK(in, limits, t), true, retainedDetail(in, limits, t))
 	}
 	p.SideEffects = append(p.SideEffects,
-		"no file is deleted, moved, or renamed; the stopped transfer and its data stay in the client "+
+		"no file is deleted, moved, or renamed; the transfer and its data stay in the client "+
 			"(this build does not yet count retained transfers against capacity limits)",
 		"this build verifies the steps above and that the manager queued its search; whether the search finds and grabs a release, "+
 			"and how that download progresses, is not yet tracked here: check the manager's activity")

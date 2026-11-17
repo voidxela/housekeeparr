@@ -581,3 +581,48 @@ func TestAutomaticMetadataRecoveryEndToEnd(t *testing.T) {
 		})
 	}
 }
+
+// A stalled private torrent, end to end: by default its grab is failed and
+// blocklisted (so the manager fetches a replacement) and the torrent is
+// never stopped; "stop" also stops it; "observe" sends nothing.
+func TestPrivateTorrentRecoveryEndToEnd(t *testing.T) {
+	for _, tc := range []struct {
+		mode              string
+		removals, stopped int
+	}{{"", 1, 0}, {"stop", 1, 1}, {"observe", 0, 0}} {
+		t.Run("mode="+tc.mode, func(t *testing.T) {
+			extra := ""
+			if tc.mode != "" {
+				extra = "\n[[rule]]\nname = \"private\"\npriority = 1\nprivate_recovery = \"" + tc.mode + "\"\n[rule.match]\nclient = \"qbit\"\n"
+			}
+			w := newWorldWith(t, "automatic", 20, extra)
+			w.stalled(hashA, 1, 1)
+			w.client.Update(hashA, func(tr *domain.Transfer) { tr.Private = domain.KnownValue(true) })
+			w.run(4 * time.Hour)
+			if r, s := w.mgr.Removals(), w.client.Stops(); len(r) != tc.removals || len(s) != tc.stopped {
+				t.Fatalf("removals %+v stops %v", r, s)
+			}
+			acts, _ := w.svc.Actions(context.Background(), 10)
+			if tc.removals == 0 {
+				if len(acts) != 0 {
+					t.Fatalf("actions %+v", acts)
+				}
+				return
+			}
+			if len(acts) != 1 || acts[0].State != store.IntentSucceeded {
+				t.Fatalf("actions %+v", acts)
+			}
+			if r := w.mgr.Removals()[0]; r != (arr.RemoveFlags{Blocklist: true}) {
+				t.Fatalf("flags %+v (removeFromClient must stay false)", r)
+			}
+			ret, _ := w.st.RetainedTransfers(context.Background(), false, 0)
+			if len(ret) != tc.stopped {
+				t.Fatalf("retained %+v", ret)
+			}
+			ts, _ := w.client.ListTransfers(context.Background())
+			if tc.stopped == 0 && ts.Transfers[0].StateClass != domain.StateDownloading {
+				t.Fatalf("torrent no longer running: %s", ts.Transfers[0].StateClass)
+			}
+		})
+	}
+}

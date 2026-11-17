@@ -88,7 +88,11 @@ type AutomationConfig struct {
 	// UnknownPrivacy opts workflows in to acting on transfers whose privacy
 	// the client cannot report (see policy.UnknownPrivacyWorkflows).
 	UnknownPrivacy map[string]bool `toml:"unknown_privacy"`
-	Limits         LimitsConfig    `toml:"limits"`
+	// PrivateRecovery sets how no-progress recovery treats a transfer that
+	// is private or of unknown privacy: policy.PrivateKeepRunning (default),
+	// policy.PrivateStop, or policy.PrivateObserve.
+	PrivateRecovery string       `toml:"private_recovery"`
+	Limits          LimitsConfig `toml:"limits"`
 }
 
 // LimitsConfig bounds acquisition-starting actions. Unset fields use the
@@ -192,6 +196,8 @@ type RuleConfig struct {
 	Automation map[string]bool `toml:"automation"`
 	// UnknownPrivacy: see AutomationConfig.UnknownPrivacy.
 	UnknownPrivacy map[string]bool `toml:"unknown_privacy"`
+	// PrivateRecovery: see AutomationConfig.PrivateRecovery.
+	PrivateRecovery string `toml:"private_recovery"`
 }
 
 // RuleMatch selects which subjects a rule applies to. All non-empty fields
@@ -212,6 +218,8 @@ type OverrideConfig struct {
 	Automation map[string]bool `toml:"automation"`
 	// UnknownPrivacy: see AutomationConfig.UnknownPrivacy.
 	UnknownPrivacy map[string]bool `toml:"unknown_privacy"`
+	// PrivateRecovery: see AutomationConfig.PrivateRecovery.
+	PrivateRecovery string `toml:"private_recovery"`
 }
 
 // ExclusionConfig excludes a scope from one or more automation workflows.
@@ -440,6 +448,7 @@ func validate(cfg *Config, md toml.MetaData) []Problem {
 	}
 	validateWorkflowMap(errf, "automation.workflows", cfg.Automation.Workflows)
 	validateUnknownPrivacyMap(errf, "automation.unknown_privacy", cfg.Automation.UnknownPrivacy)
+	validatePrivateRecovery(errf, "automation.private_recovery", cfg.Automation.PrivateRecovery)
 	validateLimits(errf, cfg)
 	if strings.TrimSpace(cfg.State.Dir) == "" {
 		errf("state.dir", "required")
@@ -662,6 +671,12 @@ func validateWorkflowMap(errf errFunc, prefix string, m map[string]bool) {
 	}
 }
 
+func validatePrivateRecovery(errf errFunc, field, v string) {
+	if v != "" && !policy.ValidPrivateMode(policy.PrivateMode(v)) {
+		errf(field, "must be \"keep_running\", \"stop\", or \"observe\"")
+	}
+}
+
 // validateUnknownPrivacyMap accepts only workflows for which acting on a
 // transfer of unknown privacy is defined (policy.UnknownPrivacyWorkflows).
 func validateUnknownPrivacyMap(errf errFunc, prefix string, m map[string]bool) {
@@ -758,6 +773,7 @@ func validateRules(errf errFunc, cfg *Config, clientIDs, managerIDs map[string]b
 		validatePolicyOverrides(errf, field+".policy", cfg.Polling.Interval.Duration, r.Policy)
 		validateWorkflowMap(errf, field+".automation", r.Automation)
 		validateUnknownPrivacyMap(errf, field+".unknown_privacy", r.UnknownPrivacy)
+		validatePrivateRecovery(errf, field+".private_recovery", r.PrivateRecovery)
 	}
 	for i := 0; i < len(cfg.Rules); i++ {
 		a := cfg.Rules[i]
@@ -846,6 +862,9 @@ func ruleConflicts(a, b RuleConfig) []string {
 			conflicts = append(conflicts, "unknown_privacy."+k)
 		}
 	}
+	if a.PrivateRecovery != "" && b.PrivateRecovery != "" && a.PrivateRecovery != b.PrivateRecovery {
+		conflicts = append(conflicts, "private_recovery")
+	}
 	return conflicts
 }
 
@@ -896,6 +915,7 @@ func validateOverrides(errf errFunc, cfg *Config, clientIDs, managerIDs map[stri
 		validatePolicyOverrides(errf, field+".policy", cfg.Polling.Interval.Duration, o.Policy)
 		validateWorkflowMap(errf, field+".automation", o.Automation)
 		validateUnknownPrivacyMap(errf, field+".unknown_privacy", o.UnknownPrivacy)
+		validatePrivateRecovery(errf, field+".private_recovery", o.PrivateRecovery)
 	}
 }
 
@@ -1035,6 +1055,13 @@ func (c *Config) Resolve(sub policy.Subject) (policy.Effective, error) {
 	apply(&s, src, c.Policy, "config [policy]")
 	applyWorkflows(autoEnabled, autoFrom, c.Automation.Workflows, "config [automation.workflows]")
 	applyWorkflows(privEnabled, privFrom, c.Automation.UnknownPrivacy, "config [automation.unknown_privacy]")
+	privMode, privModeFrom := policy.PrivateKeepRunning, "built-in default"
+	setPrivate := func(v, from string) {
+		if v != "" {
+			privMode, privModeFrom = policy.PrivateMode(v), from
+		}
+	}
+	setPrivate(c.Automation.PrivateRecovery, "config [automation].private_recovery")
 
 	if sub.ClientID != "" {
 		found := false
@@ -1063,6 +1090,7 @@ func (c *Config) Resolve(sub policy.Subject) (policy.Effective, error) {
 		apply(&s, src, r.Policy, from)
 		applyWorkflows(autoEnabled, autoFrom, r.Automation, from)
 		applyWorkflows(privEnabled, privFrom, r.UnknownPrivacy, from)
+		setPrivate(r.PrivateRecovery, from)
 	}
 
 	if sub.ManagerID != "" && sub.ContentKey != "" {
@@ -1073,6 +1101,7 @@ func (c *Config) Resolve(sub policy.Subject) (policy.Effective, error) {
 				apply(&s, src, o.Policy, from)
 				applyWorkflows(autoEnabled, autoFrom, o.Automation, from)
 				applyWorkflows(privEnabled, privFrom, o.UnknownPrivacy, from)
+				setPrivate(o.PrivateRecovery, from)
 				break
 			}
 		}
@@ -1085,6 +1114,7 @@ func (c *Config) Resolve(sub policy.Subject) (policy.Effective, error) {
 				apply(&s, src, o.Policy, from)
 				applyWorkflows(autoEnabled, autoFrom, o.Automation, from)
 				applyWorkflows(privEnabled, privFrom, o.UnknownPrivacy, from)
+				setPrivate(o.PrivateRecovery, from)
 				break
 			}
 		}
@@ -1138,6 +1168,8 @@ func (c *Config) Resolve(sub policy.Subject) (policy.Effective, error) {
 			eff.Sources = append(eff.Sources, policy.Source{Setting: "unknown_privacy." + string(wf), Value: strconv.FormatBool(privEnabled[wf]), From: privFrom[wf]})
 		}
 	}
+	eff.PrivateRecovery, eff.PrivateRecoveryFrom = privMode, privModeFrom
+	eff.Sources = append(eff.Sources, policy.Source{Setting: "private_recovery", Value: string(privMode), From: privModeFrom})
 	eff.Revision = eff.ComputeRevision()
 	return eff, nil
 }

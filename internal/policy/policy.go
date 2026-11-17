@@ -100,7 +100,11 @@ type Effective struct {
 	// UnknownPrivacy lists, for workflows where it is defined, whether the
 	// scope opts in to acting on transfers of unknown privacy.
 	UnknownPrivacy []WorkflowPermission `json:"unknown_privacy,omitempty"`
-	Exclusions     []ExclusionMatch     `json:"exclusions,omitempty"`
+	// PrivateRecovery is how no-progress recovery treats a private or
+	// unknown-privacy transfer; empty means PrivateObserve (fail closed).
+	PrivateRecovery     PrivateMode      `json:"private_recovery,omitempty"`
+	PrivateRecoveryFrom string           `json:"private_recovery_from,omitempty"`
+	Exclusions          []ExclusionMatch `json:"exclusions,omitempty"`
 }
 
 // Limits bound acquisition-starting actions (SPEC §§7, 9.1, 10). Pacing

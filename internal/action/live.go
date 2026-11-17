@@ -140,7 +140,9 @@ func Revalidate(p Proposal, i int, live Live) []Check {
 		add("file selection unchanged", sameSignal(pl.Wanted, t.WantedBytes),
 			fmt.Sprintf("wanted bytes planned %s, now %s", pl.Wanted, t.WantedBytes))
 		priv, known := t.Private.Get()
-		if p.UnknownPrivacy && !known {
+		if p.PrivateMode != "" {
+			add("public transfer", true, "privacy now "+t.Private.String()+"; planned under private_recovery = \""+string(p.PrivateMode)+"\"")
+		} else if p.UnknownPrivacy && !known {
 			add("public transfer", true, "privacy still unknown ("+t.Private.String()+"); still no metadata, so still no payload")
 		} else {
 			add("public transfer", known && !priv, "privacy now "+t.Private.String())

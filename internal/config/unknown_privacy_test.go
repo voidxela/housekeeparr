@@ -80,3 +80,37 @@ metadata_recovery = false
 		t.Fatal("the setting changed the diagnostic settings revision (it would force requalification)")
 	}
 }
+
+func TestPrivateRecoveryModeResolution(t *testing.T) {
+	expectProblem(t, minimal+"\n[automation]\nprivate_recovery = \"delete\"\n", "automation.private_recovery", "keep_running")
+	def, err := mustParse(t, minimal).Resolve(policy.Subject{ClientID: "qbit", Privacy: "private"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if def.PrivateRecovery != policy.PrivateKeepRunning || def.PrivateRecoveryFrom != "built-in default" {
+		t.Fatalf("default %q from %q", def.PrivateRecovery, def.PrivateRecoveryFrom)
+	}
+	cfg := mustParse(t, minimal+`
+[automation]
+private_recovery = "observe"
+
+[[rule]]
+name = "relaxed tracker"
+priority = 5
+private_recovery = "stop"
+[rule.match]
+client = "qbit"
+category = "tv"
+`)
+	in, _ := cfg.Resolve(policy.Subject{ClientID: "qbit", Category: "tv", Privacy: "private"})
+	out, _ := cfg.Resolve(policy.Subject{ClientID: "qbit", Category: "movies", Privacy: "private"})
+	if in.PrivateRecovery != policy.PrivateStop || in.PrivateRecoveryFrom != `config rule "relaxed tracker" (priority 5)` || out.PrivateRecovery != policy.PrivateObserve {
+		t.Fatalf("rule %q (%s), global %q", in.PrivateRecovery, in.PrivateRecoveryFrom, out.PrivateRecovery)
+	}
+	if in.Revision == out.Revision || out.Revision == def.Revision {
+		t.Fatal("a private mode change did not change the effective revision")
+	}
+	if in.Settings.Revision() != def.Settings.Revision() {
+		t.Fatal("the private mode changed the diagnostic settings revision")
+	}
+}

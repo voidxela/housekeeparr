@@ -92,6 +92,10 @@ type Proposal struct {
 	// scope allows the workflow then (policy.AllowsUnknownPrivacy); revalidation
 	// then accepts privacy that is still unknown, never known private.
 	UnknownPrivacy bool `json:"unknown_privacy,omitempty"`
+	// PrivateMode records that the transfer was private or of unknown
+	// privacy and which private_recovery mode permitted the plan;
+	// revalidation then does not require a public transfer.
+	PrivateMode policy.PrivateMode `json:"private_mode,omitempty"`
 	// Cooldown applied to every lock subject after success.
 	Cooldown  time.Duration `json:"cooldown,omitempty"`
 	CreatedAt time.Time     `json:"created_at"`

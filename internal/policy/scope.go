@@ -100,6 +100,32 @@ type WorkflowPermission struct {
 	From     string   `json:"from"`
 }
 
+// PrivateMode is how no-progress recovery treats a transfer that is
+// private, or whose privacy the client cannot report (it may be private).
+//
+// Tracker obligations (ratio, hit-and-run, seeding time) attach to payload
+// already downloaded, and stopping a torrent stops seeding it. So by
+// default (user decision, 2026-11-16) the dead grab is failed and
+// blocklisted in the manager, which lets the manager fetch a replacement,
+// while the torrent is left running in the client: nothing is stopped
+// against tracker rules, at the cost of the stuck torrent keeping its
+// active slot. Stopping it as well is a separate, explicit choice.
+type PrivateMode string
+
+const (
+	// PrivateKeepRunning: fail and blocklist the grab; never stop the torrent.
+	PrivateKeepRunning PrivateMode = "keep_running"
+	// PrivateStop: as for a public torrent, also stop it (retaining data).
+	PrivateStop PrivateMode = "stop"
+	// PrivateObserve: no recovery for private or unknown-privacy transfers.
+	PrivateObserve PrivateMode = "observe"
+)
+
+// ValidPrivateMode reports whether m is a defined mode.
+func ValidPrivateMode(m PrivateMode) bool {
+	return m == PrivateKeepRunning || m == PrivateStop || m == PrivateObserve
+}
+
 // UnknownPrivacyDefined reports whether a workflow may act on transfers
 // whose privacy is unknown. Only metadata recovery: before metadata
 // arrives no supported client can report the private flag, and released
@@ -146,6 +172,10 @@ func (e Effective) ComputeRevision() string {
 	sort.Slice(perms, func(i, j int) bool { return perms[i].Workflow < perms[j].Workflow })
 	for _, p := range perms {
 		fmt.Fprintf(h, "|perm=%q:%t", p.Workflow, p.Enabled)
+	}
+	// Only a non-default private mode is hashed, likewise.
+	if e.PrivateRecovery != "" && e.PrivateRecovery != PrivateKeepRunning {
+		fmt.Fprintf(h, "|private-recovery=%q", e.PrivateRecovery)
 	}
 	// Only opt-outs are hashed, so configurations without one keep their
 	// earlier revision.

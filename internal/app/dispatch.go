@@ -309,6 +309,19 @@ func (s *Service) breakers(ctx context.Context, now time.Time) (map[string]strin
 	if err != nil {
 		return nil, err
 	}
+	// Only stalls still tied to a manager queue row count: a torrent whose
+	// grab was already failed (for example a private one left running) is
+	// no longer a recovery candidate and says nothing about a shared cause.
+	rows, err := s.st.QueueItems(ctx, store.QueueFilter{PresentOnly: true})
+	if err != nil {
+		return nil, err
+	}
+	managed := map[string]bool{}
+	for _, r := range rows {
+		if r.MatchStatus == store.MatchMatched {
+			managed[r.MatchClientID+"|"+r.MatchNativeID] = true
+		}
+	}
 	active, stalled := map[string]int{}, map[string]int{}
 	for _, t := range ts {
 		// Metadata acquisition counts too: magnets stalling together on
@@ -317,7 +330,7 @@ func (s *Service) breakers(ctx context.Context, now time.Time) (map[string]strin
 			continue
 		}
 		active[t.ClientID]++
-		if t.Assessment != nil && t.Assessment.Status == policy.StatusQualified {
+		if t.Assessment != nil && t.Assessment.Status == policy.StatusQualified && managed[t.ClientID+"|"+t.NativeID] {
 			stalled[t.ClientID]++
 		}
 	}
