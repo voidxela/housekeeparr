@@ -92,6 +92,32 @@ compatibility.md):
   Blocklist/history evidence must be new relative to a baseline journaled
   with the dispatching record (migration 0006); titles match byte-exactly.
 
+### Latest-progress review — 2026-11-16 (`f0f2ae3`)
+
+[Review, reproductions and validation cadence](reviews/2026-11-16-latest.md)
+confirm the four-client progress below but identify three **open** defects:
+
+- **R8 (high):** manual planning accepts a qualified assessment made under
+  an older, less restrictive policy. A new service loading a 24-hour window
+  can act on a three-hour diagnosis without another engine evaluation.
+- **R9 (medium):** a fresh manager queue can establish replacement completion
+  from cached pre-recovery client facts while that client is offline.
+- **R10 (medium):** terminal download outcomes stop independent search
+  polling/expiry, leaving an accepted/running search permanently unsettled.
+
+Three temporary deterministic overlay tests reproduce these (four failing
+assertions); they are not committed failing tests. Existing full uncached Go
+tests, build, vet, formatting and static build passed. No real-instance
+matrix was repeated. Earlier R5–R7 fixes remain, but R8 is a remaining
+policy/evidence safety gap; fix it before extending writes. R9/R10 need
+focused outcome regressions. No workflow is newly marked complete.
+
+The refreshed [handoff](CLAUDE_NEXT_SESSION.md) retains Gemini Hydrogen/agy
+authorization, puts these fixes before the next metadata-recovery slice,
+and replaces final-HEAD matrix rituals with change-based validation. Keep
+the undiagnosed qBittorrent 4.6.7 fixture failure visible; use a focused
+client-only investigation rather than blocking unrelated implementation.
+
 ### Implementation proposals still hard-coded (not approved defaults)
 
 Configurable with provenance in `[automation.limits]` (values are proposals):

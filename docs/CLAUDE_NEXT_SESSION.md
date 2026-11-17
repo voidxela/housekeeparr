@@ -2,12 +2,15 @@
 
 Continue implementing Housekeeparr through the complete approved v1 scope in
 `docs/SPEC.md`. Read `AGENTS.md`, the entire SPEC, `docs/STATUS.md`,
-`docs/compatibility.md`, and **`docs/reviews/2026-11-16.md`** before changing
-behavior. The earlier review `docs/reviews/2026-11-15.md` supplies background;
-its R1–R4 are fixed. Implement and verify concrete increments, not just plans.
+`docs/compatibility.md`, and **`docs/reviews/2026-11-16-latest.md`** before
+changing behavior. Earlier reviews `docs/reviews/2026-11-15.md` and
+`docs/reviews/2026-11-16.md` supply background; R1–R7 have fixes, but the
+latest review reproduces R8–R10 below. Implement and verify concrete
+increments, not just plans.
 
-Checkpoint: `dev`, code last changed at `c966439` (session of 2026-11-16,
-second; 7b0d1d0..HEAD, not pushed). Validation: full Go suite, vet, gofmt and
+Checkpoint reviewed: `f0f2ae3` on `dev`, code last changed at `c966439`
+(session of 2026-11-16, second; 7b0d1d0..HEAD, not pushed). This review adds
+documentation only. Validation: full Go suite, vet, gofmt and
 the static binary at `c966439`; real-instance matrix at `118f15c` from a
 pinned worktree (all five registered combinations passed, including both
 recovery workflows, the automatic test and exact search attribution;
@@ -81,32 +84,59 @@ do not turn a choice of defaults into a prolonged blocker for other work.
 
 ## Immediate work, in priority order
 
-1. **qBittorrent 4.6.7 `errored-restart` fixture** failed at `118f15c`
-   (`stalledDL`, verified 0, instead of `missingFiles` after the restart;
-   passed on 2026-11-15). Diagnose before rerunning, as was done for the
-   rTorrent race (hypothesis only: restart before fastresume was persisted;
-   the harness's qBittorrent restart in `scripts/it/run.sh` uses no
-   readiness check before stopping). Observation only; 4.x recovery stays
-   refused. The `6507e87` automatic-test failure on 4.6.7 (slow cycles, no
-   diagnosis) did not recur; cycles now log their durations. Failure log:
+1. **R8 — policy/evidence consistency before manual writes.** The new
+   review proves that a fresh CLI service with a 24-hour no-progress policy
+   can execute a diagnosis made over three hours under the old policy.
+   `Plan` checks qualified status, not the assessment's settings revision.
+   Require a current assessment or recompute under current policy. Compare
+   `Assessment.PolicyRevision` to `Settings.Revision()`, not the broader
+   effective permission revision; a mode-only change should remain usable.
+   Add deterministic regression tests before extending recovery writes.
+2. **R9/R10 — outcome evidence and independent lifecycle.** A healthy
+   manager plus an offline client can produce "replacement completed" from
+   pre-recovery cached client facts. Require fresh suitable client evidence
+   for progress/completion. Separately, completed/untracked downloads are
+   excluded from search polling/expiry, leaving accepted/running search
+   states forever. Continue bounded search observation independently of the
+   download's terminal state. Three reproducible overlay tests are described
+   in the latest review and remain under `/tmp/housekeeparr-review-latest/`.
+   These are local logic fixes; no full real-instance matrix is needed just
+   to validate them.
+3. **Deliver metadata recovery next**, followed by preserved-data failure
+   handling (SPEC §§5, 7, 13.4 scenario 3). Use distinct evidence, timeouts,
+   workflow permission and capability gating. Prove one supported
+   manager/client slice before extending to all four. Preserved-data handling
+   must not rely on client state alone; retain the missing-data and rTorrent
+   hash-race limitations. Do not let an unrelated observation-fixture flake
+   block these increments.
+4. **Focused qBittorrent 4.6.7 harness diagnosis**, independently of new
+   workflow work: `errored-restart` failed at `118f15c` (`stalledDL`, verified
+   0, rather than `missingFiles`). The harness already polls for non-checking
+   full torrents but never requires their verified bytes and does not fail
+   when that deadline expires. Inspect saved artifacts, establish the actual
+   cause, fix readiness if supported by evidence, then use a client-only
+   observation run. Fastresume timing is still a hypothesis. Recovery stays
+   refused for unsupported privacy. The earlier slow automatic-test failure
+   did not recur; preserve both dated results. Failure log:
    `~/.cache/hk-rtdiag/keep/qbt467-118f15c.log` (outside the repository).
-2. **Metadata recovery and preserved-data failure workflows** (SPEC §§5, 7,
-   13.4 scenario 3): separate evidence, timeouts and capability gating;
-   preserved-data handling must not rely on client state alone (see
-   compatibility "Missing-data semantics", including the rTorrent hash-race).
-3. **Notifications and deferral status** (SPEC §11.2): exhausted attempts,
-   pacing deferrals, circuit breakers, paused workflows.
-4. **Scenario 1 end to end**: the daemon loop with default windows on real
-   instances, or an explicit plan for it; then the remaining v1 scope below
-   (partial packs, searches and coverage, remote web/auth,
-   packaging/security/performance).
-5. **Probe the redownload gating on a real instance**: set "Redownload
-   Failed" off (and, separately, the interactive-search variant with an
-   interactive grab) and expect a refusal before any request and no search
-   queued. The gating is source-derived so far.
-6. Housekeeparr-owned replacement searches (when a manager's "Redownload
-   Failed" is off) are not implemented; such recoveries are refused. Decide
-   whether v1 needs them (SPEC §7 step 5 allows either owner).
+5. **Operator experience and remaining workflows:** notifications and
+   deferral status, then positive import/coverage evidence for partial packs,
+   targeted/proactive searches and source coverage, remote web/auth,
+   packaging/security/performance. Keep the complete v1 checklist below.
+
+Validation follow-ups to batch with relevant work: probe redownload-disabled
+and interactive-grab refusal against real managers (only the enabled,
+UserInvokedSearch path is real-instance-tested); add a shortened-window
+real daemon smoke for scheduler/lifecycle wiring. Default-window timing is
+already exercised deterministically through engine → dispatcher → coordinator;
+do not wait two hours per session to repeat it on real instances. A later
+unattended default-window soak remains an explicitly unperformed acceptance
+check, not a blocker for the next workflow.
+
+Housekeeparr-owned replacement searches (when "Redownload Failed" is off)
+remain unimplemented and refused. SPEC §7 step 5 permits either owner; the
+current refusal is a visible limitation. Resolve supported coverage before
+release without starting a second replacement owner implicitly.
 
 Proposals awaiting a product decision (implemented, not approved): a
 workflow pause also blocks manual actions; recovery is refused when the
@@ -157,8 +187,9 @@ approvals or silent amendments to the authoritative spec.
   refresh and do not establish usable recovery semantics.
 - The manual recovery test plans from engine-written state but supplies the
   qualified stall diagnosis; the automatic test does not (the engine
-  diagnoses under transfer-scoped overrides). Production sequence: fail/blocklist with every
-  flag explicit, then stop while retaining data. Independent checks establish
+  diagnoses under transfer-scoped overrides). Production sequence:
+  fail/blocklist with every flag explicit, then stop while retaining data.
+  Independent checks establish
   durable queue removal, failure/blocklist evidence, stopped registration,
   byte-identical payload and queued manager search. They do not establish a
   replacement grab or successful download. qBittorrent 4.6.7 refusal for
@@ -174,6 +205,10 @@ approvals or silent amendments to the authoritative spec.
 
 ## Validation cadence — velocity is an explicit concern
 
+- Select validation by changed behavior, not by whether it is the final
+  session HEAD. A docs/checkpoint commit needs no Go suite or real-instance
+  run. Existing evidence remains tied to its tested commit; identify newer
+  changes and limitations accurately without rerunning unchanged adapters.
 - During edits: format changed Go files and run targeted tests for touched
   packages/behaviors. Cached tests are useful feedback; don't force uncached
   whole-repository runs per edit or per docs commit. Test meaningful safety
@@ -189,10 +224,17 @@ approvals or silent amendments to the authoritative spec.
   Transmission needs separate 4.0.6 and 4.1.4 runs. Reuse pinned checksum-verified
   caches; avoid concurrent heavy suites on this host. Initial Transmission
   compilation (~15 minutes) is a cache cost, not a per-edit requirement.
-- Shared executor/harness changes: run the affected matrix as a bounded batch
-  before marking the milestone complete. Adapter-local changes need affected
-  combinations first; unrelated unchanged combinations retain dated evidence.
-  Do not rerun every older version after documentation or UI-only changes.
+- Shared executor/harness changes: use deterministic fault/boundary tests
+  first. If external call order, flags or contracts change across clients,
+  run the affected matrix once as a bounded batch at the integrated workflow
+  milestone. Pure local outcome/policy logic or UI controls do not require a
+  matrix merely because their package is shared. Adapter-local changes need
+  affected versions first; unrelated combinations retain dated evidence.
+- Keep real runs serial on this host. Add focused phase/test selection,
+  per-phase timings and compile-once reuse when working on the harness;
+  a selected run must state its scope and keep required tests mandatory.
+  Investigate the 4.6.7 fixture with managers disabled. Avoid paying for all
+  managed probes and automatic dispatch just to debug one client fixture.
 - Use bounded polling with early success for real readiness/postconditions,
   not fixed sleeps or arbitrary longer waits. Retain failure artifacts,
   inspect causes, and report any flake. Never hide failures behind rerun-until-
@@ -204,12 +246,14 @@ approvals or silent amendments to the authoritative spec.
 - Record exact commands, results, tested HEAD and limits in compatibility and
   STATUS at milestones. Don't repeat benchmarks without a performance change.
 
-Review validation at `73d37d5`: targeted tests and the full uncached Go suite
-passed (full suite outside sandbox for loopback fixture sockets); three review
-Go-overlay tests deliberately failed, confirming R5/R6. No expensive instance
-matrix rerun was needed for this documentation/code review. See review report
-for build/vet/format results. Don't mistake passing existing tests for closure
-of the newly reproduced defects.
+Latest independent validation at `f0f2ae3`: full uncached Go suite passed
+(outside sandbox for loopback fixture sockets; slowest packages app 19.1 s,
+engine 17.7 s), build/vet/format/diff checks and a static binary passed.
+Three temporary Go-overlay tests deliberately fail (four assertions),
+confirming R8–R10. No expensive instance matrix was rerun. See the latest
+review for exact reproductions and commands. Passing existing tests does not
+close those defects. No repeat full-suite run is needed for this docs-only
+handoff refresh.
 
 ## Remaining v1 after this slice
 
