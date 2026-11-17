@@ -1,0 +1,35 @@
+{
+ "tmdbId": 999012,
+ "imdbId": "tt9990012",
+ "title": "Housekeeparr Eleventh Fixture Film",
+ "originalTitle": "Housekeeparr Eleventh Fixture Film",
+ "titleSlug": "999012",
+ "overview": "Fictional film served by the Housekeeparr integration stand-in.",
+ "year": 2025,
+ "inCinema": "2025-03-01T00:00:00Z",
+ "physicalRelease": "2025-06-01T00:00:00Z",
+ "digitalRelease": "2025-05-15T00:00:00Z",
+ "runtime": 100,
+ "originalLanguage": "en",
+ "status": "Released",
+ "studio": "Fixture Studio",
+ "movieRatings": {
+  "tmdb": {
+   "count": 1,
+   "value": 7.0,
+   "type": "user"
+  }
+ },
+ "ratings": [],
+ "genres": [],
+ "keywords": [],
+ "alternativeTitles": [],
+ "translations": [],
+ "certifications": [],
+ "images": [],
+ "credits": {
+  "cast": [],
+  "crew": []
+ },
+ "recommendations": []
+}
