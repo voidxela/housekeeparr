@@ -38,6 +38,10 @@ def mkv(seconds, size):
     ebml = el(b"\x1a\x45\xdf\xa3", u(b"\x42\x86", 1) + u(b"\x42\xf7", 1) + u(b"\x42\xf2", 4) + u(b"\x42\xf3", 8) + s(b"\x42\x82", "matroska") + u(b"\x42\x87", 4) + u(b"\x42\x85", 2))
     info = el(b"\x15\x49\xa9\x66", u(b"\x2a\xd7\xb1", 1000000) + el(b"\x44\x89", struct.pack(">d", seconds * 1000.0)) + s(b"\x4d\x80", "hk") + s(b"\x57\x41", "hk"))
     track = el(b"\xae", u(b"\xd7", 1) + u(b"\x73\xc5", 1) + u(b"\x83", 1) + s(b"\x86", "V_MPEG4/ISO/AVC") + el(b"\xe0", u(b"\xb0", 16) + u(b"\xba", 16)))
+    # An audio track too: Sonarr rejects files without one ("No audio
+    # tracks detected", observed on 4.0.20).
+    track += el(b"\xae", u(b"\xd7", 2) + u(b"\x73\xc5", 2) + u(b"\x83", 2) + s(b"\x86", "A_AC3") + s(b"\x22\xb5\x9c", "eng") +
+                el(b"\xe1", el(b"\xb5", struct.pack(">d", 48000.0)) + u(b"\x9f", 2)))
     blocks = b"".join(el(b"\x1f\x43\xb6\x75", u(b"\xe7", tc) + el(b"\xa3", b"\x81\x00\x00\x80" + b"\x00" * 16)) for tc in (0, int(seconds * 1000)))
     head = ebml
     body = info + el(b"\x16\x54\xae\x6b", track) + blocks
