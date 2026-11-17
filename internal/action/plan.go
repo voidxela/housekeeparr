@@ -26,8 +26,7 @@ type TestedWorkflow struct {
 // Tested is the registry of tested write workflows. Each entry is backed
 // by a passing run of internal/integration/recovery_test.go recorded in
 // docs/compatibility.md ("Recovery workflow runs"); add an entry only with
-// such a run. qBittorrent 4.x is absent on purpose: it does not report
-// privacy, so recovery is refused there regardless.
+// such a run.
 var Tested = []TestedWorkflow{
 	{Workflow: policy.WorkflowNoProgressRecovery, Manager: adapter.KindSonarr, ManagerVersion: "4.0.20.3014", Client: adapter.KindQBittorrent, ClientVersion: "5.3.0"},
 	{Workflow: policy.WorkflowNoProgressRecovery, Manager: adapter.KindRadarr, ManagerVersion: "6.4.4.10685", Client: adapter.KindQBittorrent, ClientVersion: "5.3.0"},
@@ -63,6 +62,15 @@ var Tested = []TestedWorkflow{
 	{Workflow: policy.WorkflowPartialPack, Manager: adapter.KindSonarr, ManagerVersion: "4.0.20.3014", Client: adapter.KindTransmission, ClientVersion: "4.1.4 (a6d907d9ea)"},
 	{Workflow: policy.WorkflowPartialPack, Manager: adapter.KindSonarr, ManagerVersion: "4.0.20.3014", Client: adapter.KindDeluge, ClientVersion: "2.2.0"},
 	{Workflow: policy.WorkflowPartialPack, Manager: adapter.KindSonarr, ManagerVersion: "4.0.20.3014", Client: adapter.KindRTorrent, ClientVersion: "0.9.8"},
+	// qBittorrent 4.6.7 (privacy unknown: treated as private, kept running
+	// by default; docs/compatibility.md, "qBittorrent 4.6.7 runs").
+	{Workflow: policy.WorkflowNoProgressRecovery, Manager: adapter.KindSonarr, ManagerVersion: "4.0.20.3014", Client: adapter.KindQBittorrent, ClientVersion: "4.6.7"},
+	{Workflow: policy.WorkflowNoProgressRecovery, Manager: adapter.KindRadarr, ManagerVersion: "6.4.4.10685", Client: adapter.KindQBittorrent, ClientVersion: "4.6.7"},
+	{Workflow: policy.WorkflowMetadataRecovery, Manager: adapter.KindSonarr, ManagerVersion: "4.0.20.3014", Client: adapter.KindQBittorrent, ClientVersion: "4.6.7"},
+	{Workflow: policy.WorkflowMetadataRecovery, Manager: adapter.KindRadarr, ManagerVersion: "6.4.4.10685", Client: adapter.KindQBittorrent, ClientVersion: "4.6.7"},
+	{Workflow: policy.WorkflowPreservedDataFailure, Manager: adapter.KindSonarr, ManagerVersion: "4.0.20.3014", Client: adapter.KindQBittorrent, ClientVersion: "4.6.7"},
+	{Workflow: policy.WorkflowPreservedDataFailure, Manager: adapter.KindRadarr, ManagerVersion: "6.4.4.10685", Client: adapter.KindQBittorrent, ClientVersion: "4.6.7"},
+	{Workflow: policy.WorkflowPartialPack, Manager: adapter.KindSonarr, ManagerVersion: "4.0.20.3014", Client: adapter.KindQBittorrent, ClientVersion: "4.6.7"},
 	// Proactive missing searches involve no client (docs/compatibility.md,
 	// "Proactive search runs").
 	{Workflow: policy.WorkflowMissingSearch, Manager: adapter.KindSonarr, ManagerVersion: "4.0.20.3014"},
