@@ -277,12 +277,19 @@ for t in json.load(open(manifest)):
     if t["key"] == "stopped":
         act(t["hash"], "stop", "pause")
 full_hashes = {t["hash"] for t in json.load(open(manifest)) if t.get("data") == "full"}
-deadline = time.time() + 30
-while time.time() < deadline:
+# Every fully present payload must be checked and 100% verified before the
+# restart: a check still running (or not yet started) when the payload of
+# errored-restart is deleted produced stalledDL with nothing verified
+# (qBittorrent 4.6.7 at 118f15c) instead of missingFiles.
+deadline = time.time() + 60
+while True:
     rows = json.loads(curl(qbt + "/api/v2/torrents/info"))
-    states = {r["hash"]: r["state"] for r in rows}
-    if all(h in states and not states[h].startswith("checking") for h in full_hashes):
+    info = {r["hash"]: r for r in rows}
+    pending = [h for h in full_hashes if h not in info or info[h]["state"].startswith("checking") or info[h].get("progress", 0) < 1]
+    if not pending:
         break
+    if time.time() > deadline:
+        sys.exit("qBittorrent did not verify the full payloads before the restart: %s" % {h: (info.get(h) or {}).get("state") for h in pending})
     time.sleep(0.5)
 time.sleep(1)
 PY
