@@ -66,6 +66,10 @@ type Engine struct {
 	// cycle's transaction (automatic dispatch).
 	afterCycle func(ctx context.Context, rep CycleReport)
 
+	cycleMu   sync.Mutex // serializes snapshot collection and persistence
+	queueWall time.Time
+	queueMono int64
+
 	mu     sync.Mutex
 	probes map[string]probeState
 	// missingRead is when each manager's missing list was last read.
@@ -128,7 +132,11 @@ func New(ctx context.Context, o Options) (*Engine, error) {
 func (e *Engine) RunID() string { return e.runID }
 
 // OnCycle installs fn to run after each persisted cycle of Run.
-func (e *Engine) OnCycle(fn func(ctx context.Context, rep CycleReport)) { e.afterCycle = fn }
+func (e *Engine) OnCycle(fn func(ctx context.Context, rep CycleReport)) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.afterCycle = fn
+}
 
 // Fresh returns the connections read successfully (and, for listings,
 // completely) in rep.
@@ -240,8 +248,13 @@ func (e *Engine) Run(ctx context.Context) error {
 			rep := e.Cycle(ctx, &next)
 			if rep.StoreError != "" {
 				e.log.Error("cycle could not be persisted; no findings were updated", "err", rep.StoreError)
-			} else if e.afterCycle != nil {
-				e.afterCycle(ctx, rep)
+			} else {
+				e.mu.Lock()
+				after := e.afterCycle
+				e.mu.Unlock()
+				if after != nil {
+					after(ctx, rep)
+				}
 			}
 			timer.Reset(time.Until(next))
 		}

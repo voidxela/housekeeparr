@@ -1409,3 +1409,17 @@ func TestRunningSearchBlocksLaterSearchAfterSpacing(t *testing.T) {
 		t.Fatalf("next search did not proceed once the first completed: %v", s)
 	}
 }
+
+func TestPartialPackImportSettlingRestartsAfterObservationGap(t *testing.T) {
+	w := packWorld(t, nil)
+	w.run(10 * time.Minute)
+	w.clock.Advance(2 * time.Hour)
+	w.run(10 * time.Minute)
+	if r := w.mgr.Removals(); len(r) != 0 {
+		t.Fatalf("a gap counted toward import settling: %+v", r)
+	}
+	w.run(30 * time.Minute)
+	if r := w.mgr.Removals(); len(r) != 1 {
+		t.Fatalf("pack was not recovered after renewed settling: %+v", r)
+	}
+}

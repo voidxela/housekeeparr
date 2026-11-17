@@ -22,6 +22,8 @@ const probeMaxAge = 6 * time.Hour
 // Cycle performs one observation cycle. next, when non-nil, is recorded
 // as the next scheduled cycle.
 func (e *Engine) Cycle(ctx context.Context, next *time.Time) CycleReport {
+	e.cycleMu.Lock()
+	defer e.cycleMu.Unlock()
 	start := e.clock.Now()
 	rep := CycleReport{StartedAt: start}
 	fail := func(err error) CycleReport {
@@ -51,9 +53,17 @@ func (e *Engine) Cycle(ctx context.Context, next *time.Time) CycleReport {
 	needCommands, _ := e.st.ManagersAwaitingSearch(ctx)
 	results := e.fetchAll(ctx, nextAttempt, needCommands)
 	var res findings.Result
+	eff, err := e.cfg.EffectivePolicy("")
+	if err != nil {
+		return fail(err)
+	}
+	queueWall, queueMono := e.clock.Now(), e.clock.MonoMS()
+	wallElapsed := queueWall.Round(0).Sub(e.queueWall.Round(0))
+	monoElapsed := time.Duration(queueMono-e.queueMono) * time.Millisecond
+	renewAttention := !e.queueWall.IsZero() && (wallElapsed < 0 || (wallElapsed-monoElapsed).Abs() > eff.Settings.ClockTolerance)
 	err = e.st.Write(ctx, func(tx *store.Tx) error {
 		now := e.clock.Now()
-		gone, failures, err := e.persist(tx, results, now)
+		gone, failures, err := e.persist(tx, results, now, eff.Settings.MaxObservationGap, renewAttention)
 		if err != nil {
 			return err
 		}
@@ -79,6 +89,7 @@ func (e *Engine) Cycle(ctx context.Context, next *time.Time) CycleReport {
 	if err != nil {
 		return fail(fmt.Errorf("persist cycle: %w", err))
 	}
+	e.queueWall, e.queueMono = queueWall, queueMono
 	e.setStoreErr(nil)
 	e.readMissing(ctx, results)
 	e.readSources(ctx, results)
@@ -230,7 +241,7 @@ func (e *Engine) dropProbe(id string) {
 }
 
 // persist records connection outcomes and snapshots.
-func (e *Engine) persist(tx *store.Tx, results []*fetched, now time.Time) (map[string][]store.GoneTransfer, map[string]int, error) {
+func (e *Engine) persist(tx *store.Tx, results []*fetched, now time.Time, maxGap time.Duration, renewAttention bool) (map[string][]store.GoneTransfer, map[string]int, error) {
 	gone := map[string][]store.GoneTransfer{}
 	failures := map[string]int{}
 	interval := e.cfg.Polling.Interval.Duration
@@ -306,7 +317,7 @@ func (e *Engine) persist(tx *store.Tx, results []*fetched, now time.Time) (map[s
 			}
 		}
 		if f.queue != nil {
-			if _, err := tx.SaveQueueSnapshot(*f.queue); err != nil {
+			if _, err := tx.SaveQueueSnapshot(*f.queue, maxGap, renewAttention); err != nil {
 				return nil, nil, err
 			}
 		}

@@ -65,7 +65,7 @@ func QueueItemKey(q domain.QueueItem) string {
 
 // SaveQueueSnapshot persists a successful queue read. Only a complete
 // listing marks absent rows gone.
-func (t *Tx) SaveQueueSnapshot(snap domain.QueueSnapshot) (gone []QueueRecord, err error) {
+func (t *Tx) SaveQueueSnapshot(snap domain.QueueSnapshot, maxGap time.Duration, renewAttention bool) (gone []QueueRecord, err error) {
 	at := snap.CollectedAt
 	seen := map[string]bool{}
 	for _, q := range snap.Items {
@@ -78,8 +78,13 @@ func (t *Tx) SaveQueueSnapshot(snap domain.QueueSnapshot) (gone []QueueRecord, e
 		_, err = t.exec(`INSERT INTO queue_items(manager_id, item_key, queue_id, download_id, first_seen, last_seen, present, latest_json)
 			VALUES(?, ?, ?, ?, ?, ?, 1, ?)
 			ON CONFLICT(manager_id, item_key) DO UPDATE SET queue_id=excluded.queue_id, download_id=excluded.download_id,
+				attention_since=CASE WHEN ? OR queue_items.present=0 OR queue_items.last_seen > excluded.last_seen
+					OR excluded.last_seen - queue_items.last_seen > ?
+					OR json_extract(queue_items.latest_json, '$.status_messages') IS NOT json_extract(excluded.latest_json, '$.status_messages')
+					OR json_extract(queue_items.latest_json, '$.remaining_bytes') IS NOT json_extract(excluded.latest_json, '$.remaining_bytes')
+					THEN NULL ELSE queue_items.attention_since END,
 				last_seen=excluded.last_seen, present=1, gone_at=NULL, latest_json=excluded.latest_json`,
-			snap.ManagerID, key, q.QueueID, nullStr(q.DownloadID), ms(at), ms(at), string(b))
+			snap.ManagerID, key, q.QueueID, nullStr(q.DownloadID), ms(at), ms(at), string(b), renewAttention, maxGap.Milliseconds())
 		if err != nil {
 			return nil, err
 		}
