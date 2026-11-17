@@ -57,8 +57,8 @@ func (a *authState) credentialsOK(user, pass string) bool {
 	return subtle.ConstantTimeCompare(u[:], a.user[:])&subtle.ConstantTimeCompare(p[:], a.pass[:]) == 1
 }
 
-// locked reports whether too many recent failures block logins.
-func (a *authState) locked(now time.Time) bool {
+// authenticate checks the shared limit and records a failure atomically.
+func (a *authState) authenticate(now time.Time, user, pass string) (ok, locked bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	keep := a.failures[:0]
@@ -68,13 +68,14 @@ func (a *authState) locked(now time.Time) bool {
 		}
 	}
 	a.failures = keep
-	return len(a.failures) >= maxFailures
-}
-
-func (a *authState) fail(now time.Time) {
-	a.mu.Lock()
-	a.failures = append(a.failures, now)
-	a.mu.Unlock()
+	if len(a.failures) >= maxFailures {
+		return false, true
+	}
+	if !a.credentialsOK(user, pass) {
+		a.failures = append(a.failures, now)
+		return false, false
+	}
+	return true, false
 }
 
 func (a *authState) sign(payload string) string {
@@ -136,11 +137,10 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) bool {
 		return true
 	}
 	if strings.HasPrefix(r.URL.Path, "/api/") {
-		if u, p, ok := r.BasicAuth(); ok && r.Method == http.MethodGet && !a.locked(time.Now()) {
-			if a.credentialsOK(u, p) {
+		if u, p, ok := r.BasicAuth(); ok && r.Method == http.MethodGet {
+			if authenticated, _ := a.authenticate(time.Now(), u, p); authenticated {
 				return true
 			}
-			a.fail(time.Now())
 		}
 		w.Header().Set("WWW-Authenticate", `Basic realm="Housekeeparr", charset="UTF-8"`)
 		http.Error(w, "Authentication required.", http.StatusUnauthorized)
@@ -204,12 +204,12 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	}
 	next := localNext(r.PostFormValue("next"))
 	now := time.Now()
-	if s.auth.locked(now) {
+	authenticated, locked := s.auth.authenticate(now, r.PostFormValue("username"), r.PostFormValue("password"))
+	if locked {
 		render(http.StatusTooManyRequests, "Too many failed sign-ins; try again in a few minutes.", next)
 		return
 	}
-	if !s.auth.credentialsOK(r.PostFormValue("username"), r.PostFormValue("password")) {
-		s.auth.fail(now)
+	if !authenticated {
 		s.log.Warn("failed sign-in", "remote", r.RemoteAddr)
 		render(http.StatusUnauthorized, "Wrong username or password.", next)
 		return

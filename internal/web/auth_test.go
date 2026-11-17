@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -186,5 +187,37 @@ func TestRemoteListenerRequirements(t *testing.T) {
 	}
 	if _, err := New(svc, Options{Listen: "0.0.0.0:8484", Auth: auth, AllowedHosts: []string{"h"}, TLSCert: "/c", TLSKey: "/k"}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestConcurrentFailedSignInsRespectGlobalLimit(t *testing.T) {
+	e := authEnv(t)
+	lp := e.req(t, "GET", "/login", nil, nil)
+	form := url.Values{"csrf": {token(t, lp.Body.String())}, "username": {"admin"}, "password": {"wrong"}}
+	start := make(chan struct{})
+	const requests = 100
+	statuses := make(chan int, requests)
+	var wg sync.WaitGroup
+	for range requests {
+		wg.Go(func() {
+			<-start
+			statuses <- e.req(t, "POST", "/login", form, nil).Code
+		})
+	}
+	close(start)
+	wg.Wait()
+	close(statuses)
+	failed := 0
+	for status := range statuses {
+		switch status {
+		case http.StatusUnauthorized:
+			failed++
+		case http.StatusTooManyRequests:
+		default:
+			t.Fatalf("unexpected sign-in status %d", status)
+		}
+	}
+	if failed != maxFailures {
+		t.Fatalf("ran %d credential checks before blocking, want %d", failed, maxFailures)
 	}
 }
