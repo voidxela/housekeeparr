@@ -2,12 +2,12 @@
 
 Continue implementing Housekeeparr through the complete approved v1 scope in
 `docs/SPEC.md`. Read `AGENTS.md`, the entire SPEC, `docs/STATUS.md` (start
-with "Session of 2026-11-16 (third)") and `docs/compatibility.md` before
+with "Latest-progress review — 2026-11-17") and `docs/compatibility.md` before
 changing behavior. Reviews under `docs/reviews/` supply background; R1–R10
-all have fixes with regression tests. Implement and verify concrete
+all have fixes with regression tests. Read `docs/reviews/2026-11-17.md`: R11–R13 remain open at reviewed HEAD `f83cf4d`. Implement and verify concrete
 increments, not just plans.
 
-State after the third session of 2026-11-16 (`dev`, not pushed):
+State reviewed on 2026-11-17 (`dev` at `f83cf4d`; review/handoff documentation may be uncommitted):
 
 - **R8–R10 fixed.** Plans require a diagnosis made under the current
   diagnostic settings; outcome progress needs a fresh complete client
@@ -90,29 +90,55 @@ do not turn a choice of defaults into a prolonged blocker for other work.
 
 ## Immediate work, in priority order
 
-1. **Preserved-data failure handling** (SPEC §§5, 7; STATUS milestone 3).
-   Must not rely on client state alone: missing data is invisible on
-   qBittorrent/Deluge until restart, a forced recheck can look like a fresh
-   download, and rTorrent's `d.message` can be stale. Prove one
-   manager/client slice first, with its own permission and evidence.
-2. **Add a "require positive piece unavailability" policy setting** (SPEC
-   §13.4 scenario 2). It must be part of `Settings.Revision()` so R8's
-   check covers it.
-3. **Metadata recovery follow-ups:** real-instance automatic dispatch
-   (shortened `metadata_timeout` via overrides, like `TestAutomaticRecovery`);
-   observe what a manager does when a private torrent left running later
-   completes; run and register the unknown-privacy path on qBittorrent 4.6.7.
-4. **Focused qBittorrent 4.6.7 harness diagnosis** (client-only):
-   `errored-restart` failed at `118f15c` (`stalledDL`, verified 0, not
-   `missingFiles`). `run.sh` polls for non-checking full torrents but never
-   requires their verified bytes and proceeds when the deadline expires.
-   Establish the cause from artifacts before changing anything; failure log
-   `~/.cache/hk-rtdiag/keep/qbt467-118f15c.log`. Use `--managers none`.
-5. **Operator experience and remaining workflows:** notifications and
-   deferral status; partial packs with positive import/coverage evidence;
-   targeted/proactive searches and source coverage; remote web/auth;
-   packaging/security/performance. A kept-running private torrent keeps an
-   open stall finding with an explanation; consider a distinct state.
+1. **Short spec reconciliation and R11–R13 fixes**, not a broad redesign.
+   Use the review's reproductions. R11: handled recovery identity must include
+   client instance; a recovery on qbit currently lets the same hash on qbit2
+   evade the correlated-outage hold. Include current association/attempt context
+   so historical handling is not an eternal exemption. R12: enforce already-hit
+   capacity ceilings before any replacement, including keep-running mode;
+   separate that gate from incremental retained cost. R13: remove stale preview
+   claims that capacity and replacement tracking are unimplemented. Add meaningful
+   regression tests; these local changes do not themselves require a real matrix.
+2. **Update only the affected SPEC contracts before expanding writes.** Reconcile
+   the approved keep-running default with the unconditional slot-release text;
+   define retained running/stopped accounting and logical size versus downloaded
+   payload (unknown metadata size is not known zero logical size); specify the
+   correlated-stall population and handled-attempt exclusion. Preserve approved
+   privacy defaults and distinguish policy choices from unsupported claims about
+   tracker obligations. Write a compact preserved-data failure contract covering
+   evidence, excluded local/systemic faults, permissions, exact effects and
+   outcomes. The review supplies concrete recommendations. Straight consistency
+   corrections need no renewed permission; if an unresolved product choice would
+   change approved behavior, ask narrowly while continuing independent work.
+   Do not promote proposed quota/timing values to approved defaults.
+3. **Deliver one preserved-data failure slice** through the shared pipeline,
+   starting with one manager/client combination and positively established cause.
+   Native error/complete state alone is insufficient: missing data can be invisible,
+   recheck resets counters, and rTorrent messages can be stale. Preserve files,
+   registration and uncertainty; do not introduce filesystem scans or automatic
+   rechecks implicitly. Prove the slice on a disposable instance, record evidence,
+   then extend to both managers and all four clients at workflow milestones.
+4. **Parallel independent work is authorized and encouraged.** Use agy as below
+   for the missing positive-piece-unavailability setting (include it in
+   `Settings.Revision()`), current preview text/tests, or a narrowly scoped
+   read-only import/partial-pack evidence investigation. Give each delegate its
+   own worktree and nonoverlapping files; integrate and review before validation.
+   Keep heavy real-instance runs serial. Do not wait for every research question
+   to close before shipping an independently verified increment.
+5. **Batch follow-ups with relevant work:** real-instance automatic metadata
+   dispatch; a kept-running original completing after replacement is requested;
+   qBittorrent 4.6.7 unknown-privacy recovery and registration. First diagnose
+   4.6.7's `errored-restart` fixture with `--managers none`: at `118f15c` it
+   returned `stalledDL`, verified 0, rather than `missingFiles`; the harness did
+   not require verified bytes and proceeded after a readiness deadline. Inspect
+   `~/.cache/hk-rtdiag/keep/qbt467-118f15c.log` if still available. Do not loosen
+   assertions or register untested writes. The existing 4.x workflow branch
+   builds policy by hand and still expects refusal; align it with the approved
+   keep-running policy when testing that path.
+6. **Continue remaining v1**: partial-pack positive import/coverage evidence and
+   safe clearance, bounded targeted/proactive searches and coverage findings,
+   notifications/deferral visibility, authenticated remote web and accessible UI,
+   packaging/security/performance acceptance. Preserve all ten acceptance scenarios.
 
 Validation follow-ups to batch with relevant work: redownload-disabled and
 interactive-grab refusal against real managers; a shortened-window real

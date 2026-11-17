@@ -10,6 +10,27 @@ repository · **unverified** = implemented, but behaviour against real
 released applications has not been established · **remaining** = not
 implemented.
 
+## Latest-progress review — 2026-11-17 (`f83cf4d`)
+
+[Review and reproducible tests](reviews/2026-11-17.md) confirms the metadata/
+private-recovery progress but identifies three open findings:
+
+- **R11 (high):** handled-recovery lookup is hash-global, not client-scoped.
+  A deterministic reproduction recovers a hash on one client, then incorrectly
+  dispatches on a second client with three correlated stalls sharing that hash.
+- **R12 (high):** keep-running recovery bypasses an already-reached retained
+  ceiling because the capacity check exists only in the stop branch.
+- **R13 (medium):** shared previews still claim capacity and replacement-outcome
+  tracking are unimplemented, contradicting current behavior.
+
+Existing Go tests pass (cached); build, vet and formatting pass. Two review
+reproductions fail as expected. No new real-instance run. Before expanding
+writes, fix these and reconcile SPEC's slot-release requirement with the approved
+keep-running default, define retained-size/running-transfer accounting, and add
+a concrete preserved-data failure contract. Recommendations are not newly
+approved defaults. [Updated handoff](CLAUDE_NEXT_SESSION.md) retains agy
+parallelization authorization and targeted validation for velocity.
+
 ## Independent review — 2026-11-15
 
 [Review findings and verification](reviews/2026-11-15.md) confirmed the
