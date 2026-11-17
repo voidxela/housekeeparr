@@ -285,6 +285,15 @@ func indexer(rels []release, dir, key, base string) http.Handler {
 		fmt.Fprint(w, xml.Header)
 		_, _ = w.Write(b)
 	})
+	// A tracker that knows no torrent: every announce is rejected as not
+	// registered, the tracker-side failure preserved-data handling acts on
+	// (SPEC §7.2). Only fixtures generated for that test announce here.
+	mux.HandleFunc("/announce", func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("tracker announce rejected (event %q)", r.URL.Query().Get("event"))
+		w.Header().Set("Content-Type", "text/plain")
+		reason := "Unregistered torrent"
+		fmt.Fprintf(w, "d14:failure reason%d:%se", len(reason), reason)
+	})
 	mux.HandleFunc("/dl/", func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("indexer download %s", r.URL.Path)
 		if r.URL.Query().Get("apikey") != key {

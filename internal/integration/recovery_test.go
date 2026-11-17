@@ -200,6 +200,75 @@ func TestRadarrPrivateRecoveryWorkflow(t *testing.T) {
 	runRecoveryMode(t, a, rc, e, "MoviesSearch", policy.WorkflowNoProgressRecovery, policy.PrivateKeepRunning)
 }
 
+// Preserved-data failure handling (SPEC §7.2): the grab announces to the
+// stand-in's tracker, which rejects every announce as "Unregistered
+// torrent". Where the client's adapter classifies tracker results
+// (Transmission), the real adapter must report the rejection and the
+// workflow fails and blocklists the grab and stops the torrent, keeping
+// it and its data. Elsewhere the adapter must report the signal as
+// unsupported, so nothing could ever qualify there.
+func TestSonarrPreservedDataFailureWorkflow(t *testing.T) {
+	mm := managedManifest(t)
+	a := arrAPI{t: t, base: env(t, "HK_IT_SONARR_URL"), key: env(t, "HK_IT_SONARR_KEY")}
+	prepareManager(t, a, env(t, "HK_IT_WORK")+"/library/tv", []int{5000, 5040})
+	sid := ensureSeries(t, a)
+	ep := episodeID(t, a, sid, 1, 9)
+	e := mm["tv-e09-unregistered"]
+	waitGrab(t, a, e, map[string]any{"name": "EpisodeSearch", "episodeIds": []int{ep}}, url.Values{"episodeId": {fmt.Sprint(ep)}})
+	settleIncomplete(t, e)
+	if !settleRejected(t, e) {
+		return
+	}
+	runRecoveryFor(t, a, sonarrClient(t), e, "EpisodeSearch", policy.WorkflowPreservedDataFailure)
+}
+
+func TestRadarrPreservedDataFailureWorkflow(t *testing.T) {
+	mm := managedManifest(t)
+	a := arrAPI{t: t, base: env(t, "HK_IT_RADARR_URL"), key: env(t, "HK_IT_RADARR_KEY")}
+	prepareManager(t, a, env(t, "HK_IT_WORK")+"/library/movies", []int{2000, 2040})
+	e := mm["film-i-unregistered"]
+	id := addMovie(t, a, e.Managed.TmdbID)
+	waitGrab(t, a, e, map[string]any{"name": "MoviesSearch", "movieIds": []int{id}}, url.Values{"movieId": {fmt.Sprint(id)}})
+	settleIncomplete(t, e)
+	if !settleRejected(t, e) {
+		return
+	}
+	rc, err := radarr.New(radarr.Options{ID: "radarr", BaseURL: env(t, "HK_IT_RADARR_URL"), APIKey: env(t, "HK_IT_RADARR_KEY"), Timeout: 15 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runRecoveryFor(t, a, rc, e, "MoviesSearch", policy.WorkflowPreservedDataFailure)
+}
+
+// settleRejected waits until the client reports the tracker's rejection.
+// It returns false (after checking the signal is unsupported, not
+// misreported) for clients whose adapter does not classify tracker results.
+func settleRejected(t *testing.T, e managedEntry) bool {
+	t.Helper()
+	if managerClientKind() != "transmission" {
+		tr, ok := clientState(t, e.Hash)
+		if !ok || tr.SourceFailure.Status != domain.Unsupported {
+			t.Fatalf("%s: tracker results must be unsupported on %s, got %+v", e.Key, managerClientKind(), tr.SourceFailure)
+		}
+		t.Logf("%s: %s does not classify tracker results (%s); preserved-data handling cannot qualify there", e.Key, managerClientKind(), tr.SourceFailure.Note)
+		return false
+	}
+	deadline := time.Now().Add(120 * time.Second)
+	var last domain.Transfer
+	for time.Now().Before(deadline) {
+		if tr, ok := clientState(t, e.Hash); ok {
+			last = tr
+			if v, ok := tr.SourceFailure.Get(); ok && v == domain.SourceUnregistered {
+				t.Logf("%s: tracker rejection reported: %s/%s message %q", e.Key, tr.NativeState, tr.StateClass, tr.ClientMessage.Value)
+				return true
+			}
+		}
+		time.Sleep(2 * time.Second)
+	}
+	t.Fatalf("%s: tracker rejection never reported (last %s/%s source %+v message %+v)", e.Key, last.NativeState, last.StateClass, last.SourceFailure, last.ClientMessage)
+	return false
+}
+
 // settleMetadata waits until the client reports the grab as acquiring
 // metadata (with privacy and size unknown).
 func settleMetadata(t *testing.T, e managedEntry) {
@@ -312,8 +381,16 @@ func runRecoveryMode(t *testing.T, a arrAPI, mgr recoveryManager, me managedEntr
 	}
 	// Only the diagnosis is supplied: waiting out the stall window is not useful here.
 	diag, ftype := policy.DiagnosisNoProgress, domain.FindingTransferStalled
-	if wf == policy.WorkflowMetadataRecovery {
+	switch wf {
+	case policy.WorkflowMetadataRecovery:
 		diag, ftype = policy.DiagnosisMetadataTimeout, domain.FindingMetadataTimeout
+	case policy.WorkflowPreservedDataFailure:
+		// The real adapter's stored classification is the evidence here;
+		// only the confirmation window is not waited out.
+		if v, ok := stored.Latest.SourceFailure.Get(); !ok || v != domain.SourceUnregistered {
+			t.Fatalf("engine stored no unregistered rejection: %+v", stored.Latest.SourceFailure)
+		}
+		diag, ftype = policy.DiagnosisSourceUnregistered, domain.FindingSourceRejected
 	}
 	// The supplied diagnosis is made under the plan's (default) settings.
 	stored.Assessment = &policy.Assessment{Status: policy.StatusQualified, Diagnosis: diag, Headline: "supplied by the integration test",

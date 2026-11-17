@@ -22,7 +22,7 @@ def bencode(v):
 def pieces(data):
     return b"".join(hashlib.sha1(data[i:i + PIECE]).digest() for i in range(0, len(data), PIECE))
 
-def make(out, name, files, private=False):
+def make(out, name, files, private=False, tracker=TRACKER):
     """files: list of (relative path, size). Returns (info_hash, payload dict)."""
     payload = {p: os.urandom(s) for p, s in files}
     if len(files) == 1 and files[0][0] == name:
@@ -33,7 +33,7 @@ def make(out, name, files, private=False):
                 "files": [{"length": s, "path": p.split("/")} for p, s in files]}
     if private:
         info["private"] = 1
-    meta = {"announce": TRACKER, "info": info, "created by": "housekeeparr-it"}
+    meta = {"announce": tracker, "info": info, "created by": "housekeeparr-it"}
     with open(os.path.join(out, name + ".torrent"), "wb") as f:
         f.write(bencode(meta))
     return hashlib.sha1(bencode(info)).hexdigest(), payload
@@ -88,8 +88,8 @@ def main(out, save):
     # the managers grab them and create real grab history. Partial data, so
     # each grab stays incomplete.
     managed = []
-    def release(key, name, size, private=False, **ident):
-        h, payload = make(out, name, [(name + ".mkv", size)], private)
+    def release(key, name, size, private=False, tracker=TRACKER, **ident):
+        h, payload = make(out, name, [(name + ".mkv", size)], private, tracker)
         write(save, name, payload, False, lambda p, d: d[: len(d) // 2] + b"\0" * (len(d) - len(d) // 2))
         managed.append(dict(key=key, name=name, hash=h, size=size, files=[name + ".mkv"], data="half", managed=ident))
     release("tv-e01", "Housekeeparr.Fixture.Show.S01E01.1080p.WEB-DL.x264-HKFIX", 4 * MB, kind="tv", tvdbId=999001, season=1, episode=1)
@@ -109,6 +109,11 @@ def main(out, save):
     # Private torrents (info.private = 1), for the private-recovery tests.
     release("tv-e08-private", "Housekeeparr.Fixture.Show.S01E08.1080p.WEB-DL.x264-HKFIX", 4 * MB, private=True, kind="tv", tvdbId=999001, season=1, episode=8)
     release("film-h-private", "Housekeeparr.Eighth.Fixture.Film.2014.1080p.WEB-DL.x264-HKFIX", 4 * MB, private=True, kind="movie", tmdbId=999009, imdbId="tt9990009")
+    # Announcing to the stand-in's rejecting tracker (HK_IT_REJECT_ANNOUNCE,
+    # loopback, inside the namespace), for the preserved-data failure tests.
+    reject = os.environ.get("HK_IT_REJECT_ANNOUNCE", TRACKER)
+    release("tv-e09-unregistered", "Housekeeparr.Fixture.Show.S01E09.1080p.WEB-DL.x264-HKFIX", 4 * MB, tracker=reject, kind="tv", tvdbId=999001, season=1, episode=9)
+    release("film-i-unregistered", "Housekeeparr.Ninth.Fixture.Film.2013.1080p.WEB-DL.x264-HKFIX", 4 * MB, tracker=reject, kind="movie", tmdbId=999010, imdbId="tt9990010")
     # Magnet-only releases for random hashes: no .torrent and no payload, so
     # their metadata can never arrive (the metadata-recovery tests).
     def magnet(key, name, **ident):

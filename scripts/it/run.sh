@@ -184,7 +184,7 @@ start_standin() {
 	printf '127.0.0.1 localhost\n::1 localhost\n127.0.0.1 %s\n' "$META_HOSTS" > "$WORK/hosts"
 	mount --bind "$WORK/hosts" /etc/hosts
 	go build -tags integration -o "$WORK/standin" "$ROOT/internal/integration/standin"
-	local port key; port=$(freeport); key=$(python3 -c 'import secrets; print(secrets.token_hex(16))')
+	local port=$STANDIN_PORT key; key=$(python3 -c 'import secrets; print(secrets.token_hex(16))')
 	"$WORK/standin" -tls-addr 127.0.0.1:443 -indexer-addr "127.0.0.1:$port" -hosts "${META_HOSTS// /,}" \
 		-ca-out "$WORK/standin-ca.pem" -routes "$ROOT/internal/integration/testdata/standin/routes.json" \
 		-manifest "$WORK/torrents/managed.json" -torrents "$WORK/torrents" -apikey "$key" -ready "$WORK/standin.ready" \
@@ -198,7 +198,10 @@ start_standin() {
 export HK_IT_MANIFEST="$WORK/torrents/manifest.json" HK_IT_WORK="$WORK"
 
 # --- synthetic torrents -----------------------------------------------------
-python3 -I "$HERE/fixtures.py" "$WORK/torrents" "$WORK/downloads"
+# The stand-in's port is chosen first: its rejecting tracker is announced by
+# the preserved-data fixtures.
+STANDIN_PORT=$(freeport)
+HK_IT_REJECT_ANNOUNCE="http://127.0.0.1:$STANDIN_PORT/announce" python3 -I "$HERE/fixtures.py" "$WORK/torrents" "$WORK/downloads"
 
 # --- qBittorrent --------------------------------------------------------------
 start_qbittorrent() {
@@ -564,7 +567,7 @@ start_sonarr() {
 		MANAGED_PROBES+=(TestSonarrManagedRemovalSemantics)
 		# The full recovery workflow runs through whichever client the
 		# managers use (--manager-client).
-		MANAGED_PROBES+=(TestSonarrRecoveryWorkflow TestSonarrMetadataRecoveryWorkflow TestSonarrPrivateRecoveryWorkflow)
+		MANAGED_PROBES+=(TestSonarrRecoveryWorkflow TestSonarrMetadataRecoveryWorkflow TestSonarrPrivateRecoveryWorkflow TestSonarrPreservedDataFailureWorkflow)
 	fi
 }
 
@@ -575,7 +578,7 @@ start_radarr() {
 	PROBES+=(TestRadarrQueueRemovalSemantics)
 	if [ "$STANDIN" = 1 ]; then
 		MANAGED_PROBES+=(TestRadarrManagedRemovalSemantics)
-		MANAGED_PROBES+=(TestRadarrRecoveryWorkflow TestRadarrMetadataRecoveryWorkflow TestRadarrPrivateRecoveryWorkflow)
+		MANAGED_PROBES+=(TestRadarrRecoveryWorkflow TestRadarrMetadataRecoveryWorkflow TestRadarrPrivateRecoveryWorkflow TestRadarrPreservedDataFailureWorkflow)
 	fi
 }
 

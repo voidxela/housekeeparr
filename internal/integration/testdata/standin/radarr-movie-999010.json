@@ -1,0 +1,35 @@
+{
+ "tmdbId": 999010,
+ "imdbId": "tt9990010",
+ "title": "Housekeeparr Ninth Fixture Film",
+ "originalTitle": "Housekeeparr Ninth Fixture Film",
+ "titleSlug": "999010",
+ "overview": "Fictional film served by the Housekeeparr integration stand-in.",
+ "year": 2013,
+ "inCinema": "2013-03-01T00:00:00Z",
+ "physicalRelease": "2013-06-01T00:00:00Z",
+ "digitalRelease": "2013-05-15T00:00:00Z",
+ "runtime": 100,
+ "originalLanguage": "en",
+ "status": "Released",
+ "studio": "Fixture Studio",
+ "movieRatings": {
+  "tmdb": {
+   "count": 1,
+   "value": 7.0,
+   "type": "user"
+  }
+ },
+ "ratings": [],
+ "genres": [],
+ "keywords": [],
+ "alternativeTitles": [],
+ "translations": [],
+ "certifications": [],
+ "images": [],
+ "credits": {
+  "cast": [],
+  "crew": []
+ },
+ "recommendations": []
+}
