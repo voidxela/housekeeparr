@@ -22,3 +22,32 @@ fetch_debs() {
 	done
 }
 
+
+# Check the namespace's complete interface list before starting any client.
+# A failed connection to an external address alone also passes on many
+# connected hosts where that particular address is blocked.
+verify_loopback_only() {
+	local interfaces
+	interfaces=$(awk -F: 'NR > 2 { gsub(/[[:space:]]/, "", $1); print $1 }' /proc/net/dev)
+	if [ "$interfaces" != lo ]; then
+		echo "network namespace must contain only loopback" >&2
+		return 1
+	fi
+}
+
+# Some runtimes provide a working loopback in new namespaces and disallow
+# netlink configuration. Check real TCP connectivity before using ip.
+loopback_ready() {
+	python3 - <<'PY'
+import socket
+
+try:
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        with socket.create_connection(listener.getsockname(), timeout=1):
+            pass
+except OSError:
+    raise SystemExit(1)
+PY
+}

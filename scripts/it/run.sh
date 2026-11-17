@@ -150,13 +150,17 @@ if [ "$NETNS" = 1 ] && [ -z "${HK_IT_IN_NETNS:-}" ]; then
 	# -m: a private mount namespace, so the managers' metadata hosts can be
 	# redirected to the loopback stand-in by bind-mounting a private hosts
 	# file over /etc/hosts. The host's /etc/hosts is never modified.
-	exec unshare -rnm env HK_IT_IN_NETNS=1 bash -c 'ip link set lo up && exec "$@"' _ "$0" "${ORIG_ARGS[@]}"
+	exec unshare -rnm env HK_IT_IN_NETNS=1 "$0" "${ORIG_ARGS[@]}"
 fi
 if [ -n "${HK_IT_IN_NETNS:-}" ]; then
-	python3 -c 'import socket,sys; s=socket.socket(); s.settimeout(2); sys.exit(0 if s.connect_ex(("192.0.2.1", 80)) != 0 else 1)' ||
-		{ echo "network namespace is not isolated" >&2; exit 2; }
+	verify_loopback_only
+	if ! loopback_ready; then
+		ip link set lo up
+		loopback_ready || { echo "network namespace loopback is unusable" >&2; exit 2; }
+	fi
 	echo "running in an isolated loopback-only network namespace" >&2
-	# Go must not reach the network either.
+	# Keep loopback fixture requests direct even on hosts with proxy settings.
+	unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
 	export GOFLAGS="${GOFLAGS:+$GOFLAGS }-mod=readonly" GOPROXY=off GOTOOLCHAIN=local
 fi
 
