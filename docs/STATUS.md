@@ -441,10 +441,9 @@ table is exercised with fakes, plus the real-instance recovery runs.
   the outcome after a refresh, and such rows are ineligible.
 - **After a forced recheck, lost data looks like a fresh download on
   qBittorrent and Deluge** (verified bytes 0, no error state). A restart
-  produced `Error` on Deluge; on qBittorrent (5.3.0 and 4.6.7) it also
-  resumed as a fresh download once the fixture verified the payload before
-  stopping (the earlier `missingFiles` came from checks still running;
-  corrected 2026-11-17). Preserved-data handling and the
+  produced `Error` on Deluge; on qBittorrent (5.3.0 and 4.6.7) it produced
+  either `missingFiles` or a fresh download at zero, with the payload
+  verified before stopping (cause not established; corrected 2026-11-17). Preserved-data handling and the
   stall diagnosis must not treat a post-recheck reset to zero as an ordinary
   new download.
 - **rTorrent local messages can be stale**: user stop/start does not clear

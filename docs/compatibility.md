@@ -511,15 +511,16 @@ fail and blocklist the grab and leave the torrent running by default.
   4.6.7 leaves a torrent in `checkingDL` at 0 % indefinitely when a recheck
   is requested while other checks are still queued (the harness now
   rechecks one at a time and fails loudly unless every full payload is
-  100 % verified before the restart); and with the payloads verified,
-  **both 4.6.7 and 5.3.0** (re-checked at `78b64f9`) resume a payload
-  deleted while stopped as a **fresh download** (`stalledDL`, verified 0)
-  with no error. The earlier record that a restart exposes missing data as
-  `missingFiles` came from runs whose checks had not finished before the
-  stop, and is withdrawn as a general statement: on qBittorrent, data lost
-  while stopped can look like a restart from zero; it never looks complete.
-  The fixture assertion accepts either an error or a reset to zero and logs
-  which.
+  100 % verified before the restart). With the payloads verified, a
+  payload deleted while qBittorrent was stopped came back **either** as
+  `missingFiles` (an error) **or** as a fresh download (`stalledDL`,
+  verified 0, no error): 4.6.7 showed the fresh download at `3e32cfb` and
+  `78b64f9`; 5.3.0 showed the fresh download at `78b64f9` and
+  `missingFiles` at `6231af9`. What decides between them is not
+  established. The earlier record that a restart always exposes missing data
+  as `missingFiles` is withdrawn: on qBittorrent, data lost while stopped can
+  look like a restart from zero; it never looks complete. The fixture
+  assertion accepts either outcome and logs which.
 - **Full unselected run** at `78b64f9`, qBittorrent 4.6.7 + Sonarr
   4.0.20.3014 + Radarr 6.4.4.10685: **all 24 required tests passed** —
   observation, queue and managed removal semantics, no-progress, metadata,
