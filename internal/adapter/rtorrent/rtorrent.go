@@ -71,6 +71,7 @@ var (
 		"system.client_version":  true,
 		"system.library_version": true,
 		"d.multicall2":           true,
+		"t.multicall":            true,
 		"d.stop":                 true,
 	}
 	writeMethods = map[string]bool{
@@ -214,7 +215,75 @@ func (c *Client) ListTransfers(ctx context.Context) (domain.TransferSnapshot, er
 		}
 		snap.Transfers = append(snap.Transfers, t)
 	}
+	reads := 0
+	for i := range snap.Transfers {
+		t := &snap.Transfers[i]
+		msg, _ := t.ClientMessage.Get()
+		switch {
+		case t.StateClass != domain.StateDownloading:
+			t.SourceFailure = domain.UnknownValue[domain.SourceFailure]("tracker results are read only for active downloads")
+		case !strings.HasPrefix(msg, "Tracker:"):
+			t.SourceFailure = domain.KnownValue(domain.SourceNoFailure)
+		case reads >= maxTrackerReads:
+			t.SourceFailure = domain.UnknownValue[domain.SourceFailure](fmt.Sprintf("tracker results not read this cycle (bounded to %d per listing)", maxTrackerReads))
+		default:
+			reads++
+			t.SourceFailure = c.trackerResult(ctx, t.NativeID, msg, snap.CollectedAt)
+		}
+	}
 	return snap, nil
+}
+
+// maxTrackerReads bounds the per-download tracker reads in one listing.
+const maxTrackerReads = 25
+
+// trackerFresh bounds how old a tracker failure may be to count: rTorrent
+// retries a failed announce within minutes while the download is active.
+const trackerFresh = time.Hour
+
+// trackerResult establishes whether a "Tracker:" d.message is current.
+// d.message can survive a user stop/start (observed on 0.9.8), so it counts
+// only when an enabled tracker's latest failure is newer than its latest
+// success and recent (t.failed_time_last, t.success_time_last). Any enabled
+// tracker that succeeded more recently means nothing rejects the download.
+func (c *Client) trackerResult(ctx context.Context, hash, msg string, now time.Time) domain.Signal[domain.SourceFailure] {
+	v, err := c.call(ctx, "t.multicall", hash, "", "t.is_enabled=", "t.failed_time_last=", "t.success_time_last=")
+	if err != nil {
+		return domain.UnknownValue[domain.SourceFailure]("tracker list could not be read: " + string(adapter.ClassOf(err)))
+	}
+	rows, ok := v.([]any)
+	if !ok {
+		return domain.UnknownValue[domain.SourceFailure]("tracker list was malformed")
+	}
+	fresh := false
+	for _, r := range rows {
+		cols, ok := r.([]any)
+		if !ok || len(cols) != 3 {
+			return domain.UnknownValue[domain.SourceFailure]("tracker list was malformed")
+		}
+		var x [3]int64
+		for i, col := range cols {
+			n, ok := col.(int64)
+			if !ok {
+				return domain.UnknownValue[domain.SourceFailure]("tracker list was malformed")
+			}
+			x[i] = n
+		}
+		enabled, failed, succeeded := x[0], x[1], x[2]
+		if enabled == 0 {
+			continue
+		}
+		if succeeded > 0 && succeeded >= failed {
+			return domain.KnownValue(domain.SourceNoFailure)
+		}
+		if failed > 0 && now.Sub(time.Unix(failed, 0)) <= trackerFresh {
+			fresh = true
+		}
+	}
+	if !fresh {
+		return domain.UnknownValue[domain.SourceFailure]("the tracker message may be stale: no enabled tracker failed recently")
+	}
+	return domain.KnownValue(domain.ClassifyTrackerError(msg))
 }
 
 func normalize(clientID string, c []any) (domain.Transfer, error) {
@@ -279,9 +348,9 @@ func normalize(clientID string, c []any) (domain.Transfer, error) {
 	} else {
 		t.ClientMessage = domain.KnownValue("")
 	}
-	// d.message can stay stale across a user stop/start, so it is not a
-	// fresh tracker result (SPEC §7.2).
-	t.SourceFailure = domain.UnsupportedValue[domain.SourceFailure]("rTorrent's message can be stale; tracker results are not classified yet")
+	// SourceFailure is set by ListTransfers: d.message alone can be stale
+	// across a user stop/start (SPEC §7.2).
+	t.SourceFailure = domain.UnknownValue[domain.SourceFailure]("tracker result not established")
 	if hasMeta {
 		size, completed := n(7), n(8)
 		sizeChunks, doneChunks, wantedChunks, chunk := n(10), n(11), n(12), n(13)

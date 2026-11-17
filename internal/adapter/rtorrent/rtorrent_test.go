@@ -60,6 +60,13 @@ func server(t *testing.T, user, pass string, override map[string]string) *httpte
 				}
 			}
 			_, _ = w.Write([]byte(load("v0.16.28-d.multicall2.xml")))
+		case "t.multicall":
+			for _, p := range mc.Params[2:] {
+				if !strings.HasPrefix(p, "t.") || strings.Contains(p, ".set") {
+					t.Errorf("non-read command in tracker multicall: %s", p)
+				}
+			}
+			_, _ = w.Write([]byte(trackerRows()))
 		default:
 			t.Errorf("unexpected method %s", mc.Method)
 			_, _ = w.Write([]byte(load("fault.xml")))
