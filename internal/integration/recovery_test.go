@@ -433,10 +433,17 @@ func runRecoveryMode(t *testing.T, a arrAPI, mgr recoveryManager, me managedEntr
 	stored.Assessment = &policy.Assessment{Status: policy.StatusQualified, Diagnosis: diag, Headline: "supplied by the integration test",
 		PolicyRevision: policy.Settings{}.Revision()}
 	pol := policy.Effective{Mode: "automatic", Revision: "it", Automation: []policy.WorkflowPermission{{Workflow: wf, Enabled: true, From: "integration test"}}}
-	if wf == policy.WorkflowMetadataRecovery {
+	// As the built-in defaults: unknown privacy is accepted where defined
+	// (treated as private for recovery), and private_recovery keeps the
+	// torrent running unless the test asks otherwise.
+	if policy.UnknownPrivacyDefined(wf) {
 		pol.UnknownPrivacy = []policy.WorkflowPermission{{Workflow: wf, Enabled: true, From: "integration test"}}
 	}
-	pol.PrivateRecovery, pol.PrivateRecoveryFrom = private, "integration test"
+	mode := private
+	if mode == "" {
+		mode = policy.PrivateKeepRunning
+	}
+	pol.PrivateRecovery, pol.PrivateRecoveryFrom = mode, "integration test"
 	now := time.Now().UTC()
 	in := action.PlanInput{
 		Finding:  domain.Finding{ID: 1, Type: ftype, State: domain.FindingOpen},
@@ -460,20 +467,22 @@ func runRecoveryMode(t *testing.T, a arrAPI, mgr recoveryManager, me managedEntr
 			t.Fatal("unknown privacy accepted without recording the opt-in")
 		}
 	} else if private != "" {
-		if !known || !priv {
+		// Known private, or unknown where the client cannot report privacy
+		// (qBittorrent 4.x), which is treated as private.
+		if known && !priv {
 			t.Fatalf("private fixture reported privacy %v on %s %s", tr.Private, clientKind, cp.Version)
 		}
 		if p.PrivateMode != private || len(p.Operations) != 1 || p.Operations[0].Op != "manager.queue.fail" {
 			t.Fatalf("private plan: mode %q operations %+v", p.PrivateMode, p.Operations)
 		}
 	} else if !known {
-		// qBittorrent 4.x does not report privacy: recovery must refuse.
-		b := p.Blockers()
-		if len(b) != 1 || b[0].Name != "public transfer" {
-			t.Fatalf("unknown privacy: blockers %+v", b)
+		// qBittorrent 4.x does not report privacy: treated as private
+		// (user decision 2026-11-17), so the default keeps it running.
+		if p.PrivateMode != policy.PrivateKeepRunning || len(p.Operations) != 1 || p.Operations[0].Op != "manager.queue.fail" {
+			t.Fatalf("unknown privacy plan: mode %q operations %+v blockers %+v", p.PrivateMode, p.Operations, p.Blockers())
 		}
-		t.Logf("privacy unknown on qBittorrent %s: recovery correctly refused (%s)", cp.Version, b[0].Detail)
-		return
+		t.Logf("privacy unknown on %s %s: treated as private, kept running", clientKind, cp.Version)
+		private = policy.PrivateKeepRunning
 	} else if priv {
 		t.Fatal("synthetic release unexpectedly private")
 	}
