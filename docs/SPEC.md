@@ -146,7 +146,7 @@ Recovery is a durable multi-step workflow, not an atomic operation across servic
 2. Acquire the relevant transfer/content locks, reserve rate and attempt budgets, and persist an intent containing evidence, policy revision, intended operations, and expected postconditions before external writes.
 3. Use a version-tested manager/client workflow to fail or block the specific grab and detach or otherwise resolve the queue association while retaining all content. Set every removal/blocklist/redownload flag explicitly; never rely on endpoint defaults.
 4. Ensure a retained incomplete transfer cannot consume an unintended active slot or unexpectedly resume. Preserve prior state and record any deliberate stop. Unsupported safe separation stops the workflow with an actionable finding. The only exception is a transfer deliberately left running under an explicit private-recovery choice (§6), which keeps its slot by design and is shown and counted as retained and running.
-5. Initiate replacement through exactly one owner: manager-native failed-download redownload, or a Housekeeparr-scheduled manager search with native redownload suppressed. Document and verify other side effects such as automatic client removal. Do not intentionally initiate both paths.
+5. Initiate replacement through exactly one owner: in v1, manager-native failed-download redownload (user decision 2026-11-17). A Housekeeparr-scheduled replacement search with native redownload suppressed is a high-priority post-v1 roadmap item, not v1 scope; until then recovery is refused, visibly, where the manager would not redownload. Document and verify other side effects such as automatic client removal. Do not intentionally initiate both paths.
 6. Verify queue, blocklist, client registration, content preservation, search acceptance, subsequent grab, and progress as separate outcomes. Completion of a command does not establish a successful replacement.
 
 A timeout can mean an operation succeeded. Reconcile before retrying. If the outcome cannot be established safely, mark it uncertain and hold further conflicting actions for review. Local idempotency keys prevent duplicate local execution; they cannot guarantee exactly-once behavior from external APIs.
@@ -350,6 +350,10 @@ Introduce replacement, reimport, quarantine, or other mutation only as individua
 
 The intended progression is v1 queue reliability and usability; read-only content audits; richer user-defined rules; then controlled remediation. Add Lidarr and other managers through domain-aware contracts rather than pretending albums, movies, and episodes have identical semantics.
 
+### 14.4 Roadmap after v1 (user-prioritised)
+
+1. **Housekeeparr-owned replacement searches** (high priority): when a manager does not redownload failed grabs, schedule a single targeted manager search with native redownload suppressed, through the same budgets and journal.
+
 ## 15. Delivery and unresolved implementation decisions
 
 1. **Compatibility prototypes:** establish supported versions/transports and safe queue, blocklist, redownload, ignore, privacy, and preservation semantics. Record unsupported workflows before enabling writes.
@@ -358,6 +362,8 @@ The intended progression is v1 queue reliability and usability; read-only conten
 4. **Partial-pack workflow:** prove evidence and safe association clearance against representative Sonarr cases; add bounded targeted searches.
 5. **Search and release hardening:** proactive searches, coverage findings, notifications, capacity handling, packaging, documentation, security review, and performance acceptance.
 6. **Post-v1:** content auditing, rules, remediation, and additional managers as described above.
+
+**Defaults decision (user, 2026-11-17):** the proposed values for limits, diagnosis timing, searches, notifications and web sessions, and the behaviour choices (pause blocks manual actions; recovery refused when the manager would not redownload; metadata stalls count toward the correlated-stall hold; transfers left running count as retained) are accepted as the production defaults for a trial, after a timing-review session, and will be tuned from production behaviour. Tuning must guard against timidity as much as against haste: a rule that leaves a collection incomplete when recovery without manual intervention was safely possible is a defect, not a safe default.
 
 Before release, resolve language/distribution, supported version floors and transports, concrete embedded-store choice, tested source diagnostics, supported extraction/import evidence, numeric budgets, retention defaults, and final timing defaults. Resolve through prototypes and tests rather than optimistic compatibility assumptions. Any client demotion or reduction of agreed v1 workflows requires a documented scope decision.
 

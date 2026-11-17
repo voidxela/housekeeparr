@@ -156,18 +156,19 @@ interactive-grab refusal against real managers; a shortened-window real
 daemon smoke. A default-window real soak remains an unperformed acceptance
 check, not a blocker.
 
-Housekeeparr-owned replacement searches (when "Redownload Failed" is off)
-remain unimplemented and refused; resolve before release without starting
-a second replacement owner implicitly.
+Housekeeparr-owned replacement searches are **not v1** (user decision
+2026-11-17): managers own redownload; it is a high-priority roadmap item
+(SPEC §14.4). The proposed defaults are accepted for a production trial
+after a timing-review session (SPEC §15); tuning must also catch timidity.
 
-Proposals awaiting a product decision (implemented, not approved): a
+Accepted for a production trial (user, 2026-11-17), subject to tuning: a
 workflow pause also blocks manual actions; recovery is refused when the
 manager would not redownload; the replacement-search constants; the
 `[automation.limits]` values; metadata stalls counting toward the
-correlated-stall hold; handled transfers left out of it (now scoped to
-client + native ID without a current association); kept-running transfers
-counting as retained; the 30-minute source-failure confirmation window and
-the recognised "unregistered" phrases.
+correlated-stall hold; handled transfers left out of it; kept-running
+transfers counting as retained; the 30-minute source-failure confirmation
+window. Still a proposal needing evidence: the recognised "unregistered"
+phrases.
 
 ## Review recommendations on Claude's five decisions
 

@@ -255,7 +255,17 @@ real-instance run was needed or performed for them):
   `TestSearchSettlesIndependentlyOfDownload` covers completed and
   tracking-expired downloads, restart and command-list outage.
 
-### Implementation proposals still hard-coded (not approved defaults)
+### Defaults: accepted for a production trial (user, 2026-11-17)
+
+The values below and in "Session of 2026-11-17" (search spacing, backoff,
+notification and sign-in bounds) are accepted as the production defaults for
+a trial after the timing-review session, to be tuned from production. Tuning
+must also catch timidity: rules that leave a collection incomplete when
+recovery without manual intervention was safely possible. Housekeeparr-owned
+replacement searches are out of v1 (high-priority roadmap); recovery stays
+refused where the manager would not redownload.
+
+### Implementation values (accepted for the production trial)
 
 Configurable with provenance in `[automation.limits]` (values are proposals):
 acquisitions 20 and manager_acquisitions 20 per rolling 24 h, content_attempts
