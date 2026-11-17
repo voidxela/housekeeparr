@@ -140,7 +140,11 @@ func Revalidate(p Proposal, i int, live Live) []Check {
 		add("file selection unchanged", sameSignal(pl.Wanted, t.WantedBytes),
 			fmt.Sprintf("wanted bytes planned %s, now %s", pl.Wanted, t.WantedBytes))
 		priv, known := t.Private.Get()
-		add("public transfer", known && !priv, "privacy now "+t.Private.String())
+		if p.UnknownPrivacy && !known {
+			add("public transfer", true, "privacy still unknown ("+t.Private.String()+"); this scope opted "+p.Workflow+" in to unknown privacy")
+		} else {
+			add("public transfer", known && !priv, "privacy now "+t.Private.String())
+		}
 		add("category unchanged", sameSignal(pl.Category, t.Category),
 			fmt.Sprintf("category planned %s, now %s", pl.Category, t.Category))
 	}

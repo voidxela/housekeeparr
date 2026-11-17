@@ -100,6 +100,30 @@ type WorkflowPermission struct {
 	From     string   `json:"from"`
 }
 
+// UnknownPrivacyDefined reports whether a workflow may be opted in to act
+// on transfers whose privacy is unknown. Only metadata recovery: before
+// metadata arrives no supported client can report the private flag, and
+// released Sonarr/Radarr expose no indexer privacy. The opt-in is a
+// proposal (not an approved default): it is off unless configured, never
+// applies to a transfer known to be private, and the operator accepts that
+// stopping and blocklisting a release whose tracker obligations are
+// unknown is compatible with those obligations.
+func UnknownPrivacyDefined(w Workflow) bool { return w == WorkflowMetadataRecovery }
+
+// AllowsUnknownPrivacy reports whether the workflow is opted in to acting
+// on transfers of unknown privacy in this scope, and where that is set.
+func (e Effective) AllowsUnknownPrivacy(w Workflow) (bool, string) {
+	if !UnknownPrivacyDefined(w) {
+		return false, "not defined for " + string(w)
+	}
+	for _, p := range e.UnknownPrivacy {
+		if p.Workflow == w {
+			return p.Enabled, p.From
+		}
+	}
+	return false, "not defined for " + string(w)
+}
+
 // ExclusionMatch records an exclusion entry matching the evaluated subject.
 type ExclusionMatch struct {
 	Workflows []Workflow `json:"workflows"`
@@ -118,6 +142,13 @@ func (e Effective) ComputeRevision() string {
 	sort.Slice(perms, func(i, j int) bool { return perms[i].Workflow < perms[j].Workflow })
 	for _, p := range perms {
 		fmt.Fprintf(h, "|perm=%q:%t", p.Workflow, p.Enabled)
+	}
+	// Only opt-ins are hashed, so configurations without one keep their
+	// earlier revision.
+	for _, p := range e.UnknownPrivacy {
+		if p.Enabled {
+			fmt.Fprintf(h, "|unknown-privacy=%q", p.Workflow)
+		}
 	}
 
 	type normExcl struct {

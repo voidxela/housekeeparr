@@ -85,7 +85,10 @@ type Config struct {
 type AutomationConfig struct {
 	EmergencyStop bool            `toml:"emergency_stop"`
 	Workflows     map[string]bool `toml:"workflows"`
-	Limits        LimitsConfig    `toml:"limits"`
+	// UnknownPrivacy opts workflows in to acting on transfers whose privacy
+	// the client cannot report (see policy.UnknownPrivacyWorkflows).
+	UnknownPrivacy map[string]bool `toml:"unknown_privacy"`
+	Limits         LimitsConfig    `toml:"limits"`
 }
 
 // LimitsConfig bounds acquisition-starting actions. Unset fields use the
@@ -187,6 +190,8 @@ type RuleConfig struct {
 	Match      RuleMatch       `toml:"match"`
 	Policy     PolicyOverrides `toml:"policy"`
 	Automation map[string]bool `toml:"automation"`
+	// UnknownPrivacy: see AutomationConfig.UnknownPrivacy.
+	UnknownPrivacy map[string]bool `toml:"unknown_privacy"`
 }
 
 // RuleMatch selects which subjects a rule applies to. All non-empty fields
@@ -205,6 +210,8 @@ type OverrideConfig struct {
 	Reason     string          `toml:"reason"`
 	Policy     PolicyOverrides `toml:"policy"`
 	Automation map[string]bool `toml:"automation"`
+	// UnknownPrivacy: see AutomationConfig.UnknownPrivacy.
+	UnknownPrivacy map[string]bool `toml:"unknown_privacy"`
 }
 
 // ExclusionConfig excludes a scope from one or more automation workflows.
@@ -432,6 +439,7 @@ func validate(cfg *Config, md toml.MetaData) []Problem {
 		errf("mode", "must be \"observe\", \"paused\", or \"automatic\"")
 	}
 	validateWorkflowMap(errf, "automation.workflows", cfg.Automation.Workflows)
+	validateUnknownPrivacyMap(errf, "automation.unknown_privacy", cfg.Automation.UnknownPrivacy)
 	validateLimits(errf, cfg)
 	if strings.TrimSpace(cfg.State.Dir) == "" {
 		errf("state.dir", "required")
@@ -654,6 +662,25 @@ func validateWorkflowMap(errf errFunc, prefix string, m map[string]bool) {
 	}
 }
 
+// validateUnknownPrivacyMap accepts only workflows for which acting on a
+// transfer of unknown privacy is defined (policy.UnknownPrivacyWorkflows).
+func validateUnknownPrivacyMap(errf errFunc, prefix string, m map[string]bool) {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		switch wf := policy.Workflow(k); {
+		case !policy.ValidWorkflow(wf):
+			errf(prefix+"."+k, "unknown workflow %q", k)
+		case !policy.UnknownPrivacyDefined(wf):
+			errf(prefix+"."+k, "acting on transfers of unknown privacy is not defined for %s (only for metadata_recovery, "+
+				"where no client can report privacy before metadata arrives)", k)
+		}
+	}
+}
+
 func validatePolicyOverrides(errf errFunc, field string, pollInterval time.Duration, o PolicyOverrides) {
 	s := policy.DefaultSettings()
 	if pollInterval >= time.Minute && pollInterval <= time.Hour {
@@ -730,6 +757,7 @@ func validateRules(errf errFunc, cfg *Config, clientIDs, managerIDs map[string]b
 		}
 		validatePolicyOverrides(errf, field+".policy", cfg.Polling.Interval.Duration, r.Policy)
 		validateWorkflowMap(errf, field+".automation", r.Automation)
+		validateUnknownPrivacyMap(errf, field+".unknown_privacy", r.UnknownPrivacy)
 	}
 	for i := 0; i < len(cfg.Rules); i++ {
 		a := cfg.Rules[i]
@@ -812,6 +840,11 @@ func ruleConflicts(a, b RuleConfig) []string {
 		if aok && bok && av != bv {
 			conflicts = append(conflicts, "automation."+k)
 		}
+		av, aok = a.UnknownPrivacy[k]
+		bv, bok = b.UnknownPrivacy[k]
+		if aok && bok && av != bv {
+			conflicts = append(conflicts, "unknown_privacy."+k)
+		}
 	}
 	return conflicts
 }
@@ -862,6 +895,7 @@ func validateOverrides(errf errFunc, cfg *Config, clientIDs, managerIDs map[stri
 		}
 		validatePolicyOverrides(errf, field+".policy", cfg.Polling.Interval.Duration, o.Policy)
 		validateWorkflowMap(errf, field+".automation", o.Automation)
+		validateUnknownPrivacyMap(errf, field+".unknown_privacy", o.UnknownPrivacy)
 	}
 }
 
@@ -991,13 +1025,16 @@ func (c *Config) Resolve(sub policy.Subject) (policy.Effective, error) {
 	workflows := policy.AllWorkflows()
 	autoEnabled := make(map[policy.Workflow]bool, len(workflows))
 	autoFrom := make(map[policy.Workflow]string, len(workflows))
+	privEnabled := make(map[policy.Workflow]bool, len(workflows))
+	privFrom := make(map[policy.Workflow]string, len(workflows))
 	for _, wf := range workflows {
-		autoEnabled[wf] = false
-		autoFrom[wf] = "built-in default"
+		autoEnabled[wf], privEnabled[wf] = false, false
+		autoFrom[wf], privFrom[wf] = "built-in default", "built-in default (refuse)"
 	}
 
 	apply(&s, src, c.Policy, "config [policy]")
 	applyWorkflows(autoEnabled, autoFrom, c.Automation.Workflows, "config [automation.workflows]")
+	applyWorkflows(privEnabled, privFrom, c.Automation.UnknownPrivacy, "config [automation.unknown_privacy]")
 
 	if sub.ClientID != "" {
 		found := false
@@ -1025,6 +1062,7 @@ func (c *Config) Resolve(sub policy.Subject) (policy.Effective, error) {
 		from := fmt.Sprintf("config rule %q (priority %d)", r.Name, *r.Priority)
 		apply(&s, src, r.Policy, from)
 		applyWorkflows(autoEnabled, autoFrom, r.Automation, from)
+		applyWorkflows(privEnabled, privFrom, r.UnknownPrivacy, from)
 	}
 
 	if sub.ManagerID != "" && sub.ContentKey != "" {
@@ -1034,6 +1072,7 @@ func (c *Config) Resolve(sub policy.Subject) (policy.Effective, error) {
 				from := fmt.Sprintf("config override content %s", o.Content)
 				apply(&s, src, o.Policy, from)
 				applyWorkflows(autoEnabled, autoFrom, o.Automation, from)
+				applyWorkflows(privEnabled, privFrom, o.UnknownPrivacy, from)
 				break
 			}
 		}
@@ -1045,6 +1084,7 @@ func (c *Config) Resolve(sub policy.Subject) (policy.Effective, error) {
 				from := fmt.Sprintf("config override transfer %s", o.Transfer)
 				apply(&s, src, o.Policy, from)
 				applyWorkflows(autoEnabled, autoFrom, o.Automation, from)
+				applyWorkflows(privEnabled, privFrom, o.UnknownPrivacy, from)
 				break
 			}
 		}
@@ -1093,6 +1133,10 @@ func (c *Config) Resolve(sub policy.Subject) (policy.Effective, error) {
 			Enabled:  autoEnabled[wf],
 			From:     autoFrom[wf],
 		})
+		if policy.UnknownPrivacyDefined(wf) {
+			eff.UnknownPrivacy = append(eff.UnknownPrivacy, policy.WorkflowPermission{Workflow: wf, Enabled: privEnabled[wf], From: privFrom[wf]})
+			eff.Sources = append(eff.Sources, policy.Source{Setting: "unknown_privacy." + string(wf), Value: strconv.FormatBool(privEnabled[wf]), From: privFrom[wf]})
+		}
 	}
 	eff.Revision = eff.ComputeRevision()
 	return eff, nil

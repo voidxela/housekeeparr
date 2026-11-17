@@ -43,6 +43,12 @@ var Tested = []TestedWorkflow{
 	{Workflow: policy.WorkflowNoProgressRecovery, Manager: adapter.KindRadarr, ManagerVersion: "6.4.4.10685", Client: adapter.KindTransmission, ClientVersion: "4.1.4 (a6d907d9ea)"},
 }
 
+// diagnosesFor lists the qualified diagnoses each workflow addresses.
+var diagnosesFor = map[policy.Workflow][]policy.Diagnosis{
+	policy.WorkflowNoProgressRecovery: {policy.DiagnosisNoProgress, policy.DiagnosisNoProgressUnavailable},
+	policy.WorkflowMetadataRecovery:   {policy.DiagnosisMetadataTimeout},
+}
+
 // WorkflowFor maps a finding type to the workflow that would address it.
 func WorkflowFor(findingType string) (policy.Workflow, bool) {
 	switch findingType {
@@ -204,6 +210,14 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 			detail = "assessment: " + string(t.Assessment.Status) + " — " + t.Assessment.Headline
 		}
 		add("diagnosis qualified", q, true, detail)
+		if t.Assessment != nil && q {
+			want := diagnosesFor[wf]
+			ok := false
+			for _, d := range want {
+				ok = ok || t.Assessment.Diagnosis == d
+			}
+			add("diagnosis matches workflow", ok, true, fmt.Sprintf("diagnosis %q; %s addresses only %v", t.Assessment.Diagnosis, wf, want))
+		}
 		if t.Assessment != nil {
 			cur := in.Policy.Settings.Revision()
 			same := t.Assessment.PolicyRevision == cur
@@ -223,13 +237,35 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 		fmt.Sprintf("transfer is %s (native %q); this workflow applies only to %s transfers — paused, queued, and checking transfers are never acted on",
 			t.StateClass, t.Latest.NativeState, want))
 
+	// --- capability -------------------------------------------------------
+	if wf == policy.WorkflowMetadataRecovery {
+		st := adapter.CapabilityStatus{Support: adapter.SupportUnknown}
+		if in.ClientProbe != nil {
+			if c, ok := in.ClientProbe.Read[adapter.CapMetadataState]; ok {
+				st = c
+			}
+		}
+		add("metadata state supported", st.Support == adapter.Supported, true, fmt.Sprintf("the client's metadata-state capability is %s%s; "+
+			"metadata recovery needs it so a stall is known to be metadata acquisition", st.Support, prefixed(": ", st.Note)))
+	}
+
 	// --- privacy ------------------------------------------------------------
 	priv, known := t.Latest.Private.Get()
+	optIn, optFrom := in.Policy.AllowsUnknownPrivacy(wf)
+	optIn = optIn && policy.UnknownPrivacyDefined(wf)
 	switch {
 	case known && !priv:
 		add("public transfer", true, true, "the client reports the torrent as public")
 	case known && priv:
 		add("public transfer", false, true, "private torrents are observation-only for recovery: stopping or replacing one may conflict with tracker obligations")
+	case optIn:
+		p.UnknownPrivacy = true
+		add("public transfer", true, true, "privacy is unknown ("+t.Latest.Private.String()+"); the operator opted "+string(wf)+
+			" in to unknown privacy ("+optFrom+"), accepting that stopping and blocklisting this release is compatible with any tracker obligations")
+	case policy.UnknownPrivacyDefined(wf):
+		add("public transfer", false, true, "privacy is unknown ("+t.Latest.Private.String()+"): no client reports the private flag before metadata "+
+			"arrives, and the manager does not report indexer privacy. Recovery stays observation-only unless the operator opts this scope in with "+
+			"unknown_privacy."+string(wf)+" = true (for example in a rule matching privacy = \"unknown\" for a public-only category)")
 	default:
 		add("public transfer", false, true, "privacy is unknown on this client, so recovery stays observation-only")
 	}
@@ -276,7 +312,11 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 			Expect:      raw(map[string]any{"state_class": domain.StatePaused, "registered": true}),
 			Description: "Stop the torrent in the client, retaining it and its data, so it no longer occupies an active slot",
 		})
-		p.Effects = append(p.Effects, "the torrent is stopped and kept, with all downloaded data, in its current category")
+		if t.StateClass == domain.StateMetadata {
+			p.Effects = append(p.Effects, "the torrent is stopped and kept in its current category; it has no payload data yet (metadata was never acquired)")
+		} else {
+			p.Effects = append(p.Effects, "the torrent is stopped and kept, with all downloaded data, in its current category")
+		}
 		add("retained-data ceiling", retainedOK(in, limits, t), true, retainedDetail(in, limits, t))
 	}
 	p.SideEffects = append(p.SideEffects,
@@ -404,12 +444,21 @@ func nonEmptyList(xs []string, def string) []string {
 // retainedOK reports whether keeping one more stopped transfer stays
 // within the configured ceilings. With a byte ceiling, a retained transfer
 // of unknown size makes the total unknown, which is not treated as room.
+// retainedSize is the logical size a retained transfer adds. A transfer
+// stopped before its metadata arrived has no payload: it counts as zero.
+func retainedSize(t *store.TransferRecord) (int64, bool) {
+	if t.StateClass == domain.StateMetadata {
+		return 0, true
+	}
+	return t.Latest.WantedBytes.Get()
+}
+
 func retainedOK(in PlanInput, l policy.Limits, t *store.TransferRecord) bool {
 	if in.Retained.Count+1 > l.RetainedTransfers {
 		return false
 	}
 	if l.RetainedBytes > 0 {
-		size, known := t.Latest.WantedBytes.Get()
+		size, known := retainedSize(t)
 		if !known || in.Retained.UnknownSize > 0 || in.Retained.KnownBytes+size > l.RetainedBytes {
 			return false
 		}
@@ -426,7 +475,7 @@ func retainedDetail(in PlanInput, l policy.Limits, t *store.TransferRecord) stri
 	}
 	if l.RetainedBytes > 0 {
 		d += fmt.Sprintf("; byte ceiling %s (from %s)", gib(l.RetainedBytes), l.From("retained_gib"))
-		if _, known := t.Latest.WantedBytes.Get(); !known {
+		if _, known := retainedSize(t); !known {
 			d += "; this transfer's size is unknown, so the ceiling cannot be shown to hold"
 		}
 	} else {
@@ -438,3 +487,10 @@ func retainedDetail(in PlanInput, l policy.Limits, t *store.TransferRecord) stri
 }
 
 func gib(b int64) string { return fmt.Sprintf("%.1f GiB", float64(b)/(1<<30)) }
+
+func prefixed(prefix, s string) string {
+	if s == "" {
+		return ""
+	}
+	return prefix + s
+}

@@ -97,7 +97,10 @@ type Effective struct {
 	Revision      string               `json:"revision"`
 	Sources       []Source             `json:"sources"`
 	Automation    []WorkflowPermission `json:"automation"`
-	Exclusions    []ExclusionMatch     `json:"exclusions,omitempty"`
+	// UnknownPrivacy lists, for workflows where it is defined, whether the
+	// scope opts in to acting on transfers of unknown privacy.
+	UnknownPrivacy []WorkflowPermission `json:"unknown_privacy,omitempty"`
+	Exclusions     []ExclusionMatch     `json:"exclusions,omitempty"`
 }
 
 // Limits bound acquisition-starting actions (SPEC §§7, 9.1, 10). Pacing

@@ -311,7 +311,9 @@ func (s *Service) breakers(ctx context.Context, now time.Time) (map[string]strin
 	}
 	active, stalled := map[string]int{}, map[string]int{}
 	for _, t := range ts {
-		if t.StateClass != domain.StateDownloading {
+		// Metadata acquisition counts too: magnets stalling together on
+		// one client point to DHT, network or VPN trouble.
+		if t.StateClass != domain.StateDownloading && t.StateClass != domain.StateMetadata {
 			continue
 		}
 		active[t.ClientID]++

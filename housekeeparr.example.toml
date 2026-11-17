@@ -28,6 +28,19 @@ preserved_data_failure = false
 partial_pack = false
 missing_search = false
 
+[automation.unknown_privacy]
+# Recovery never acts on a transfer the client reports as private, and by
+# default also refuses one whose privacy is unknown. A magnet that never
+# received its metadata always has unknown privacy: no supported client can
+# read the private flag before metadata arrives, and Sonarr/Radarr do not
+# report indexer privacy. Setting this to true (proposal, off by default)
+# accepts that stopping and blocklisting such a release is compatible with
+# your trackers' obligations. Prefer a narrow [[rule]] (for example
+# match = { client = "...", category = "...", privacy = "unknown" } with
+# [rule.unknown_privacy] metadata_recovery = true) for public-only sources.
+# Only metadata_recovery accepts this setting.
+# metadata_recovery = false
+
 [automation.limits]
 # Bounds on actions that start an acquisition (manual and automatic alike).
 # None can be disabled. The values below are implementation proposals, not

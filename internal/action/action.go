@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/voidxela/housekeeparr/internal/adapter"
+	"github.com/voidxela/housekeeparr/internal/domain"
 	"github.com/voidxela/housekeeparr/internal/policy"
 	"github.com/voidxela/housekeeparr/internal/store"
 )
@@ -87,6 +88,10 @@ type Proposal struct {
 	LiveChecks []string `json:"live_checks,omitempty"`
 	// Scope is the policy subject; the gate re-resolves policy for it.
 	Scope policy.Subject `json:"scope"`
+	// UnknownPrivacy records that the transfer's privacy was unknown and the
+	// scope opted the workflow in (policy.AllowsUnknownPrivacy); revalidation
+	// then accepts privacy that is still unknown, never known private.
+	UnknownPrivacy bool `json:"unknown_privacy,omitempty"`
 	// Cooldown applied to every lock subject after success.
 	Cooldown  time.Duration `json:"cooldown,omitempty"`
 	CreatedAt time.Time     `json:"created_at"`
@@ -765,6 +770,10 @@ func recordRetained(tx *store.Tx, id int64, st store.Step, pl *Planned, now time
 		r.Content = strings.Join(pl.Content, ",")
 		if v, ok := pl.Wanted.Get(); ok {
 			r.WantedBytes = &v
+		} else if pl.StateClass == domain.StateMetadata {
+			// Stopped before metadata arrived: there is no payload.
+			zero := int64(0)
+			r.WantedBytes = &zero
 		}
 		if v, ok := pl.Verified.Get(); ok {
 			r.VerifiedBytes = &v
