@@ -170,10 +170,20 @@ func TestQBittorrentReleasedBehaviour(t *testing.T) {
 				t.Errorf("errored: %s (%s); released behaviour differs from the recorded semantics", tr.StateClass, tr.NativeState)
 			}
 		case "errored-restart":
-			// Payload deleted while qBittorrent was stopped cleanly, then restarted.
-			// Observed on 5.3.0 and 4.6.7: missingFiles -> StateError, verified=0.
-			if tr.StateClass != domain.StateError {
-				t.Errorf("errored-restart: got state %s (%s), want error", tr.StateClass, tr.NativeState)
+			// Payload deleted while qBittorrent was stopped cleanly, then
+			// restarted. Observed on 5.3.0: missingFiles -> StateError. On
+			// 4.6.7, with every payload verified before the stop, it resumed
+			// as a fresh download (stalledDL, verified 0) with no error; a run
+			// whose checks had not finished showed missingFiles. Either way
+			// the loss must never look like complete data.
+			v, _ := tr.VerifiedBytes.Get()
+			switch {
+			case tr.StateClass == domain.StateError:
+				t.Logf("errored-restart: missing data reported as an error (%s)", tr.NativeState)
+			case strings.HasPrefix(os.Getenv("HK_IT_QBT_VERSION"), "4.") && tr.StateClass == domain.StateDownloading && v == 0:
+				t.Logf("errored-restart: qBittorrent %s resumed the loss as a fresh download (%s, verified 0): no error is reported", os.Getenv("HK_IT_QBT_VERSION"), tr.NativeState)
+			default:
+				t.Errorf("errored-restart: got state %s (%s) verified %v, want error", tr.StateClass, tr.NativeState, tr.VerifiedBytes)
 			}
 		case "errored-recheck":
 			// Payload deleted while running, then forced recheck (/api/v2/torrents/recheck).
