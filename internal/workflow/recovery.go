@@ -91,10 +91,20 @@ type queueBaseline struct {
 	// replacement search can be told apart from earlier searches. Nil
 	// when the list could not be read (that does not block the request).
 	MaxCommandID *int64 `json:"max_command_id,omitempty"`
+	// ReleaseTitle is the title blocklist entries are matched by: the
+	// source title of the newest grab in the download's history when it
+	// has one, otherwise the queue row's title. The manager blocklists
+	// under the grabbed release's title, which differs from the queue
+	// title for a magnet without metadata (observed with rTorrent 0.9.8:
+	// the row is titled "<HASH>.meta").
+	ReleaseTitle string `json:"release_title,omitempty"`
 }
 
-func (tg queueTarget) blocklistMatch() arr.BlocklistMatch {
-	return arr.BlocklistMatch{SourceTitle: tg.Title, SeriesID: tg.SeriesID, EpisodeID: tg.EpisodeID, MovieID: tg.MovieID}
+func (tg queueTarget) blocklistMatch(title string) arr.BlocklistMatch {
+	if title == "" {
+		title = tg.Title
+	}
+	return arr.BlocklistMatch{SourceTitle: title, SeriesID: tg.SeriesID, EpisodeID: tg.EpisodeID, MovieID: tg.MovieID}
 }
 
 type queueRequest struct {
@@ -297,19 +307,23 @@ func (r *Recovery) Baseline(ctx context.Context, st store.Step) (json.RawMessage
 	if tg.Title == "" {
 		return nil, fmt.Errorf("no release title to match blocklist entries")
 	}
-	b := queueBaseline{BlocklistIDs: []int64{}, HistoryIDs: []int64{}}
-	ids, err := m.BlocklistEntries(ctx, tg.blocklistMatch())
-	if err != nil {
-		return nil, err
-	}
-	b.BlocklistIDs = append(b.BlocklistIDs, ids...)
+	b := queueBaseline{BlocklistIDs: []int64{}, HistoryIDs: []int64{}, ReleaseTitle: tg.Title}
 	hist, err := m.History(ctx, tg.DownloadID)
 	if err != nil {
 		return nil, err
 	}
-	for _, h := range hist {
+	grabbed := false
+	for _, h := range hist { // newest first
 		b.HistoryIDs = append(b.HistoryIDs, h.ID)
+		if !grabbed && h.EventType == "grabbed" && strings.TrimSpace(h.SourceTitle) != "" {
+			grabbed, b.ReleaseTitle = true, h.SourceTitle
+		}
 	}
+	ids, err := m.BlocklistEntries(ctx, tg.blocklistMatch(b.ReleaseTitle))
+	if err != nil {
+		return nil, err
+	}
+	b.BlocklistIDs = append(b.BlocklistIDs, ids...)
 	if cr, ok := m.(CommandReader); ok {
 		if cmds, err := cr.Commands(ctx); err == nil {
 			var max int64
@@ -427,7 +441,7 @@ func (r *Recovery) Observe(ctx context.Context, st store.Step) (action.Observati
 			}
 			var newBlock []int64
 			if blocklist {
-				ids, err := m.BlocklistEntries(ctx, tg.blocklistMatch())
+				ids, err := m.BlocklistEntries(ctx, tg.blocklistMatch(base.ReleaseTitle))
 				if err != nil {
 					return action.Observation{}, err
 				}

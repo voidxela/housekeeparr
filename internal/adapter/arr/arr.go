@@ -415,6 +415,11 @@ type HistoryEvent struct {
 	// ReleaseSource is the grab's data.releaseSource (for example Search,
 	// Rss, InteractiveSearch), when the record has one.
 	ReleaseSource string `json:"release_source,omitempty"`
+	// SourceTitle is the release title the record was written for. For a
+	// grab it is the indexer's release title, which the manager also uses
+	// for the blocklist entry; the queue row's title can differ (a magnet
+	// without metadata is listed under the client's placeholder name).
+	SourceTitle string `json:"source_title,omitempty"`
 }
 
 // History returns the newest history records for a download id, newest
@@ -422,11 +427,12 @@ type HistoryEvent struct {
 func (c *Client) History(ctx context.Context, downloadID string) ([]HistoryEvent, error) {
 	var pg struct {
 		Records []struct {
-			ID         *int64    `json:"id"`
-			EventType  string    `json:"eventType"`
-			DownloadID string    `json:"downloadId"`
-			Date       time.Time `json:"date"`
-			Data       struct {
+			ID          *int64    `json:"id"`
+			EventType   string    `json:"eventType"`
+			SourceTitle string    `json:"sourceTitle"`
+			DownloadID  string    `json:"downloadId"`
+			Date        time.Time `json:"date"`
+			Data        struct {
 				ReleaseSource string `json:"releaseSource"`
 			} `json:"data"`
 		} `json:"records"`
@@ -444,7 +450,7 @@ func (c *Client) History(ctx context.Context, downloadID string) ([]HistoryEvent
 			return nil, httpx.Malformed(c.app+".history", fmt.Errorf("record without id"))
 		}
 		if strings.EqualFold(r.DownloadID, downloadID) {
-			out = append(out, HistoryEvent{ID: *r.ID, EventType: r.EventType, Date: r.Date, ReleaseSource: r.Data.ReleaseSource})
+			out = append(out, HistoryEvent{ID: *r.ID, EventType: r.EventType, Date: r.Date, ReleaseSource: r.Data.ReleaseSource, SourceTitle: r.SourceTitle})
 		}
 	}
 	return out, nil

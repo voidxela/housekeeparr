@@ -550,7 +550,11 @@ func TestAutomaticMetadataRecoveryEndToEnd(t *testing.T) {
 			pr.Read[adapter.CapMetadataState] = adapter.CapabilityStatus{Support: adapter.Supported}
 			w.client.SetProbe(pr)
 			w.client.SetTransfers(fake.Transfer(hashA, "Show.S01E01", domain.StateMetadata, 0, 0, t0))
-			w.mgr.SetQueue(fake.Episode(1, hashA, "Show.S01E01", "Show", 1, 1))
+			// As observed with rTorrent: without metadata the queue row is
+			// titled after the client's placeholder name, while the manager
+			// blocklists under the grabbed release's title.
+			w.mgr.SetQueue(fake.Episode(1, hashA, strings.ToUpper(hashA)+".meta", "Show", 1, 1))
+			w.mgr.AddGrab(hashA, "Show.S01E01.1080p.WEB-GRP")
 			w.run(3 * time.Hour)
 			fs, _ := w.st.Findings(context.Background(), store.FindingFilter{Type: domain.FindingMetadataTimeout, ClientID: "qbit", NativeID: hashA})
 			if len(fs) != 1 {
@@ -573,6 +577,9 @@ func TestAutomaticMetadataRecoveryEndToEnd(t *testing.T) {
 			acts, _ := w.svc.Actions(context.Background(), 10)
 			if len(acts) != 1 || acts[0].Workflow != string(policy.WorkflowMetadataRecovery) || acts[0].State != store.IntentSucceeded {
 				t.Fatalf("actions %+v", acts)
+			}
+			if ids, _ := w.mgr.BlocklistEntries(context.Background(), arr.BlocklistMatch{SourceTitle: "Show.S01E01.1080p.WEB-GRP"}); len(ids) != 1 {
+				t.Fatalf("blocklist entries under the grabbed title: %v", ids)
 			}
 			ret, _ := w.st.RetainedTransfers(context.Background(), false, 0)
 			if len(ret) != 1 || ret[0].WantedBytes == nil || *ret[0].WantedBytes != 0 {

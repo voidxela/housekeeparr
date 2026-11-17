@@ -334,7 +334,7 @@ func TestAutomaticRecovery(t *testing.T) {
 		if !ok {
 			t.Fatalf("%s: no queue row recorded before dispatch", tg.e.Key)
 		}
-		after, hist, searches, replacement := verifyRecovered(t, tg.a, tg.mgr, tg.e.asEntry(), row, cats[tg.e.Hash], digest[tg.e.Hash], hist0[tg.e.Hash], start, tg.search)
+		after, hist, searches, replacement := verifyRecovered(t, tg.a, tg.mgr, tg.e.asEntry(), row, cats[tg.e.Hash], digest[tg.e.Hash], hist0[tg.e.Hash], start, tg.search, domain.StatePaused)
 		replacements[tg.e.Hash] = replacement
 		t.Logf("%s: verified after automatic dispatch: history %v, torrent %s, replacement searches %+v", tg.e.Key, hist, after.NativeState, searches)
 	}

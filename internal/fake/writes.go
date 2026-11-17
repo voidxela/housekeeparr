@@ -152,7 +152,13 @@ func (m *Manager) RemoveQueueItem(_ context.Context, queueID int64, f arr.Remove
 		if f.Blocklist {
 			event = "downloadFailed"
 			m.w.nextID++
-			m.w.blocklist = append(m.w.blocklist, blEntry{id: m.w.nextID, title: q.Title, seriesID: q.SeriesID, episodeID: q.EpisodeID, movieID: q.MovieID})
+			title := q.Title
+			for _, h := range m.w.history { // the grabbed release's title, as the released managers use
+				if h.EventType == "grabbed" && h.SourceTitle != "" && strings.EqualFold(h.downloadID, q.DownloadID) {
+					title = h.SourceTitle
+				}
+			}
+			m.w.blocklist = append(m.w.blocklist, blEntry{id: m.w.nextID, title: title, seriesID: q.SeriesID, episodeID: q.EpisodeID, movieID: q.MovieID})
 		}
 		m.w.nextID++
 		m.w.history = append(m.w.history, histEntry{HistoryEvent: arr.HistoryEvent{ID: m.w.nextID, EventType: event, Date: time.Now()}, downloadID: q.DownloadID})
@@ -173,6 +179,16 @@ func (m *Manager) RemoveQueueItem(_ context.Context, queueID int64, f arr.Remove
 		return nil
 	}
 	return &adapter.Error{Class: adapter.ErrPermanent, Op: "fake.queue_remove", HTTPStatus: 404, Message: "no such queue item"}
+}
+
+// AddGrab records a grab of downloadID under the indexer's release title,
+// which may differ from the queue row's title.
+func (m *Manager) AddGrab(downloadID, sourceTitle string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.w.nextID++
+	m.w.history = append(m.w.history, histEntry{HistoryEvent: arr.HistoryEvent{ID: m.w.nextID, EventType: "grabbed", Date: m.now(),
+		ReleaseSource: "Search", SourceTitle: sourceTitle}, downloadID: downloadID})
 }
 
 // BlocklistEntries returns matching simulated blocklist entry IDs.

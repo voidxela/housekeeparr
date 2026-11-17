@@ -170,6 +170,36 @@ func TestRadarrMetadataRecoveryWorkflow(t *testing.T) {
 	runRecoveryFor(t, a, rc, e, "MoviesSearch", policy.WorkflowMetadataRecovery)
 }
 
+// Private no-progress recovery under the default private_recovery mode:
+// the grab is failed and blocklisted and the manager searches again, while
+// the private torrent is never stopped.
+func TestSonarrPrivateRecoveryWorkflow(t *testing.T) {
+	mm := managedManifest(t)
+	a := arrAPI{t: t, base: env(t, "HK_IT_SONARR_URL"), key: env(t, "HK_IT_SONARR_KEY")}
+	prepareManager(t, a, env(t, "HK_IT_WORK")+"/library/tv", []int{5000, 5040})
+	sid := ensureSeries(t, a)
+	ep := episodeID(t, a, sid, 1, 8)
+	e := mm["tv-e08-private"]
+	waitGrab(t, a, e, map[string]any{"name": "EpisodeSearch", "episodeIds": []int{ep}}, url.Values{"episodeId": {fmt.Sprint(ep)}})
+	settleIncomplete(t, e)
+	runRecoveryMode(t, a, sonarrClient(t), e, "EpisodeSearch", policy.WorkflowNoProgressRecovery, policy.PrivateKeepRunning)
+}
+
+func TestRadarrPrivateRecoveryWorkflow(t *testing.T) {
+	mm := managedManifest(t)
+	a := arrAPI{t: t, base: env(t, "HK_IT_RADARR_URL"), key: env(t, "HK_IT_RADARR_KEY")}
+	prepareManager(t, a, env(t, "HK_IT_WORK")+"/library/movies", []int{2000, 2040})
+	e := mm["film-h-private"]
+	id := addMovie(t, a, e.Managed.TmdbID)
+	waitGrab(t, a, e, map[string]any{"name": "MoviesSearch", "movieIds": []int{id}}, url.Values{"movieId": {fmt.Sprint(id)}})
+	settleIncomplete(t, e)
+	rc, err := radarr.New(radarr.Options{ID: "radarr", BaseURL: env(t, "HK_IT_RADARR_URL"), APIKey: env(t, "HK_IT_RADARR_KEY"), Timeout: 15 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runRecoveryMode(t, a, rc, e, "MoviesSearch", policy.WorkflowNoProgressRecovery, policy.PrivateKeepRunning)
+}
+
 // settleMetadata waits until the client reports the grab as acquiring
 // metadata (with privacy and size unknown).
 func settleMetadata(t *testing.T, e managedEntry) {
@@ -195,6 +225,13 @@ func runRecovery(t *testing.T, a arrAPI, mgr recoveryManager, me managedEntry, s
 }
 
 func runRecoveryFor(t *testing.T, a arrAPI, mgr recoveryManager, me managedEntry, searchName string, wf policy.Workflow) {
+	t.Helper()
+	runRecoveryMode(t, a, mgr, me, searchName, wf, "")
+}
+
+// runRecoveryMode runs a recovery; a non-empty private mode expects the
+// transfer to be private and plans under that private_recovery mode.
+func runRecoveryMode(t *testing.T, a arrAPI, mgr recoveryManager, me managedEntry, searchName string, wf policy.Workflow, private policy.PrivateMode) {
 	t.Helper()
 	ctx := context.Background()
 	e := me.asEntry()
@@ -285,6 +322,7 @@ func runRecoveryFor(t *testing.T, a arrAPI, mgr recoveryManager, me managedEntry
 	if wf == policy.WorkflowMetadataRecovery {
 		pol.UnknownPrivacy = []policy.WorkflowPermission{{Workflow: wf, Enabled: true, From: "integration test"}}
 	}
+	pol.PrivateRecovery, pol.PrivateRecoveryFrom = private, "integration test"
 	now := time.Now().UTC()
 	in := action.PlanInput{
 		Finding:  domain.Finding{ID: 1, Type: ftype, State: domain.FindingOpen},
@@ -306,6 +344,13 @@ func runRecoveryFor(t *testing.T, a arrAPI, mgr recoveryManager, me managedEntry
 		}
 		if !p.UnknownPrivacy && !known {
 			t.Fatal("unknown privacy accepted without recording the opt-in")
+		}
+	} else if private != "" {
+		if !known || !priv {
+			t.Fatalf("private fixture reported privacy %v on %s %s", tr.Private, clientKind, cp.Version)
+		}
+		if p.PrivateMode != private || len(p.Operations) != 1 || p.Operations[0].Op != "manager.queue.fail" {
+			t.Fatalf("private plan: mode %q operations %+v", p.PrivateMode, p.Operations)
 		}
 	} else if !known {
 		// qBittorrent 4.x does not report privacy: recovery must refuse.
@@ -349,7 +394,14 @@ func runRecoveryFor(t *testing.T, a arrAPI, mgr recoveryManager, me managedEntry
 		t.Fatalf("workflow did not succeed: %+v %v", res, err)
 	}
 
-	after, hist, searches, replacement := verifyRecovered(t, a, mgr, e, *row, tr.Category, digest, hist0, start, searchName)
+	wantState := domain.StatePaused
+	if private == policy.PrivateKeepRunning {
+		wantState = domain.StateDownloading // never stopped
+		if ret, _ := st.RetainedTransfers(ctx, false, 0); len(ret) != 0 {
+			t.Errorf("a torrent left running was recorded as retained: %+v", ret)
+		}
+	}
+	after, hist, searches, replacement := verifyRecovered(t, a, mgr, e, *row, tr.Category, digest, hist0, start, searchName, wantState)
 	// Housekeeparr itself recorded exactly that replacement search as a
 	// separate outcome, right after the recovery.
 	requireSearchOutcome(t, st, res.IntentID, searchName, replacement)
@@ -371,7 +423,7 @@ func runRecoveryFor(t *testing.T, a arrAPI, mgr recoveryManager, me managedEntry
 // torrent is still registered, stopped, in the same category with a
 // byte-identical payload, and the manager queued its own replacement search.
 func verifyRecovered(t *testing.T, a arrAPI, mgr recoveryManager, e entry, row domain.QueueItem, category domain.Signal[string],
-	digest string, hist0 []string, start time.Time, searchName string) (domain.Transfer, []string, []arrCommand, int64) {
+	digest string, hist0 []string, start time.Time, searchName string, wantState domain.StateClass) (domain.Transfer, []string, []arrCommand, int64) {
 	t.Helper()
 	ctx := context.Background()
 	var replacement int64
@@ -392,7 +444,7 @@ func verifyRecovered(t *testing.T, a arrAPI, mgr recoveryManager, e entry, row d
 		t.Errorf("history %v → %v", hist0, hist)
 	}
 	after, ok := clientState(t, e.Hash)
-	if !ok || after.StateClass != domain.StatePaused || after.Category != category {
+	if !ok || after.StateClass != wantState || after.Category != category {
 		t.Errorf("client after: present=%v %s/%s category %v (was %v)", ok, after.NativeState, after.StateClass, after.Category, category)
 	}
 	if d := payloadDigest(t, e); d != digest {

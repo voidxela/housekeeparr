@@ -88,8 +88,8 @@ def main(out, save):
     # the managers grab them and create real grab history. Partial data, so
     # each grab stays incomplete.
     managed = []
-    def release(key, name, size, **ident):
-        h, payload = make(out, name, [(name + ".mkv", size)])
+    def release(key, name, size, private=False, **ident):
+        h, payload = make(out, name, [(name + ".mkv", size)], private)
         write(save, name, payload, False, lambda p, d: d[: len(d) // 2] + b"\0" * (len(d) - len(d) // 2))
         managed.append(dict(key=key, name=name, hash=h, size=size, files=[name + ".mkv"], data="half", managed=ident))
     release("tv-e01", "Housekeeparr.Fixture.Show.S01E01.1080p.WEB-DL.x264-HKFIX", 4 * MB, kind="tv", tvdbId=999001, season=1, episode=1)
@@ -106,6 +106,9 @@ def main(out, save):
     # Released only to the automatic-dispatch test.
     release("tv-e06", "Housekeeparr.Fixture.Show.S01E06.1080p.WEB-DL.x264-HKFIX", 4 * MB, kind="tv", tvdbId=999001, season=1, episode=6)
     release("film-f", "Housekeeparr.Sixth.Fixture.Film.2016.1080p.WEB-DL.x264-HKFIX", 4 * MB, kind="movie", tmdbId=999007, imdbId="tt9990007")
+    # Private torrents (info.private = 1), for the private-recovery tests.
+    release("tv-e08-private", "Housekeeparr.Fixture.Show.S01E08.1080p.WEB-DL.x264-HKFIX", 4 * MB, private=True, kind="tv", tvdbId=999001, season=1, episode=8)
+    release("film-h-private", "Housekeeparr.Eighth.Fixture.Film.2014.1080p.WEB-DL.x264-HKFIX", 4 * MB, private=True, kind="movie", tmdbId=999009, imdbId="tt9990009")
     # Magnet-only releases for random hashes: no .torrent and no payload, so
     # their metadata can never arrive (the metadata-recovery tests).
     def magnet(key, name, **ident):

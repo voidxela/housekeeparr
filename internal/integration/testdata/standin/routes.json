@@ -16,6 +16,11 @@
  },
  {
   "host": "api.radarr.video",
+  "path": "/v1/movie/999009",
+  "file": "radarr-movie-999009.json"
+ },
+ {
+  "host": "api.radarr.video",
   "path": "/v1/movie/999008",
   "file": "radarr-movie-999008.json"
  },

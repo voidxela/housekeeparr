@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -182,8 +183,17 @@ func TestObserveQueueFail(t *testing.T) {
 func TestBaselineRecordsExistingEvidence(t *testing.T) {
 	m := &fakeManager{blockIDs: []int64{5}, history: hist(10, "grabbed")}
 	b, err := rec(m, &fakeClient{}).Baseline(context.Background(), step("manager.queue.fail", qtarget, `{}`))
-	if err != nil || string(b) != `{"blocklist_ids":[5],"history_ids":[10]}` {
+	if err != nil || string(b) != `{"blocklist_ids":[5],"history_ids":[10],"release_title":"Show.S01E01"}` {
 		t.Fatalf("baseline %s %v", b, err)
+	}
+	// The manager blocklists under the grabbed release's title, which can
+	// differ from the queue row's (a magnet without metadata): the newest
+	// grab's source title is what entries are matched by, before and after.
+	g := &fakeManager{blockIDs: []int64{5}, history: []arr.HistoryEvent{
+		{ID: 12, EventType: "grabbed", SourceTitle: "Show.S01E01.REPACK-GRP"}, {ID: 10, EventType: "grabbed", SourceTitle: "Older.Grab"}}}
+	b, err = rec(g, &fakeClient{}).Baseline(context.Background(), step("manager.queue.fail", qtarget, `{}`))
+	if err != nil || !strings.Contains(string(b), `"release_title":"Show.S01E01.REPACK-GRP"`) || g.match.SourceTitle != "Show.S01E01.REPACK-GRP" {
+		t.Fatalf("baseline %s %v, matched by %q", b, err, g.match.SourceTitle)
 	}
 	if b, err := rec(m, &fakeClient{}).Baseline(context.Background(), step("client.stop", `{}`, `{}`)); err != nil || b != nil {
 		t.Fatalf("stop baseline %s %v", b, err)

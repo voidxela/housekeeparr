@@ -1,0 +1,35 @@
+{
+ "tmdbId": 999009,
+ "imdbId": "tt9990009",
+ "title": "Housekeeparr Eighth Fixture Film",
+ "originalTitle": "Housekeeparr Eighth Fixture Film",
+ "titleSlug": "999009",
+ "overview": "Fictional film served by the Housekeeparr integration stand-in.",
+ "year": 2014,
+ "inCinema": "2014-03-01T00:00:00Z",
+ "physicalRelease": "2014-06-01T00:00:00Z",
+ "digitalRelease": "2014-05-15T00:00:00Z",
+ "runtime": 100,
+ "originalLanguage": "en",
+ "status": "Released",
+ "studio": "Fixture Studio",
+ "movieRatings": {
+  "tmdb": {
+   "count": 1,
+   "value": 7.0,
+   "type": "user"
+  }
+ },
+ "ratings": [],
+ "genres": [],
+ "keywords": [],
+ "alternativeTitles": [],
+ "translations": [],
+ "certifications": [],
+ "images": [],
+ "credits": {
+  "cast": [],
+  "crew": []
+ },
+ "recommendations": []
+}
