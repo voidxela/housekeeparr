@@ -165,7 +165,11 @@ func (c *Client) Do(ctx context.Context, r Request) (*Response, error) {
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return out, nil
 	}
-	return out, StatusError(r.Op, resp.StatusCode, resp.Header, body)
+	statusErr := StatusError(r.Op, resp.StatusCode, resp.Header, body)
+	if r.Write && resp.StatusCode == http.StatusRequestTimeout {
+		statusErr.Class = adapter.ErrUncertain
+	}
+	return out, statusErr
 }
 
 func (c *Client) transportError(ctx context.Context, r Request, err error) error {

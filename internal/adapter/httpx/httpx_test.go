@@ -120,3 +120,17 @@ func TestConnectionRefusedIsTransientWithoutURL(t *testing.T) {
 		t.Fatalf("leaked: %v", err)
 	}
 }
+
+func TestHTTPWriteTimeoutIsAmbiguous(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusRequestTimeout)
+	}))
+	defer server.Close()
+	client, err := New(server.URL, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Do(context.Background(), Request{Op: "write", Method: "POST", Path: "/", Write: true}); adapter.ClassOf(err) != adapter.ErrUncertain {
+		t.Fatalf("HTTP 408 could be an interrupted write, got %v", err)
+	}
+}
