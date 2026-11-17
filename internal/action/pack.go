@@ -1,6 +1,7 @@
 package action
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -35,6 +36,12 @@ type PackTarget struct {
 	QueueID    int64   `json:"queue_id"`
 	DownloadID string  `json:"download_id"`
 	EpisodeIDs []int64 `json:"episode_ids"`
+}
+
+// PackBaseline is captured beside the dispatching step, before clearance.
+type PackBaseline struct {
+	HistoryIDs      []int64 `json:"history_ids"`
+	MissingEpisodes []int64 `json:"missing_episodes,omitempty"`
 }
 
 // PackEvidence is what the live check establishes about a pack.
@@ -168,4 +175,24 @@ func PlanPack(in PackPlanInput) *Proposal {
 	p.Evidence = raw(map[string]any{"finding": f.ID, "rows": len(ids)})
 	p.Fingerprint = digest(fmt.Sprintf("pack|%s|%s|%v|%s", f.Subject.ManagerID, strings.ToLower(f.Subject.DownloadID), ids, mv))[:16]
 	return p
+}
+
+// trackPackFollowUps records the verified clearance's targeted searches in
+// the same transaction as the verified step, including during reconciliation.
+func trackPackFollowUps(tx *store.Tx, id int64, step store.Step, now time.Time) error {
+	var target PackTarget
+	if err := json.Unmarshal(step.Target, &target); err != nil {
+		return err
+	}
+	var base PackBaseline
+	if err := json.Unmarshal(step.Baseline, &base); err != nil {
+		return err
+	}
+	for _, episode := range base.MissingEpisodes {
+		key := fmt.Sprintf("episode:%d", episode)
+		if err := tx.MarkPackFollowUp(target.ManagerID, key, fmt.Sprintf("Episode %d", episode), id, now); err != nil {
+			return err
+		}
+	}
+	return nil
 }

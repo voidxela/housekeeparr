@@ -776,3 +776,35 @@ func TestInterruptedSearchPersistsBackoffDuringReconciliation(t *testing.T) {
 		t.Fatalf("reconciliation resent search: %v", f.sent)
 	}
 }
+
+func TestReconciledPackClearanceKeepsTargetedFollowUp(t *testing.T) {
+	c, f, _ := setup(t)
+	var id int64
+	err := c.Store.Write(ctx, func(tx *store.Tx) error {
+		var err error
+		id, err = tx.CreateIntent(store.Intent{Key: "test-pack", Workflow: "partial_pack", Origin: "automatic",
+			Steps: []store.Step{{Op: OpPackIgnore, Target: raw(PackTarget{ManagerID: "sonarr", QueueID: 7, DownloadID: "aa", EpisodeIDs: []int64{202, 203}})}}}, t0)
+		if err != nil {
+			return err
+		}
+		if err := tx.SetIntentState(id, store.IntentExecuting, "", t0); err != nil {
+			return err
+		}
+		return tx.BeginStep(id, 1, t0, json.RawMessage(`{"history_ids":[82],"missing_episodes":[203]}`))
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.observe[OpPackIgnore] = Observation{Verdict: Holds}
+	rep, err := c.Reconcile(ctx)
+	if err != nil || len(rep.Settled) != 1 {
+		t.Fatalf("could not verify interrupted pack clearance: %+v, %v", rep, err)
+	}
+	it, err := c.Store.MissingRecord(ctx, "sonarr", "episode:203")
+	if err != nil || it == nil || it.Origin != "pack" || it.OriginIntent == nil || *it.OriginIntent != id {
+		t.Fatalf("lost the pack's targeted follow-up across a crash: %+v, %v", it, err)
+	}
+	if f.count(OpPackIgnore) != 0 {
+		t.Fatal("reconciliation resent the clearance")
+	}
+}

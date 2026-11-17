@@ -499,29 +499,3 @@ func (s *Service) packContentBlockers(p action.Proposal) []action.Check {
 	}
 	return out
 }
-
-// afterAction runs the local follow-ups of a verified action. After a
-// partial pack's association is cleared, the episodes the live evidence
-// still finds missing (no import record from the pack, no file) are marked
-// for one targeted individual search each (SPEC §8); availability and
-// monitoring are checked again when each search is planned.
-func (s *Service) afterAction(ctx context.Context, f domain.Finding, p action.Proposal, res action.Result) error {
-	if p.Workflow != string(policy.WorkflowPartialPack) || res.State != store.IntentSucceeded || s.executor == nil {
-		return nil
-	}
-	live, err := s.executor.Live(ctx, p)
-	if err != nil || live.Pack == nil {
-		// The clearance stands; the episodes stay ordinary missing content.
-		return nil
-	}
-	now := s.now()
-	return s.st.Write(ctx, func(tx *store.Tx) error {
-		for _, id := range live.Pack.Missing {
-			key := fmt.Sprintf("episode:%d", id)
-			if err := tx.MarkPackFollowUp(p.Planned.ManagerID, key, f.Title+" ("+key+")", res.IntentID, now); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-}

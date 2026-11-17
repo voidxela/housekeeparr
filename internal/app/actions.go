@@ -194,13 +194,6 @@ func (s *Service) Act(ctx context.Context, findingID int64, actor Actor) (*Actio
 		return pv, nil, ErrNoExecutor
 	}
 	res, err := c.Execute(ctx, *pv.Proposal)
-	if err == nil {
-		if fd, ferr := s.st.Finding(ctx, findingID); ferr == nil && fd != nil {
-			if ferr := s.afterAction(ctx, *fd, *pv.Proposal, res); ferr != nil {
-				return pv, &res, ferr
-			}
-		}
-	}
 	return pv, &res, err
 }
 

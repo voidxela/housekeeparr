@@ -762,6 +762,9 @@ func (c *Coordinator) Review(ctx context.Context, id int64, to store.IntentState
 // recordVerifiedStep commits effects of a verified operation even when a
 // later step will be held or refused.
 func recordVerifiedStep(tx *store.Tx, id int64, subject json.RawMessage, step store.Step, planned *Planned, now time.Time) error {
+	if step.Op == OpPackIgnore {
+		return trackPackFollowUps(tx, id, step, now)
+	}
 	if err := recordRetained(tx, id, subject, step, planned, now); err != nil {
 		return err
 	}

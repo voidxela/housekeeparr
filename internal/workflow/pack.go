@@ -91,10 +91,6 @@ func (r *Recovery) packLive(ctx context.Context, p action.Proposal) (action.Live
 	return live, nil
 }
 
-type packBaseline struct {
-	HistoryIDs []int64 `json:"history_ids"`
-}
-
 func (r *Recovery) packBaseline(ctx context.Context, st store.Step) (json.RawMessage, error) {
 	var tg action.PackTarget
 	if err := json.Unmarshal(st.Target, &tg); err != nil {
@@ -108,9 +104,24 @@ func (r *Recovery) packBaseline(ctx context.Context, st store.Step) (json.RawMes
 	if err != nil {
 		return nil, err
 	}
-	b := packBaseline{HistoryIDs: []int64{}}
+	b := action.PackBaseline{HistoryIDs: []int64{}}
+	imported := map[int64]bool{}
 	for _, h := range hist {
 		b.HistoryIDs = append(b.HistoryIDs, h.ID)
+		if h.EventType == "downloadFolderImported" {
+			imported[h.EpisodeID] = true
+		}
+	}
+	// Live revalidation has already established that these episodes have
+	// no file and no import record. Store the subset so a restart after
+	// dispatch cannot lose its targeted follow-ups.
+	for _, episode := range tg.EpisodeIDs {
+		if !imported[episode] {
+			b.MissingEpisodes = append(b.MissingEpisodes, episode)
+		}
+	}
+	if len(b.MissingEpisodes) == 0 || len(b.MissingEpisodes) == len(tg.EpisodeIDs) {
+		return nil, fmt.Errorf("partial import could no longer be established from the pack history")
 	}
 	return json.Marshal(b)
 }
@@ -151,7 +162,7 @@ func (r *Recovery) observePack(ctx context.Context, st store.Step) (action.Obser
 	if !ok {
 		return action.Observation{}, fmt.Errorf("no support for manager %s", tg.ManagerID)
 	}
-	var base packBaseline
+	var base action.PackBaseline
 	_ = json.Unmarshal(st.Baseline, &base)
 	return r.wait(ctx, func() (action.Observation, error) {
 		q, err := m.Queue(ctx)
