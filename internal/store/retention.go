@@ -37,7 +37,11 @@ func (t *Tx) Prune(now time.Time, r Retention) (PruneResult, error) {
 			return run(&out.Checks, "DELETE FROM connection_checks WHERE at < ?", ms(now.Add(-r.ConnectionChecks)))
 		},
 		func() error {
-			return run(&out.Findings, "DELETE FROM findings WHERE state='resolved' AND resolved_at < ?", ms(now.Add(-r.ResolvedFindings)))
+			// Older pack intents recorded their transfer scope only in the finding.
+			return run(&out.Findings, `DELETE FROM findings WHERE state='resolved' AND resolved_at < ?
+				AND id NOT IN (SELECT i.finding_id FROM action_intents i JOIN missing_content m ON m.origin_intent=i.id
+					WHERE m.origin='pack' AND i.finding_id IS NOT NULL
+						AND COALESCE(json_extract(i.subject_json, '$.client_id'), '')='')`, ms(now.Add(-r.ResolvedFindings)))
 		},
 		func() error {
 			// Gone transfers are kept while any unresolved finding refers to them.
@@ -53,10 +57,12 @@ func (t *Tx) Prune(now time.Time, r Retention) (PruneResult, error) {
 			return run(&out.Audit, "DELETE FROM audit_events WHERE at < ?", ms(now.Add(-r.AuditEvents)))
 		},
 		func() error {
-			// Only finished actions expire; uncertain and active ones (and
-			// their locks) are never pruned. Steps and locks cascade.
+			// Keep the receipts and scope while the scheduler depends on them.
+			// Steps and locks cascade when a finished action expires.
 			return run(&out.Actions, `DELETE FROM action_intents WHERE state IN ('succeeded','failed','cancelled')
-				AND finished_at IS NOT NULL AND finished_at < ?`, ms(now.Add(-r.AuditEvents)))
+				AND finished_at IS NOT NULL AND finished_at < ?
+				AND id NOT IN (SELECT origin_intent FROM missing_content WHERE origin='pack' AND origin_intent IS NOT NULL)
+				AND id NOT IN (SELECT last_intent_id FROM missing_content WHERE state='searched' AND last_intent_id IS NOT NULL)`, ms(now.Add(-r.AuditEvents)))
 		},
 		func() error {
 			var n int64

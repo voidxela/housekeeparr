@@ -1576,3 +1576,47 @@ func TestPartialPackRequiresLiveCompletionAndHealth(t *testing.T) {
 		})
 	}
 }
+
+func TestPackSearchRequiresItsOriginatingPermission(t *testing.T) {
+	w := packWorld(t, nil)
+	ctx := context.Background()
+	if err := w.st.Write(ctx, func(tx *store.Tx) error {
+		return tx.MarkPackFollowUp("sonarr", "episode:203", "missing pack episode", 12345, t0)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	preview, err := w.svc.PreviewSearch(ctx, "sonarr", "episode:203", action.OriginAutomatic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, blocker := range preview.Proposal.Blockers() {
+		if blocker.Name == "originating pack permission" {
+			return
+		}
+	}
+	t.Fatal("a pack follow-up lost its originating permission without a blocker")
+}
+
+func TestMissingSearchWithoutRetainedReceiptBecomesUnverified(t *testing.T) {
+	w := searchWorld(t, "automatic")
+	ctx := context.Background()
+	it := fake.MissingEpisode(101, 1, "Show S01E01", t0.Add(-48*time.Hour))
+	w.mgr.SetMissing(it)
+	old := t0.Add(-2 * time.Hour)
+	prunedIntent := int64(12345)
+	if err := w.st.Write(ctx, func(tx *store.Tx) error {
+		if _, err := tx.SaveMissingSnapshot(domain.MissingSnapshot{ManagerID: "sonarr", Items: []domain.MissingItem{it}}, t0); err != nil {
+			return err
+		}
+		return tx.SetMissingSearch("sonarr", "episode:101", store.MissingSearched, "", &prunedIntent, &old, nil, true)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.svc.DispatchSearches(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	record, err := w.st.MissingRecord(ctx, "sonarr", "episode:101")
+	if err != nil || record == nil || record.State != store.MissingEndUnknown {
+		t.Fatalf("missing search outcome = %+v, error = %v", record, err)
+	}
+}

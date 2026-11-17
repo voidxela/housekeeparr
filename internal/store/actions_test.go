@@ -435,3 +435,61 @@ func TestForwardMigrationV3ContentIdentity(t *testing.T) {
 		t.Fatalf("locks after review %v", locks)
 	}
 }
+
+func TestPruneKeepsPackOriginsAndUnresolvedSearchReceipts(t *testing.T) {
+	s := openTest(t, t.TempDir())
+	packID := create(t, s, testIntent("pack"))
+	searchID := create(t, s, testIntent("search"))
+	if err := s.Write(ctx, func(tx *Tx) error {
+		for _, id := range []int64{packID, searchID} {
+			if err := tx.SetIntentState(id, IntentExecuting, "", t0); err != nil {
+				return err
+			}
+			if err := tx.SetIntentState(id, IntentSucceeded, "", t0); err != nil {
+				return err
+			}
+		}
+		if err := tx.MarkPackFollowUp("sonarr", "episode:1", "waiting pack follow-up", packID, t0); err != nil {
+			return err
+		}
+		if err := tx.MarkPackFollowUp("sonarr", "episode:2", "followed search", packID, t0); err != nil {
+			return err
+		}
+		if err := tx.SetMissingOrigin("sonarr", "episode:2", "missing"); err != nil {
+			return err
+		}
+		return tx.SetMissingSearch("sonarr", "episode:2", MissingSearched, "", &searchID, &t0, nil, false)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	prune := func() {
+		t.Helper()
+		if err := s.Write(ctx, func(tx *Tx) error {
+			_, err := tx.Prune(t0.Add(2*time.Hour), Retention{AuditEvents: time.Hour})
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	prune()
+	for _, id := range []int64{packID, searchID} {
+		if _, err := s.Intent(ctx, id); err != nil {
+			t.Errorf("pruned intent %d while the scheduler still needed it: %v", id, err)
+		}
+	}
+
+	if err := s.Write(ctx, func(tx *Tx) error {
+		if err := tx.SetMissingOrigin("sonarr", "episode:1", "missing"); err != nil {
+			return err
+		}
+		return tx.SetMissingSearch("sonarr", "episode:2", MissingNoResult, "", nil, nil, nil, false)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	prune()
+	for _, id := range []int64{packID, searchID} {
+		if _, err := s.Intent(ctx, id); !errors.Is(err, sql.ErrNoRows) {
+			t.Errorf("finished reference kept expired intent %d: %v", id, err)
+		}
+	}
+}

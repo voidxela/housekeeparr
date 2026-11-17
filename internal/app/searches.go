@@ -46,21 +46,15 @@ func (s *Service) PreviewSearch(ctx context.Context, managerID, key string, orig
 	now := s.now()
 	in := action.SearchPlanInput{Item: *it, Origin: origin, ConfigRevision: s.cfg.Revision, Tested: action.Tested, Now: now, Limits: s.cfg.Limits(), Timing: s.cfg.Search}
 	in.Scope = policy.Subject{ManagerID: managerID, ContentKey: key}
-	if it.Origin == "pack" && it.OriginIntent != nil {
-		originIntent, err := s.st.Intent(ctx, *it.OriginIntent)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	var packScopeKnown bool
+	if it.Origin == "pack" {
+		scope, known, err := s.packFollowUpScope(ctx, it)
+		if err != nil {
 			return nil, err
 		}
-		var origin struct {
-			ClientID string `json:"client_id"`
-			NativeID string `json:"native_id"`
-		}
-		if originIntent.ID != 0 && json.Unmarshal(originIntent.Subject, &origin) == nil && origin.ClientID != "" {
-			in.Scope, err = s.packScope(ctx, managerID, origin.ClientID, origin.NativeID)
-			if err != nil {
-				return nil, err
-			}
-			in.Scope.ContentKey = key
+		packScopeKnown = known
+		if known {
+			in.Scope = scope
 		}
 	}
 	if in.Policy, err = s.cfg.Resolve(in.Scope); err != nil {
@@ -111,6 +105,10 @@ func (s *Service) PreviewSearch(ctx context.Context, managerID, key string, orig
 			policy.HumanDuration(now.Sub(*last)), policy.HumanDuration(s.cfg.Search.Spacing.Duration))
 	}
 	p := action.PlanSearch(in)
+	if it.Origin == "pack" && !packScopeKnown {
+		p.Prerequisites = append(p.Prerequisites, action.Check{Name: "originating pack permission", Hard: true,
+			Detail: "the original transfer scope could not be established. Review the missed content and its pack clearance before searching"})
+	}
 	usage := map[string]store.BudgetUsage{}
 	for _, b := range p.Budgets {
 		u, err := s.st.BudgetUsage(ctx, b.Budget(), b.Units, now)
@@ -340,6 +338,9 @@ func (s *Service) followSearches(ctx context.Context, now time.Time) error {
 // action, or 0 when it was not recorded.
 func (s *Service) searchCommandID(ctx context.Context, intentID int64) (int64, error) {
 	in, err := s.st.Intent(ctx, intentID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
 	if err != nil {
 		return 0, err
 	}
@@ -471,6 +472,45 @@ func (s *Service) previewPack(ctx context.Context, f *domain.Finding, origin act
 
 // packScope preserves the originating transfer restrictions for both clearance
 // and targeted follow-up.
+// packFollowUpScope uses the originating clearance's transfer permission.
+// Older clearances recorded the transfer identity in their finding.
+func (s *Service) packFollowUpScope(ctx context.Context, it *store.MissingRecord) (policy.Subject, bool, error) {
+	if it.OriginIntent == nil {
+		return policy.Subject{}, false, nil
+	}
+	in, err := s.st.Intent(ctx, *it.OriginIntent)
+	if errors.Is(err, sql.ErrNoRows) {
+		return policy.Subject{}, false, nil
+	}
+	if err != nil {
+		return policy.Subject{}, false, err
+	}
+	var origin struct {
+		ManagerID string `json:"manager_id"`
+		ClientID  string `json:"client_id"`
+		NativeID  string `json:"native_id"`
+	}
+	if in.Workflow != string(policy.WorkflowPartialPack) || in.State != store.IntentSucceeded ||
+		json.Unmarshal(in.Subject, &origin) != nil || origin.ManagerID != it.ManagerID {
+		return policy.Subject{}, false, nil
+	}
+	if origin.ClientID == "" && origin.NativeID == "" && in.FindingID != nil {
+		f, err := s.st.Finding(ctx, *in.FindingID)
+		if err != nil {
+			return policy.Subject{}, false, err
+		}
+		if f != nil && f.Subject.ManagerID == it.ManagerID {
+			origin.ClientID, origin.NativeID = f.Subject.ClientID, f.Subject.NativeID
+		}
+	}
+	if origin.ClientID == "" || origin.NativeID == "" {
+		return policy.Subject{}, false, nil
+	}
+	scope, err := s.packScope(ctx, it.ManagerID, origin.ClientID, origin.NativeID)
+	scope.ContentKey = it.ContentKey
+	return scope, err == nil, err
+}
+
 func (s *Service) packScope(ctx context.Context, manager, client, native string) (policy.Subject, error) {
 	var transfer *domain.Transfer
 	if client != "" && native != "" {
