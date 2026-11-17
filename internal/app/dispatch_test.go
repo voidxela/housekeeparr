@@ -1143,8 +1143,8 @@ const packRule = "\n[[rule]]\nname = \"packs\"\npriority = 1\n[rule.automation]\
 // packWorld has a completed season pack on qbit whose Sonarr rows (E01-E03,
 // IDs 201-203) are import-blocked with the partial-pack message, E01 and
 // E02 imported from it (history and files), E03 neither.
-func packWorld(t *testing.T, mutate func(w *world, rows []domain.QueueItem) []domain.QueueItem) *world {
-	w := newWorldWith(t, "automatic", 20, packRule)
+func packWorld(t *testing.T, mutate func(w *world, rows []domain.QueueItem) []domain.QueueItem, configExtras ...string) *world {
+	w := newWorldWith(t, "automatic", 20, packRule+strings.Join(configExtras, ""))
 	action.Tested = append(action.Tested, action.TestedWorkflow{Workflow: policy.WorkflowPartialPack, Manager: adapter.KindSonarr, ManagerVersion: "0.0.0-fake",
 		Client: adapter.KindQBittorrent, ClientVersion: "0.0.0-fake"})
 	w.client.SetTransfers(fake.Transfer(hashA, "Show.S02", domain.StateComplete, 4*gib, 4*gib, t0))
@@ -1431,5 +1431,44 @@ func TestSearchRefusesAnAlreadyRunningManagerSearch(t *testing.T) {
 	w.runSearches(time.Hour)
 	if s := w.mgr.Searches(); len(s) != 0 {
 		t.Fatalf("duplicated the manager's running command: %v", s)
+	}
+}
+
+func TestPartialPackRespectsAnExcludedEpisode(t *testing.T) {
+	w := packWorld(t, nil, `
+[[exclude]]
+content = "sonarr|episode:203"
+workflows = ["partial_pack"]
+reason = "hold this episode association"
+`)
+	w.run(2 * time.Hour)
+	if r := w.mgr.Removals(); len(r) != 0 {
+		t.Fatalf("cleared a pack affecting an excluded episode: %+v", r)
+	}
+}
+
+func TestPackSearchRetainsTransferScopedPermission(t *testing.T) {
+	w := packWorld(t, nil, `
+[[rule]]
+name = "disable manager-wide partial pack"
+priority = 2
+[rule.automation]
+partial_pack = false
+[rule.match]
+manager = "sonarr"
+[[override]]
+transfer = "qbit|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+reason = "allow recovery of this one pack"
+[override.automation]
+partial_pack = true
+`)
+	action.Tested = append(action.Tested, action.TestedWorkflow{Workflow: policy.WorkflowMissingSearch, Manager: adapter.KindSonarr, ManagerVersion: "0.0.0-fake"})
+	w.mgr.SetMissing(fake.MissingEpisode(203, 1, "Missing pack episode", t0.Add(-72*time.Hour)))
+	w.runSearches(2 * time.Hour)
+	if r := w.mgr.Removals(); len(r) != 1 {
+		t.Fatalf("pack clearance did not use its scoped permission: %+v", r)
+	}
+	if s := w.mgr.Searches(); len(s) != 1 || s[0][0] != 203 {
+		t.Fatalf("targeted search lost the pack's scoped permission: %v", s)
 	}
 }

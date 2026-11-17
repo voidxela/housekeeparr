@@ -84,7 +84,8 @@ func PlanPack(in PackPlanInput) *Proposal {
 	}
 	f := in.Finding
 	p := &Proposal{Workflow: string(wf), Origin: in.Origin, Scope: in.Scope, PolicyRevision: in.Policy.Revision, ConfigRevision: in.ConfigRevision,
-		Subject: raw(map[string]string{"manager_id": f.Subject.ManagerID, "download_id": f.Subject.DownloadID}), CreatedAt: in.Now, ExpiresAt: in.Now.Add(ttl),
+		Subject: raw(map[string]string{"manager_id": f.Subject.ManagerID, "download_id": f.Subject.DownloadID,
+			"client_id": f.Subject.ClientID, "native_id": f.Subject.NativeID}), CreatedAt: in.Now, ExpiresAt: in.Now.Add(ttl),
 		LiveChecks: []string{"every row of the download is still in the queue, import-blocked with the partial-pack message and nothing else",
 			"the manager's import history for the download covers exactly the episodes that have files; the others have none",
 			"the manager version is unchanged"}}

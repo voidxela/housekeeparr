@@ -269,6 +269,9 @@ func (g gate) Blockers(ctx context.Context, p action.Proposal) []action.Check {
 	if c := action.PolicyCheck(pol, p.Governing(), p.Origin); !c.Satisfied {
 		out = append(out, c)
 	}
+	if p.Workflow == string(policy.WorkflowPartialPack) {
+		out = append(out, g.s.packContentBlockers(p)...)
+	}
 	pauses, err := g.s.st.WorkflowPauses(ctx)
 	if err != nil {
 		block("workflow not paused", "pauses could not be read: "+err.Error())

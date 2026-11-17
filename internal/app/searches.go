@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -51,6 +52,23 @@ func (s *Service) PreviewSearch(ctx context.Context, managerID, key string, orig
 	now := s.now()
 	in := action.SearchPlanInput{Item: *it, Origin: origin, ConfigRevision: s.cfg.Revision, Tested: action.Tested, Now: now, Limits: s.cfg.Limits()}
 	in.Scope = policy.Subject{ManagerID: managerID, ContentKey: key}
+	if it.Origin == "pack" && it.OriginIntent != nil {
+		originIntent, err := s.st.Intent(ctx, *it.OriginIntent)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
+		var origin struct {
+			ClientID string `json:"client_id"`
+			NativeID string `json:"native_id"`
+		}
+		if originIntent.ID != 0 && json.Unmarshal(originIntent.Subject, &origin) == nil && origin.ClientID != "" {
+			in.Scope, err = s.packScope(ctx, managerID, origin.ClientID, origin.NativeID)
+			if err != nil {
+				return nil, err
+			}
+			in.Scope.ContentKey = key
+		}
+	}
 	if in.Policy, err = s.cfg.Resolve(in.Scope); err != nil {
 		return nil, err
 	}
@@ -381,8 +399,11 @@ func (s *Service) coverageNote(ctx context.Context, managerID string, at time.Ti
 func (s *Service) previewPack(ctx context.Context, f *domain.Finding, origin action.Origin, out *ActionPreview) (*ActionPreview, error) {
 	now := s.now()
 	in := action.PackPlanInput{Finding: *f, Origin: origin, ConfigRevision: s.cfg.Revision, Tested: action.Tested, Now: now}
-	in.Scope = policy.Subject{ManagerID: f.Subject.ManagerID, ClientID: f.Subject.ClientID, NativeID: f.Subject.NativeID}
 	var err error
+	in.Scope, err = s.packScope(ctx, f.Subject.ManagerID, f.Subject.ClientID, f.Subject.NativeID)
+	if err != nil {
+		return nil, err
+	}
 	if in.Policy, err = s.cfg.Resolve(in.Scope); err != nil {
 		return nil, err
 	}
@@ -435,6 +456,7 @@ func (s *Service) previewPack(ctx context.Context, f *domain.Finding, origin act
 		}
 	}
 	p := action.PlanPack(in)
+	p.Prerequisites = append(p.Prerequisites, s.packContentBlockers(*p)...)
 	if out.Journal.RestoreHold != nil {
 		p.Prerequisites = append(p.Prerequisites, action.Check{Name: "state matches the action journal", Hard: true, Detail: out.Journal.RestoreHold.Reason})
 	}
@@ -444,6 +466,42 @@ func (s *Service) previewPack(ctx context.Context, f *domain.Finding, origin act
 	}
 	out.Workflow, out.Proposal, out.Policy = p.Workflow, p, in.Policy
 	return out, nil
+}
+
+// packScope preserves the originating transfer restrictions for both clearance
+// and targeted follow-up.
+func (s *Service) packScope(ctx context.Context, manager, client, native string) (policy.Subject, error) {
+	var transfer *domain.Transfer
+	if client != "" && native != "" {
+		tr, err := s.st.Transfer(ctx, client, native)
+		if err != nil {
+			return policy.Subject{}, err
+		}
+		if tr != nil {
+			transfer = &tr.Latest
+		}
+	}
+	scope := policy.TransferSubject(client, native, transfer, nil)
+	scope.ManagerID = manager
+	return scope, nil
+}
+
+func (s *Service) packContentBlockers(p action.Proposal) []action.Check {
+	var out []action.Check
+	for _, key := range p.Planned.Content {
+		scope := p.Scope
+		scope.ContentKey = key
+		eff, err := s.cfg.Resolve(scope)
+		if err != nil {
+			out = append(out, action.Check{Name: "policy for " + key, Hard: true, Detail: err.Error()})
+			continue
+		}
+		if check := action.PolicyCheck(eff, policy.WorkflowPartialPack, p.Origin); !check.Satisfied {
+			check.Detail = key + ": " + check.Detail
+			out = append(out, check)
+		}
+	}
+	return out
 }
 
 // afterAction runs the local follow-ups of a verified action. After a
