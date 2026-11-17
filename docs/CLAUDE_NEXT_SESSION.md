@@ -2,39 +2,57 @@
 
 Continue implementing Housekeeparr through the complete approved v1 scope in
 `docs/SPEC.md`. Read `AGENTS.md`, the entire SPEC, `docs/STATUS.md` (start
-with "Latest-progress review — 2026-11-17") and `docs/compatibility.md` before
-changing behavior. Reviews under `docs/reviews/` supply background; R1–R10
-all have fixes with regression tests. Read `docs/reviews/2026-11-17.md`: R11–R13 remain open at reviewed HEAD `f83cf4d`. Implement and verify concrete
-increments, not just plans.
+with "Session of 2026-11-17") and `docs/compatibility.md` before changing
+behavior. Reviews under `docs/reviews/` supply background; R1–R13 all have
+fixes with regression tests. Implement and verify concrete increments, not
+just plans.
 
-State reviewed on 2026-11-17 (`dev` at `f83cf4d`; review/handoff documentation may be uncommitted):
+State at the end of the 2026-11-17 session (`dev`; see STATUS for commits):
 
-- **R8–R10 fixed.** Plans require a diagnosis made under the current
-  diagnostic settings; outcome progress needs a fresh complete client
-  listing; searches are followed past terminal downloads.
-- **Metadata recovery** is real-instance-tested (planner → coordinator →
-  executor) and registered for Sonarr 4.0.20.3014 and Radarr 6.4.4.10685
-  with qBittorrent 5.3.0, Deluge 2.2.0, rTorrent 0.9.8 and Transmission
-  4.0.6/4.1.4. Its automatic dispatch is fixture-tested only.
-- **User decisions this session (recorded in SPEC §6):** metadata recovery
-  accepts privacy that is unknown only because metadata has not arrived (no
-  payload exists; `unknown_privacy.metadata_recovery = false` opts a scope
-  out). No-progress recovery of a torrent **known to be private** defaults
-  to `private_recovery = "keep_running"`: fail and blocklist the grab in the
-  manager, never stop the torrent; `"stop"` and `"observe"` are scoped
-  choices. Real-instance-tested (default mode) with all four clients.
-- Unknown privacy (qBittorrent 4.x) is treated as private for no-progress
-  recovery by user decision, configurable per scope
-  (`unknown_privacy.no_progress_recovery = false`). Fixture-tested only: no
-  4.x combination is registered, so nothing is sent there. Registering one
-  needs a real-instance run of the keep-running path on 4.6.7 (the
-  integration test's 4.x branch still asserts a refusal because it builds
-  its policy by hand) and the 4.6.7 fixture diagnosis below.
-- Blocklist evidence is matched by the grabbed release's title (the queue
-  title differs for a metadata-less rTorrent download).
+- **R11–R13 fixed.** Handled-recovery identity is client + native ID
+  (migration 0013 adds `recovery_outcomes.old_client_id`, backfilled from
+  intents still retained; outcomes without a client exempt nothing) and
+  only while no manager associates the transfer again. Every replacement is
+  gated on current retained usage (`retained-data ceiling`), separately
+  from the room the transfer left behind needs (`room to retain this
+  transfer`). Kept-running transfers are retained records with disposition
+  `running`; sizes refresh from listings; unknown logical size stays
+  unknown ("no payload" only for a transfer stopped before metadata).
+  Previews describe current tracking (no "not yet" claims).
+- **SPEC clarified** (§5 correlated-stall population, §6 keep-running and
+  bounded metadata wording, §7 step 4 exception, §7.1 accounting, new §7.2
+  preserved-data failure contract). No numeric proposal was promoted.
+- **`require_pieces_unavailable`** (delegated to agy, reviewed) is a
+  diagnostic setting in `Settings.Revision()` (SPEC §13.4 scenario 2).
+- **Preserved-data failure slice:** the only qualifying cause is a
+  tracker's "not registered" rejection reported from a structured field
+  (Transmission `error = 2`; Deluge `tracker_status` "Error: …", delegated
+  and reviewed) on consecutive fresh observations of an active, incomplete
+  transfer without verified progress over a proposed 30-minute
+  confirmation window (`policy.SourceConfirmWindow`, a constant). Finding
+  `transfer.source_rejected`; no-progress keeps precedence (private
+  behaviour unchanged). Client errors are diagnosis only. Effects: fail +
+  blocklist (manager-native redownload), then stop retaining data. Live
+  check re-reads the rejection; "no import in progress" requires the
+  manager to track the grab as downloading. Private/unknown privacy:
+  observation (SPEC default) — **open product question for the user**:
+  should a private unregistered torrent follow `private_recovery`
+  (blocklist, leave the torrent alone)? Do not extend the decision without
+  asking.
+- Real-instance: see compatibility.md "Preserved-data failure runs" for
+  exactly which versions passed and what was registered.
+
+Still true from earlier sessions:
+
+- **Metadata recovery** is real-instance-tested and registered for both
+  managers with all four clients; its automatic dispatch is fixture-tested
+  only. No-progress recovery of a **known-private** torrent defaults to
+  `private_recovery = "keep_running"` (user decision); unknown privacy is
+  treated as private there (fixture-tested only; no qBittorrent 4.x
+  combination registered).
+- Blocklist evidence is matched by the grabbed release's title.
 - `scripts/it/run.sh --only REGEX` selects registered tests; record such
-  runs as selected. See compatibility.md for exactly which commit each
-  result belongs to and what was not re-run.
+  runs as selected.
 
 ## Existing user authorization and constraints
 
@@ -90,55 +108,30 @@ do not turn a choice of defaults into a prolonged blocker for other work.
 
 ## Immediate work, in priority order
 
-1. **Short spec reconciliation and R11–R13 fixes**, not a broad redesign.
-   Use the review's reproductions. R11: handled recovery identity must include
-   client instance; a recovery on qbit currently lets the same hash on qbit2
-   evade the correlated-outage hold. Include current association/attempt context
-   so historical handling is not an eternal exemption. R12: enforce already-hit
-   capacity ceilings before any replacement, including keep-running mode;
-   separate that gate from incremental retained cost. R13: remove stale preview
-   claims that capacity and replacement tracking are unimplemented. Add meaningful
-   regression tests; these local changes do not themselves require a real matrix.
-2. **Update only the affected SPEC contracts before expanding writes.** Reconcile
-   the approved keep-running default with the unconditional slot-release text;
-   define retained running/stopped accounting and logical size versus downloaded
-   payload (unknown metadata size is not known zero logical size); specify the
-   correlated-stall population and handled-attempt exclusion. Preserve approved
-   privacy defaults and distinguish policy choices from unsupported claims about
-   tracker obligations. Write a compact preserved-data failure contract covering
-   evidence, excluded local/systemic faults, permissions, exact effects and
-   outcomes. The review supplies concrete recommendations. Straight consistency
-   corrections need no renewed permission; if an unresolved product choice would
-   change approved behavior, ask narrowly while continuing independent work.
-   Do not promote proposed quota/timing values to approved defaults.
-3. **Deliver one preserved-data failure slice** through the shared pipeline,
-   starting with one manager/client combination and positively established cause.
-   Native error/complete state alone is insufficient: missing data can be invisible,
-   recheck resets counters, and rTorrent messages can be stale. Preserve files,
-   registration and uncertainty; do not introduce filesystem scans or automatic
-   rechecks implicitly. Prove the slice on a disposable instance, record evidence,
-   then extend to both managers and all four clients at workflow milestones.
-4. **Parallel independent work is authorized and encouraged.** Use agy as below
-   for the missing positive-piece-unavailability setting (include it in
-   `Settings.Revision()`), current preview text/tests, or a narrowly scoped
-   read-only import/partial-pack evidence investigation. Give each delegate its
-   own worktree and nonoverlapping files; integrate and review before validation.
-   Keep heavy real-instance runs serial. Do not wait for every research question
-   to close before shipping an independently verified increment.
-5. **Batch follow-ups with relevant work:** real-instance automatic metadata
-   dispatch; a kept-running original completing after replacement is requested;
-   qBittorrent 4.6.7 unknown-privacy recovery and registration. First diagnose
-   4.6.7's `errored-restart` fixture with `--managers none`: at `118f15c` it
-   returned `stalledDL`, verified 0, rather than `missingFiles`; the harness did
-   not require verified bytes and proceeded after a readiness deadline. Inspect
-   `~/.cache/hk-rtdiag/keep/qbt467-118f15c.log` if still available. Do not loosen
-   assertions or register untested writes. The existing 4.x workflow branch
-   builds policy by hand and still expects refusal; align it with the approved
-   keep-running policy when testing that path.
-6. **Continue remaining v1**: partial-pack positive import/coverage evidence and
-   safe clearance, bounded targeted/proactive searches and coverage findings,
-   notifications/deferral visibility, authenticated remote web and accessible UI,
-   packaging/security/performance acceptance. Preserve all ten acceptance scenarios.
+1. **Re-run the changed real-instance assertions once, in a batch:** the
+   private keep-running integration test now expects a `running` retained
+   record (assertion changed at `a65657c`, not yet re-run on real
+   instances), and preserved-data handling on any client/version not yet
+   recorded (qBittorrent has no tracker-result signal; rTorrent's message
+   can be stale — both stay unsupported until a fresh structured signal is
+   established). Register only what passes.
+2. **Ask the user** the private-unregistered question above while
+   continuing; record the answer in SPEC §6/§7.2.
+3. **Batch follow-ups:** real-instance automatic metadata dispatch and
+   automatic preserved-data dispatch; a kept-running original completing
+   after replacement; qBittorrent 4.6.7 unknown-privacy recovery and its
+   `errored-restart` fixture diagnosis (`--managers none`; the 4.x workflow
+   branch still builds policy by hand and expects refusal). qBittorrent
+   tracker results would need `torrents/trackers` per torrent: bound it to
+   downloading transfers if added.
+4. **Continue remaining v1**: partial-pack positive import/coverage
+   evidence and safe clearance, bounded targeted/proactive searches and
+   coverage findings, notifications/deferral visibility, authenticated
+   remote web and accessible UI, packaging/security/performance
+   acceptance. Preserve all ten acceptance scenarios.
+5. **Parallel work stays authorized** (agy, own worktree, file-scoped
+   brief, no commits; review the diff). Both delegations this session
+   (`require_pieces_unavailable`, Deluge tracker status) were clean.
 
 Validation follow-ups to batch with relevant work: redownload-disabled and
 interactive-grab refusal against real managers; a shortened-window real
@@ -153,14 +146,10 @@ Proposals awaiting a product decision (implemented, not approved): a
 workflow pause also blocks manual actions; recovery is refused when the
 manager would not redownload; the replacement-search constants; the
 `[automation.limits]` values; metadata stalls counting toward the
-correlated-stall hold; already-recovered transfers left out of it; a
-metadata-stage transfer retained as zero bytes.
-
-Process lessons: run recorded integration runs from a git worktree pinned
-to the commit (`git worktree add --detach ~/.cache/hk-wt-run <sha>`); chain
-checks with `&&` before committing (a `;` chain committed a red tree once
-this session and had to be amended); `/tmp` is RAM-backed, keep large files
-on disk.
+correlated-stall hold; handled transfers left out of it (now scoped to
+client + native ID without a current association); kept-running transfers
+counting as retained; the 30-minute source-failure confirmation window and
+the recognised "unregistered" phrases.
 
 ## Review recommendations on Claude's five decisions
 

@@ -357,6 +357,44 @@ versions report; it has no real-instance run.
 was not run separately on a private torrent; `"observe"` sends nothing
 (fixture-tested).
 
+### Preserved-data failure runs (SPEC §7.2)
+
+`TestSonarrPreservedDataFailureWorkflow` and
+`TestRadarrPreservedDataFailureWorkflow` grab a release whose torrent
+announces only to the stand-in's loopback tracker, which answers every
+announce with the bencoded failure reason `Unregistered torrent`. On
+Transmission the real adapter must report the rejection
+(`error = 2`, classified `unregistered`) on the incomplete, downloading
+transfer; the engine stores it; the plan is made with the
+`source_unregistered` diagnosis supplied (the 30-minute confirmation window
+is not waited out) and executed by the real coordinator and executor,
+whose live check re-reads the rejection before the manager write.
+Independent checks are those of public recovery: row absent after
+refreshes, release blocklisted, one new `downloadFailed`, the manager's
+replacement search queued and recorded, payload byte-identical, and the
+torrent stopped, still registered in its category, and recorded as
+retained. On clients whose adapter does not classify tracker results the
+test asserts the signal is `unsupported` and sends nothing.
+
+| Date | Commit and selection | Versions | Result |
+| --- | --- | --- | --- |
+| 2026-11-17 | `7b4a32b`, `--only PreservedDataFailure` | Sonarr 4.0.20.3014 + Radarr 6.4.4.10685 with Transmission 4.1.4 | **passed** (both tests) |
+| 2026-11-17 | `7b4a32b`, `--only PreservedDataFailure` | same managers with Transmission 4.0.6 | **passed** (both tests) |
+| 2026-11-17 | `c423114`, `--only PreservedDataFailure` (Deluge `tracker_status` classification added at `fa5fbde`) | same managers with Deluge 2.2.0 | **passed** (both tests) |
+
+Observed: Transmission 4.0.6 and 4.1.4 reported `errorString` exactly as
+the tracker's failure reason (`Unregistered torrent`) while the torrent stayed
+`downloading`; Deluge 2.2.0 reported it through `tracker_status`
+("Error: …", classified locally, never stored) with state `Downloading`; Sonarr kept tracking the grab as `downloading` (so the
+import-ambiguity check passed). The first `EpisodeSearch` completed without
+a grab within the harness's 30-second wait and the second grabbed; this is
+the harness's existing bounded retry, not a workflow effect.
+
+Registered in `action.Tested` for exactly these combinations. Not run:
+qBittorrent and rTorrent (no tracker-result classification), automatic dispatch of this
+workflow on real instances (fixture-tested), and waiting out the real
+confirmation window.
+
 ## Automatic dispatch runs
 
 `internal/integration/automatic_test.go` (`TestAutomaticRecovery`, run last
@@ -408,12 +446,12 @@ exercised.
 
 | Application | Floor | Source evidence | Transport | Observation | No-progress recovery | Metadata recovery | Preserved-data failure handling | Partial-pack handling |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Sonarr | 4.0 | `v4.0.20.3014` | HTTP API v3, API key header | **tested: 4.0.20.3014**; others contract-tested | **tested: 4.0.20.3014 with qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8** (manual and automatic dispatch) | **tested with qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8** (manual path; automatic fixture-tested) | not implemented | not implemented |
-| Radarr | 5.0 | `v6.4.4.10685` | HTTP API v3, API key header | **tested: 6.4.4.10685**; others contract-tested | **tested: 6.4.4.10685 with qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8** (manual and automatic dispatch) | **tested with qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8** (manual path; automatic fixture-tested) | not implemented | n/a (Sonarr-specific in v1) |
-| qBittorrent | 4.1 (WebUI API v2) | `release-4.6.7`, `release-5.3.0` | WebUI API v2, session cookie | **tested: 5.3.0, 4.6.7**; others contract-tested | **tested: 5.3.0** with Sonarr/Radarr above; 4.x not registered (privacy unknown: would be treated as private; untested) | **tested: 5.3.0** with Sonarr/Radarr above | not implemented | — |
-| Transmission | 2.80 (RPC 15) | `4.0.6`, `4.1.4` | legacy RPC (deprecated in 4.1, still supported throughout 4.x), session-id handshake, optional basic auth | **tested: 4.0.6, 4.1.4**; others contract-tested | **tested: 4.0.6, 4.1.4** with Sonarr/Radarr above (`torrent-stop`, legacy RPC) | **tested: 4.0.6, 4.1.4** with Sonarr/Radarr above | not implemented | — |
-| Deluge | 2.0 | `deluge-2.0.0`, `deluge-2.1.1`, `deluge-2.2.0` | deluge-web JSON API (`/json`); daemon protocol unsupported | **tested: 2.2.0**; others contract-tested | **tested: 2.2.0** with Sonarr/Radarr above (`core.pause_torrent`) | **tested: 2.2.0** with Sonarr/Radarr above | not implemented | — |
-| rTorrent | 0.9.8 | `v0.9.8`, `v0.16.28` | XML-RPC over an HTTP(S) SCGI gateway (tested: lighttpd `mod_scgi`); raw SCGI unsupported | **tested: 0.9.8**; others contract-tested | **tested: 0.9.8** with Sonarr/Radarr above (`d.stop`) | **tested: 0.9.8** with Sonarr/Radarr above | not implemented | — |
+| Sonarr | 4.0 | `v4.0.20.3014` | HTTP API v3, API key header | **tested: 4.0.20.3014**; others contract-tested | **tested: 4.0.20.3014 with qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8** (manual and automatic dispatch) | **tested with qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8** (manual path; automatic fixture-tested) | **tested with Transmission 4.0.6/4.1.4, Deluge 2.2.0** (tracker "unregistered" rejection only; manual path) | not implemented |
+| Radarr | 5.0 | `v6.4.4.10685` | HTTP API v3, API key header | **tested: 6.4.4.10685**; others contract-tested | **tested: 6.4.4.10685 with qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8** (manual and automatic dispatch) | **tested with qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8** (manual path; automatic fixture-tested) | **tested with Transmission 4.0.6/4.1.4, Deluge 2.2.0** (tracker "unregistered" rejection only; manual path) | n/a (Sonarr-specific in v1) |
+| qBittorrent | 4.1 (WebUI API v2) | `release-4.6.7`, `release-5.3.0` | WebUI API v2, session cookie | **tested: 5.3.0, 4.6.7**; others contract-tested | **tested: 5.3.0** with Sonarr/Radarr above; 4.x not registered (privacy unknown: would be treated as private; untested) | **tested: 5.3.0** with Sonarr/Radarr above | not available: tracker results not read (signal unsupported) | — |
+| Transmission | 2.80 (RPC 15) | `4.0.6`, `4.1.4` | legacy RPC (deprecated in 4.1, still supported throughout 4.x), session-id handshake, optional basic auth | **tested: 4.0.6, 4.1.4**; others contract-tested | **tested: 4.0.6, 4.1.4** with Sonarr/Radarr above (`torrent-stop`, legacy RPC) | **tested: 4.0.6, 4.1.4** with Sonarr/Radarr above | **tested: 4.0.6, 4.1.4** with Sonarr/Radarr above (`error = 2` tracker rejection) | — |
+| Deluge | 2.0 | `deluge-2.0.0`, `deluge-2.1.1`, `deluge-2.2.0` | deluge-web JSON API (`/json`); daemon protocol unsupported | **tested: 2.2.0**; others contract-tested | **tested: 2.2.0** with Sonarr/Radarr above (`core.pause_torrent`) | **tested: 2.2.0** with Sonarr/Radarr above | **tested: 2.2.0** with Sonarr/Radarr above (`tracker_status` "Error: …") | — |
+| rTorrent | 0.9.8 | `v0.9.8`, `v0.16.28` | XML-RPC over an HTTP(S) SCGI gateway (tested: lighttpd `mod_scgi`); raw SCGI unsupported | **tested: 0.9.8**; others contract-tested | **tested: 0.9.8** with Sonarr/Radarr above (`d.stop`) | **tested: 0.9.8** with Sonarr/Radarr above | not available: `d.message` can be stale (signal unsupported) | — |
 
 ## Observation signals by client
 
@@ -425,6 +463,7 @@ exercised.
 | Metadata state | `metaDL` / `forcedMetaDL` | `metadataPercentComplete` | `num_pieces = 0` | `d.is_meta` |
 | Swarm counts | tracker-reported | not collected (only with tracker URLs) | tracker-reported | not collected |
 | Client error state | `missingFiles` (observed after a restart); `error` not yet observed | `error = 3` (local; observed) | `Error` (observed after a restart) | none structured; a download stopped by rTorrent with a non-tracker `d.message` is a client error (observed) |
+| Tracker rejection (SPEC §7.2) | not read (unsupported) | `error = 2` with `errorString`, classified (observed: `Unregistered torrent`) | `tracker_status` "Error: …", classified, never stored (observed) | not classified (`d.message` can be stale) |
 | Added time | `added_on` | `addedDate` | `time_added` | `d.load_date` (may reset on restart) |
 
 
