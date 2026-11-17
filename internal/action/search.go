@@ -77,7 +77,7 @@ func PlanSearch(in SearchPlanInput) *Proposal {
 		Workflow: string(wf), Origin: in.Origin, Subject: raw(map[string]string{"manager_id": it.ManagerID, "content": it.ContentKey}),
 		Locks: []string{ContentLock(it.ManagerID, it.ContentKey)}, PolicyRevision: in.Policy.Revision, ConfigRevision: in.ConfigRevision,
 		Scope: in.Scope, CreatedAt: in.Now, ExpiresAt: in.Now.Add(ttl),
-		LiveChecks: []string{"the content still exists, is monitored and has no file in its manager", "no queue item for the content (queued, grabbed, or importing)",
+		LiveChecks: []string{"the content still exists, is monitored, is available and has no file in its manager", "no queue item for the content (queued, grabbed, or importing)",
 			"the manager version is unchanged"},
 	}
 	add := func(name string, ok bool, detail string) {

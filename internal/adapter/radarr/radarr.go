@@ -164,6 +164,9 @@ func (c *Client) Content(ctx context.Context, key string) (arr.Content, error) {
 	if err := json.Unmarshal(raw["hasFile"], &out.HasFile); err != nil {
 		out.HasFile = nil
 	}
+	if err := json.Unmarshal(raw["isAvailable"], &out.Available); err != nil {
+		out.Available = nil
+	}
 	switch {
 	case !found:
 		out.Detail = "the movie no longer exists in Radarr"

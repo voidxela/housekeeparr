@@ -752,9 +752,9 @@ func TestInterruptedSearchPersistsBackoffDuringReconciliation(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	hasFile := false
+	hasFile, released := false, true
 	f.live = func(Proposal) Live {
-		return Live{ManagerVersion: "1", Content: []ContentState{{Key: target.Key, Exists: true, Monitored: true, HasFile: &hasFile}}}
+		return Live{ManagerVersion: "1", Content: []ContentState{{Key: target.Key, Exists: true, Monitored: true, HasFile: &hasFile, Available: &released}}}
 	}
 	f.observe[OpSearch] = Observation{Verdict: Holds}
 	f.onDispatch = func(string) { c.Store.InjectWriteFault(errors.New("process killed")) }

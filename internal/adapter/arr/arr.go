@@ -685,6 +685,8 @@ type Content struct {
 	Monitored bool   `json:"monitored"`
 	// HasFile is whether the manager has a file for it (nil when not read).
 	HasFile *bool `json:"has_file,omitempty"`
+	// Available is the live release or air-date check, if reported.
+	Available *bool `json:"available,omitempty"`
 	// Detail explains how monitoring was established (for example, that
 	// the series is unmonitored although the episode is not).
 	Detail string `json:"detail,omitempty"`

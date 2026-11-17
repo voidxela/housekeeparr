@@ -1513,3 +1513,20 @@ func TestUnsentSearchDoesNotConsumeInstallationSpacing(t *testing.T) {
 		t.Fatalf("a provably unsent search delayed unrelated eligible work: %v", s)
 	}
 }
+
+func TestMissingSearchRechecksAvailability(t *testing.T) {
+	w := searchWorld(t, "automatic")
+	ctx := context.Background()
+	item := fake.MissingEpisode(102, 1, "Rescheduled episode", t0.Add(-24*time.Hour))
+	w.mgr.SetMissing(item)
+	w.clock.Advance(10 * time.Minute)
+	fresh := w.eng.Cycle(ctx, nil).Fresh()
+	item.Available = domain.KnownValue(false)
+	w.mgr.SetMissing(item)
+	if _, err := w.svc.DispatchSearches(ctx, fresh); err != nil {
+		t.Fatal(err)
+	}
+	if s := w.mgr.Searches(); len(s) != 0 {
+		t.Fatalf("searched after the manager no longer considered the item available: %v", s)
+	}
+}

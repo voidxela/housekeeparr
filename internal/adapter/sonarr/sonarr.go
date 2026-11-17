@@ -188,6 +188,13 @@ func (c *Client) Content(ctx context.Context, key string) (arr.Content, error) {
 	if err := json.Unmarshal(raw["hasFile"], &out.HasFile); err != nil {
 		out.HasFile = nil
 	}
+	var airDate string
+	if json.Unmarshal(raw["airDateUtc"], &airDate) == nil {
+		if aired, err := time.Parse(time.RFC3339, airDate); err == nil {
+			available := !aired.After(time.Now())
+			out.Available = &available
+		}
+	}
 	var seriesID int64
 	if json.Unmarshal(raw["seriesId"], &seriesID) != nil || seriesID <= 0 {
 		return arr.Content{}, fmt.Errorf("sonarr episode %d has no series id", id)
