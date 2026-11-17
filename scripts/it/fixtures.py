@@ -151,6 +151,7 @@ def main(out, save):
     pname = "Housekeeparr.Fixture.Show.S02.1080p.WEB-DL.x264-HKFIX"
     pfiles = [("Housekeeparr.Fixture.Show.S02E%02d.1080p.WEB-DL.x264-HKFIX.mkv" % e, 2 * MB) for e in (1, 2)]
     contents = {p: mkv(25 * 60, s) for p, s in pfiles}
+    pfiles = [(p, len(contents[p])) for p, _ in pfiles]  # declare the exact sizes
     h, payload = make(out, pname, pfiles, contents=contents)
     write(save, pname, payload, False)
     managed.append(dict(key="tv-s02-pack", name=pname, hash=h, size=4 * MB, files=[p for p, _ in pfiles], data="full",
