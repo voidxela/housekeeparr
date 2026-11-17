@@ -118,6 +118,8 @@ def main(out, save):
     # Searched for only by the proactive-search tests.
     release("tv-e11-search", "Housekeeparr.Fixture.Show.S01E11.1080p.WEB-DL.x264-HKFIX", 4 * MB, kind="tv", tvdbId=999001, season=1, episode=11)
     release("film-k-search", "Housekeeparr.Eleventh.Fixture.Film.2025.1080p.WEB-DL.x264-HKFIX", 4 * MB, kind="movie", tmdbId=999012, imdbId="tt9990012")
+    # Released only to the automatic preserved-data test.
+    release("tv-e12-unregistered-auto", "Housekeeparr.Fixture.Show.S01E12.1080p.WEB-DL.x264-HKFIX", 4 * MB, tracker=reject, kind="tv", tvdbId=999001, season=1, episode=12)
     release("film-i-unregistered", "Housekeeparr.Ninth.Fixture.Film.2013.1080p.WEB-DL.x264-HKFIX", 4 * MB, tracker=reject, kind="movie", tmdbId=999010, imdbId="tt9990010")
     # Magnet-only releases for random hashes: no .torrent and no payload, so
     # their metadata can never arrive (the metadata-recovery tests).

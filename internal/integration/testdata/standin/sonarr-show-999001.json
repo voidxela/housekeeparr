@@ -185,6 +185,20 @@
    "overview": "Fictional.",
    "image": null,
    "finaleType": null
+  },
+  {
+   "tvdbShowId": 999001,
+   "tvdbId": 99900112,
+   "seasonNumber": 1,
+   "episodeNumber": 12,
+   "absoluteEpisodeNumber": 12,
+   "title": "Fixture 12",
+   "airDate": "2020-03-13",
+   "airDateUtc": "2020-03-14T02:00:00Z",
+   "runtime": 30,
+   "overview": "Fictional.",
+   "image": null,
+   "finaleType": null
   }
  ],
  "malIds": [],

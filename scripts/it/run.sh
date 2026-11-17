@@ -608,7 +608,7 @@ done
 if [ "$CAPTURE" = 1 ]; then export HK_IT_CAPTURE_DIR="$ROOT/internal/integration/testdata/captured"; fi
 cd "$ROOT"
 if [ "$STANDIN" = 1 ] && has "$MANAGERS" sonarr && has "$MANAGERS" radarr; then
-	MANAGED_PROBES+=(TestAutomaticRecovery)
+	MANAGED_PROBES+=(TestAutomaticRecovery TestAutomaticPreservedDataFailure)
 fi
 PROBES+=("${MANAGED_PROBES[@]}")
 if [ -n "${ONLY:-}" ]; then
