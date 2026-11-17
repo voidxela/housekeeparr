@@ -1298,3 +1298,52 @@ func TestMissingSearchRechecksFilePresence(t *testing.T) {
 		t.Fatalf("searched content that already has a file: %v", s)
 	}
 }
+
+func TestPartialPackRefusesChangedQueueIdentity(t *testing.T) {
+	w := packWorld(t, nil)
+	ctx := context.Background()
+	var fresh map[string]bool
+	for i := 0; i < 5; i++ {
+		w.clock.Advance(10 * time.Minute)
+		fresh = w.eng.Cycle(ctx, nil).Fresh()
+	}
+	snap, err := w.mgr.Queue(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range snap.Items {
+		snap.Items[i].QueueID += 100
+	}
+	w.mgr.SetQueue(snap.Items...)
+	if _, err := w.svc.DispatchAutomatic(ctx, fresh); err != nil {
+		t.Fatal(err)
+	}
+	acts, err := w.svc.Actions(ctx, 10)
+	if err != nil || len(acts) != 0 {
+		t.Fatalf("an intent was reserved for stale queue IDs: %+v, %v", acts, err)
+	}
+}
+
+func TestPartialPackRefusesMissingPackDiagnostic(t *testing.T) {
+	w := packWorld(t, nil)
+	ctx := context.Background()
+	var fresh map[string]bool
+	for i := 0; i < 5; i++ {
+		w.clock.Advance(10 * time.Minute)
+		fresh = w.eng.Cycle(ctx, nil).Fresh()
+	}
+	snap, err := w.mgr.Queue(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range snap.Items {
+		snap.Items[i].StatusMessages = nil
+	}
+	w.mgr.SetQueue(snap.Items...)
+	if _, err := w.svc.DispatchAutomatic(ctx, fresh); err != nil {
+		t.Fatal(err)
+	}
+	if r := w.mgr.Removals(); len(r) != 0 {
+		t.Fatalf("cleared without the current partial-pack finding from Sonarr: %+v", r)
+	}
+}

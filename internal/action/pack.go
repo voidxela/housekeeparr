@@ -163,7 +163,7 @@ func PlanPack(in PackPlanInput) *Proposal {
 		"nothing is sent to the download client: the torrent keeps seeding with all its files",
 		"the episodes the pack did not contain stay missing; they are searched individually (never by season) by proactive searches where enabled",
 	}
-	p.Planned = Planned{ManagerID: f.Subject.ManagerID, ManagerVersion: mv, DownloadID: f.Subject.DownloadID, Content: keys}
+	p.Planned = Planned{ManagerID: f.Subject.ManagerID, ManagerVersion: mv, QueueID: queueID, DownloadID: f.Subject.DownloadID, Content: keys}
 	p.Evidence = raw(map[string]any{"finding": f.ID, "rows": len(ids)})
 	p.Fingerprint = digest(fmt.Sprintf("pack|%s|%s|%v|%s", f.Subject.ManagerID, strings.ToLower(f.Subject.DownloadID), ids, mv))[:16]
 	return p

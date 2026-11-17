@@ -355,22 +355,31 @@ func revalidatePack(p Proposal, live Live) []Check {
 		want[k] = true
 	}
 	got := map[string]bool{}
+	targetPresent := false
 	var bad []string
 	for _, r := range live.Associations {
 		if k, ok := r.ContentKey(); ok {
 			got[k] = true
 		}
+		targetPresent = targetPresent || r.QueueID == pl.QueueID
 		ts, _ := r.TrackedState.Get()
 		if ts != "importBlocked" {
 			bad = append(bad, fmt.Sprintf("%s is %s", r.Title, nonEmpty(ts, "unknown")))
 		}
+		partial := false
+		for _, msg := range r.StatusMessages {
+			partial = partial || msg.Title == domain.PartialPackMessage
+		}
+		if !partial {
+			bad = append(bad, fmt.Sprintf("row %d no longer carries the partial-pack message", r.QueueID))
+		}
 	}
-	same := len(got) == len(want) && len(live.Unread) == 0
+	same := targetPresent && len(live.Associations) == len(pl.Content) && len(got) == len(want) && len(live.Unread) == 0
 	for k := range want {
 		same = same && got[k]
 	}
-	add("same pack rows", same && len(bad) == 0, fmt.Sprintf("planned %d rows, now %d; %s", len(want), len(live.Associations),
-		nonEmpty(strings.Join(append(bad, live.Unread...), "; "), "all import-blocked")))
+	add("same pack rows", same && len(bad) == 0, fmt.Sprintf("target row %d present: %t, planned %d rows, now %d; %s",
+		pl.QueueID, targetPresent, len(want), len(live.Associations), nonEmpty(strings.Join(append(bad, live.Unread...), "; "), "all import-blocked")))
 	switch {
 	case live.PackErr != "":
 		add("positive import evidence", false, "could not be read: "+live.PackErr)
