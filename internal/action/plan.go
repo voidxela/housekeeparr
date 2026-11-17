@@ -386,7 +386,7 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 	}
 	// Any replacement is gated on current retained capacity, whether or not
 	// this transfer is stopped; the transfer left behind must also fit.
-	p.Prerequisites = append(p.Prerequisites, capacityCheck(in, limits), roomCheck(in, limits, t, stop))
+	p.Prerequisites = append(p.Prerequisites, capacityCheck(in.Retained, limits), roomCheck(in, limits, t, stop))
 	p.SideEffects = append(p.SideEffects,
 		"no file is deleted, moved, or renamed; the transfer and its data stay in the client and are counted as retained "+
 			"(housekeeparr retained) until the client no longer lists it",
@@ -529,8 +529,7 @@ func retainedAdds(t *store.TransferRecord, stop bool) (int64, bool) {
 // configured retained ceiling, no new replacement is requested, whatever
 // this action itself would retain. With a byte ceiling, retained
 // transfers of unknown size make the total unknown, which is not room.
-func capacityCheck(in PlanInput, l policy.Limits) Check {
-	u := in.Retained
+func capacityCheck(u store.RetainedUsage, l policy.Limits) Check {
 	var over []string
 	if u.Count >= l.RetainedTransfers {
 		over = append(over, fmt.Sprintf("the retained-transfer ceiling is reached (%d of %d, from %s)", u.Count, l.RetainedTransfers, l.From("retained_transfers")))

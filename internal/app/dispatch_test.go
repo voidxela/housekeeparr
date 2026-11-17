@@ -940,3 +940,121 @@ func TestMissingListsAreReadBoundedly(t *testing.T) {
 		t.Fatalf("after a complete read: %+v", list)
 	}
 }
+
+// runSearches cycles like run, then runs the proactive-search pass as the
+// worker does.
+func (w *world) runSearches(d time.Duration) []app.SearchReport {
+	w.t.Helper()
+	var reps []app.SearchReport
+	for end := w.clock.Now().Add(d); w.clock.Now().Before(end); {
+		w.clock.Advance(10 * time.Minute)
+		rep := w.eng.Cycle(context.Background(), nil)
+		if rep.StoreError != "" {
+			w.t.Fatal(rep.StoreError)
+		}
+		if _, err := w.svc.DispatchAutomatic(context.Background(), rep.Fresh()); err != nil {
+			w.t.Fatal(err)
+		}
+		r, err := w.svc.DispatchSearches(context.Background(), rep.Fresh())
+		if err != nil {
+			w.t.Fatal(err)
+		}
+		reps = append(reps, r)
+	}
+	return reps
+}
+
+func searchWorld(t *testing.T, mode string) *world {
+	w := newWorldWith(t, mode, 20, missingRule)
+	action.Tested = append(action.Tested, action.TestedWorkflow{Workflow: policy.WorkflowMissingSearch, Manager: adapter.KindSonarr, ManagerVersion: "0.0.0-fake"})
+	return w
+}
+
+// SPEC §9.1 with simulated applications: one search at a time for a
+// monitored, aired, missing episode that nothing is downloading; a search
+// that leaves it missing backs off; queued content is never searched; and
+// nothing is sent outside automatic mode.
+func TestProactiveSearchEndToEnd(t *testing.T) {
+	w := searchWorld(t, "automatic")
+	w.mgr.SetMissing(fake.MissingEpisode(101, 3, "Show S01E01", t0.Add(-72*time.Hour)), fake.MissingEpisode(102, 3, "Show S01E02", t0.Add(-48*time.Hour)))
+	// Episode 101 is already queued (being downloaded): never searched.
+	// A queue row for episode 101 (fake IDs are season*100+episode) whose
+	// transfer is on no client, so nothing else acts on it.
+	w.mgr.SetQueue(fake.Episode(1, hashD, "Show.S01E01", "Show", 1, 1))
+	w.runSearches(time.Hour)
+	if s := w.mgr.Searches(); len(s) != 1 || s[0][0] != 102 {
+		t.Fatalf("searches %v (want exactly episode 102)", s)
+	}
+	it, _ := w.st.MissingRecord(context.Background(), "sonarr", "episode:102")
+	if it.State != store.MissingSearched || it.Searches != 1 || it.NextSearchAt == nil || it.NextSearchAt.Sub(*it.LastSearchAt) != 24*time.Hour {
+		t.Fatalf("search state %+v", it)
+	}
+	// Still missing a few hours later: backing off, nothing more sent.
+	w.runSearches(6 * time.Hour)
+	if s := w.mgr.Searches(); len(s) != 1 {
+		t.Fatalf("searched again during backoff: %v", s)
+	}
+	// After the backoff it is searched once more, then waits twice as long.
+	w.runSearches(20 * time.Hour)
+	it, _ = w.st.MissingRecord(context.Background(), "sonarr", "episode:102")
+	if s := w.mgr.Searches(); len(s) != 2 || it.Searches != 2 || it.NextSearchAt.Sub(*it.LastSearchAt) != 48*time.Hour {
+		t.Fatalf("after backoff: searches %v, state %+v", s, it)
+	}
+	acts, _ := w.svc.Actions(context.Background(), 10)
+	n := 0
+	for _, a := range acts {
+		if a.Workflow == string(policy.WorkflowMissingSearch) {
+			n++
+			if a.State != store.IntentSucceeded {
+				t.Fatalf("search action %+v", a)
+			}
+		}
+	}
+	if n != 2 {
+		t.Fatalf("journaled searches %d", n)
+	}
+}
+
+func TestProactiveSearchRefusals(t *testing.T) {
+	t.Run("observe mode", func(t *testing.T) {
+		w := searchWorld(t, "observe")
+		w.mgr.SetMissing(fake.MissingEpisode(102, 3, "Show S01E02", t0.Add(-48*time.Hour)))
+		w.runSearches(time.Hour)
+		if s := w.mgr.Searches(); len(s) != 0 {
+			t.Fatalf("searched in observe mode: %v", s)
+		}
+	})
+	t.Run("not yet aired", func(t *testing.T) {
+		w := searchWorld(t, "automatic")
+		it := fake.MissingEpisode(103, 3, "Show S01E03", t0.Add(48*time.Hour))
+		it.Available = domain.KnownValue(false)
+		w.mgr.SetMissing(it)
+		w.runSearches(time.Hour)
+		if s := w.mgr.Searches(); len(s) != 0 {
+			t.Fatalf("searched unavailable content: %v", s)
+		}
+	})
+	t.Run("unmonitored by the time of the request", func(t *testing.T) {
+		w := searchWorld(t, "automatic")
+		w.mgr.SetMissing(fake.MissingEpisode(102, 3, "Show S01E02", t0.Add(-48*time.Hour)))
+		w.mgr.Unmonitor("episode:102")
+		reps := w.runSearches(30 * time.Minute)
+		if s := w.mgr.Searches(); len(s) != 0 {
+			t.Fatalf("searched unmonitored content: %v (%+v)", s, reps)
+		}
+	})
+	t.Run("uncertain request is not re-sent", func(t *testing.T) {
+		w := searchWorld(t, "automatic")
+		w.mgr.SetMissing(fake.MissingEpisode(102, 3, "Show S01E02", t0.Add(-48*time.Hour)))
+		w.mgr.FailSearches(&adapter.Error{Class: adapter.ErrUncertain, Op: "fake", Message: "timeout after send"})
+		w.runSearches(3 * time.Hour)
+		it, _ := w.st.MissingRecord(context.Background(), "sonarr", "episode:102")
+		if it.State != store.MissingUncertain {
+			t.Fatalf("state %+v", it)
+		}
+		acts, _ := w.svc.Actions(context.Background(), 10)
+		if len(acts) != 1 || acts[0].State != store.IntentUncertain {
+			t.Fatalf("actions %+v (one uncertain request, never repeated)", acts)
+		}
+	})
+}

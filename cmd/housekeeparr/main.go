@@ -61,6 +61,7 @@ func commands() []command {
 		{"review", "resolve an uncertain action after checking: review <action-id> --as failed --note ...", cmdReview},
 		{"retained", "list transfers recovery left in the client with their data (stopped or running), against the configured ceilings (--all includes released)", cmdRetained},
 		{"notifications", "list recent notification events and their delivery state", cmdNotifications},
+		{"missing", "list missing content managers report and Housekeeparr's proactive-search state (--all includes no longer missing)", cmdMissing},
 		{"attempts", "list recovery attempts and pacing use; allow more after review: attempts reset <manager>|episode:<id> --note ...", cmdAttempts},
 		{"pause", "pause a workflow (no automatic or manual actions) until resumed: pause <workflow> --note ...", cmdPause},
 		{"resume", "resume a paused workflow: resume <workflow> --note ...", cmdResume},
@@ -288,6 +289,14 @@ func cmdRun(args []string, out, errOut io.Writer) int {
 			for scope, why := range r.Breakers {
 				log.Warn("automation held", "scope", scope, "reason", why)
 			}
+		}
+		// At most one proactive search per pass (SPEC §9.1).
+		if sr, err := svc.DispatchSearches(ctx, rep.Fresh()); err != nil {
+			log.Error("proactive search failed; nothing further was sent this cycle", "err", err)
+		} else if sr.Sent != "" {
+			log.Info("proactive search", "content", sr.Sent, "action", sr.IntentID, "outcome", sr.Outcome)
+		} else if len(sr.Waiting) > 0 {
+			log.Debug("proactive search waiting", "reasons", sr.Waiting)
 		}
 		// Notifications go out after the cycle and dispatch; a failing
 		// notification path only affects notifications.

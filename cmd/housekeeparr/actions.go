@@ -576,3 +576,48 @@ func cmdNotifications(args []string, out, errOut io.Writer) int {
 	w.Flush()
 	return exitOK
 }
+
+func cmdMissing(args []string, out, errOut io.Writer) int {
+	o := newFlags("missing", errOut)
+	all := o.fs.Bool("all", false, "include content no longer missing")
+	if _, err := o.parse(args); err != nil {
+		return exitUsage
+	}
+	svc, done, code := readService(o)
+	if svc == nil {
+		return code
+	}
+	defer done()
+	list, err := svc.Missing(context.Background(), !*all)
+	if err != nil {
+		fmt.Fprintln(errOut, err)
+		return exitFailure
+	}
+	if o.json {
+		return writeJSON(out, list)
+	}
+	if len(list) == 0 {
+		fmt.Fprintln(out, "No missing content is recorded. Missing lists are read hourly while missing_search is enabled in some scope.")
+		return exitOK
+	}
+	w := tw(out)
+	fmt.Fprintln(w, "MANAGER\tCONTENT\tTITLE\tAVAILABLE\tSEARCHES\tLAST SEARCH\tNEXT\tSTATE")
+	for _, m := range list {
+		avail := "unknown"
+		if m.Available != nil {
+			avail = fmt.Sprint(*m.Available)
+		}
+		next := "-"
+		if m.NextSearchAt != nil {
+			next = ts(m.NextSearchAt)
+		}
+		last := "-"
+		if m.LastSearchAt != nil {
+			last = ts(m.LastSearchAt)
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\n", m.ManagerID, m.ContentKey, m.Title, avail, m.Searches, last, next, m.State)
+	}
+	w.Flush()
+	fmt.Fprintln(out, "\nA search the manager accepted does not mean a release was found or grabbed.")
+	return exitOK
+}

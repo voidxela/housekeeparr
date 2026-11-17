@@ -16,6 +16,7 @@ import (
 	"github.com/voidxela/housekeeparr/internal/adapter"
 	"github.com/voidxela/housekeeparr/internal/adapter/arr"
 	"github.com/voidxela/housekeeparr/internal/domain"
+	"github.com/voidxela/housekeeparr/internal/policy"
 	"github.com/voidxela/housekeeparr/internal/store"
 )
 
@@ -179,6 +180,9 @@ func (r *Recovery) queueRow(ctx context.Context, managerID, downloadID string) (
 // error; other gaps are recorded so that the checks fail closed with a
 // specific explanation.
 func (r *Recovery) Live(ctx context.Context, p action.Proposal) (action.Live, error) {
+	if p.Workflow == string(policy.WorkflowMissingSearch) {
+		return r.searchLive(ctx, p)
+	}
 	pl := p.Planned
 	var live action.Live
 	c, ok := r.Clients[pl.ClientID]
@@ -293,6 +297,9 @@ func (r *Recovery) Live(ctx context.Context, p action.Proposal) (action.Live, er
 // Baseline reads, before the queue step, the matching blocklist entries
 // and history records that already exist.
 func (r *Recovery) Baseline(ctx context.Context, st store.Step) (json.RawMessage, error) {
+	if st.Op == action.OpSearch {
+		return r.searchBaseline(ctx, st)
+	}
 	if st.Op != "manager.queue.fail" {
 		return nil, nil
 	}
@@ -341,6 +348,8 @@ func (r *Recovery) Baseline(ctx context.Context, st store.Step) (json.RawMessage
 // Dispatch sends one step.
 func (r *Recovery) Dispatch(ctx context.Context, st store.Step) (json.RawMessage, error) {
 	switch st.Op {
+	case action.OpSearch:
+		return r.dispatchSearch(ctx, st)
 	case "manager.queue.fail":
 		var tg queueTarget
 		var req queueRequest
@@ -404,6 +413,8 @@ func (r *Recovery) wait(ctx context.Context, check func() (action.Observation, e
 // Observe verifies a step's postcondition with fresh reads.
 func (r *Recovery) Observe(ctx context.Context, st store.Step) (action.Observation, error) {
 	switch st.Op {
+	case action.OpSearch:
+		return r.observeSearch(ctx, st)
 	case "manager.queue.fail":
 		var tg queueTarget
 		var req queueRequest

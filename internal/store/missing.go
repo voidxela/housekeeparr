@@ -168,3 +168,12 @@ func (t *Tx) SetMissingSearch(managerID, key, state, note string, intentID *int6
 		state, note, nullInt(intentID), ptrTime(searchedAt), ptrTime(next), inc, managerID, key)
 	return err
 }
+
+// LastMissingSearch returns when Housekeeparr last sent a proactive search.
+func (s *Store) LastMissingSearch(ctx context.Context) (*time.Time, error) {
+	var v sql.NullInt64
+	if err := s.r.QueryRowContext(ctx, "SELECT max(last_search_at) FROM missing_content").Scan(&v); err != nil {
+		return nil, err
+	}
+	return ptrMS(v), nil
+}

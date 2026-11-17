@@ -117,6 +117,9 @@ var acquisitionOps = map[string]bool{"manager.queue.fail": true}
 // completion, a pause or recheck by someone else, or a new owner between
 // the steps means the remaining steps no longer apply as planned.
 func Revalidate(p Proposal, i int, live Live) []Check {
+	if p.Workflow == string(policy.WorkflowMissingSearch) {
+		return revalidateSearch(p, live)
+	}
 	pl := p.Planned
 	var out []Check
 	add := func(name string, ok bool, detail string) {
@@ -279,4 +282,39 @@ func describeRows(rows []domain.QueueItem) string {
 		parts = append(parts, fmt.Sprintf("%s queue item %d (%s)", r.ManagerID, r.QueueID, k))
 	}
 	return fmt.Sprintf("%d queue row(s) refer to it: %s", len(rows), strings.Join(parts, ", "))
+}
+
+// revalidateSearch re-checks a search immediately before its request: the
+// manager is unchanged and fully readable, nothing in its queue is for the
+// content, and the content still exists and is monitored.
+func revalidateSearch(p Proposal, live Live) []Check {
+	pl := p.Planned
+	var out []Check
+	add := func(name string, ok bool, detail string) {
+		out = append(out, Check{Name: name, Satisfied: ok, Hard: true, Detail: detail})
+	}
+	add("manager version unchanged", normVersion(live.ManagerVersion) == normVersion(pl.ManagerVersion),
+		fmt.Sprintf("planned %s, now %s", pl.ManagerVersion, nonEmpty(live.ManagerVersion, "unknown")))
+	switch {
+	case len(live.Unread) > 0:
+		add("not queued", false, "could not read the queue of "+strings.Join(live.Unread, ", ")+", so a download for it cannot be ruled out")
+	case len(live.Associations) > 0:
+		add("not queued", false, "the manager is now downloading or importing it: "+describeRows(live.Associations))
+	default:
+		add("not queued", true, "no queue item for the content")
+	}
+	switch {
+	case live.ContentErr != "":
+		add("content monitored", false, "content state could not be read: "+live.ContentErr)
+	case len(live.Content) != len(pl.Content):
+		add("content monitored", false, fmt.Sprintf("content state read for %d of %d items", len(live.Content), len(pl.Content)))
+	default:
+		ok, details := true, []string{}
+		for _, c := range live.Content {
+			ok = ok && c.Exists && c.Monitored
+			details = append(details, fmt.Sprintf("%s exists=%v monitored=%v", c.Key, c.Exists, c.Monitored))
+		}
+		add("content monitored", ok, strings.Join(details, "; "))
+	}
+	return out
 }
