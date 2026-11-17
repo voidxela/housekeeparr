@@ -209,9 +209,18 @@ func restartManager(t *testing.T, a arrAPI, app string) {
 	if len(parts) != 4 {
 		t.Fatalf("HK_IT_%s_START malformed", app)
 	}
+	// A refused connection is expected while it is down, so this probe
+	// does not use the harness helpers (which fail the test on it).
+	hc := &http.Client{Timeout: 5 * time.Second}
 	alive := func() bool {
-		code, _ := a.do(http.MethodGet, "/api/v3/system/status", nil, nil)
-		return code == 200
+		req, _ := http.NewRequest(http.MethodGet, a.base+"/api/v3/system/status", nil)
+		req.Header.Set("X-Api-Key", a.key)
+		resp, err := hc.Do(req)
+		if err != nil {
+			return false
+		}
+		resp.Body.Close()
+		return resp.StatusCode == 200
 	}
 	if code, body := a.do(http.MethodPost, "/api/v3/system/shutdown", nil, nil); code != 200 {
 		t.Fatalf("shutdown: HTTP %d %s", code, body)
