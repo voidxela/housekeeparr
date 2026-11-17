@@ -42,6 +42,12 @@ implemented.
   enabled tracker's latest failure is recent (≤ 1 h) and newer than its
   latest success (`t.multicall`). See compatibility.md for which passed on
   real instances.
+- **qBittorrent 4.6.7 registered** for every workflow after a full passing
+  run (privacy unknown → treated as private → kept running); the old
+  `errored-restart` flake was a harness race, now prevented (see
+  compatibility.md "qBittorrent 4.6.7 runs"), and 4.6.7 resumes data lost
+  while stopped as a fresh download rather than an error.
+- **Partial-pack clearance survives a Sonarr restart** (real instance).
 - **Automatic preserved-data dispatch on a real instance** (production
   binary, real diagnosis) passed with Sonarr and qBittorrent 5.3.0.
 - **Partial season packs (SPEC §8), first slice:** a real-instance probe

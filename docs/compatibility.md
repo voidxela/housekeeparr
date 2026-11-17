@@ -494,8 +494,45 @@ Deluge 2.2.0 and rTorrent 0.9.8 as the download client (one run each):
 **all passed** (clearance on the fourth cycle, every effect verified,
 targeted search accepted). Registered for each.
 
-Not established yet: other clients, Sonarr restart durability of the
-ignore, and the behaviour after E03 is later grabbed separately.
+Restart durability is established with qBittorrent 4.6.7 (see "qBittorrent
+4.6.7 runs"); it is a Sonarr behaviour, but was not re-run with the other
+clients. Not established: the behaviour after E03 is later grabbed
+separately.
+
+### qBittorrent 4.6.7 runs (2026-11-17)
+
+qBittorrent 4.x does not report privacy, so every transfer is treated as
+private (user decisions 2026-11-17): recovery and preserved-data handling
+fail and blocklist the grab and leave the torrent running by default.
+
+- **Fixture diagnosis** (`--managers none`): the earlier `errored-restart`
+  result (`stalledDL`, verified 0, at `118f15c`) came from the harness
+  restarting before the client had verified the payloads. Two findings:
+  4.6.7 leaves a torrent in `checkingDL` at 0 % indefinitely when a recheck
+  is requested while other checks are still queued (the harness now
+  rechecks one at a time and fails loudly unless every full payload is
+  100 % verified before the restart); and with the payloads verified, 4.6.7
+  resumes a payload deleted while it was stopped as a **fresh download**
+  (`stalledDL`, verified 0) with no error, where 5.3.0 reports
+  `missingFiles`. On 4.x, lost data can look like a restart from zero; it
+  never looks complete. The fixture assertion accepts either an error or a
+  reset to zero on 4.x and logs which.
+- **Full unselected run** at `78b64f9`, qBittorrent 4.6.7 + Sonarr
+  4.0.20.3014 + Radarr 6.4.4.10685: **all 24 required tests passed** —
+  observation, queue and managed removal semantics, no-progress, metadata,
+  private and preserved-data recovery for both managers (privacy-unknown
+  torrents kept running), proactive searches, the partial-pack workflow
+  **including durability across a Sonarr restart** (the ignored pack was
+  not tracked again after the restart and a `RefreshMonitoredDownloads`),
+  and both automatic-dispatch tests through the production binary.
+  Registered in `action.Tested`.
+
+An earlier full run at `3e32cfb` failed four tests for test reasons only:
+the proactive-search test expected S01E11 while the pack's missing S02E03
+was the most recently aired missing episode (the fixture season 2 is now
+dated earlier), and the restart probe used a harness helper that fails the
+test on a refused connection while Sonarr was down, leaving Sonarr stopped
+for the two automatic tests that followed.
 
 ## Automatic dispatch runs
 
@@ -550,7 +587,7 @@ exercised.
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | Sonarr | 4.0 | `v4.0.20.3014` | HTTP API v3, API key header | **tested: 4.0.20.3014**; others contract-tested | **tested: 4.0.20.3014 with qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8** (manual and automatic dispatch) | **tested with qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8** (manual path; automatic fixture-tested) | **tested with all four clients** (qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8; tracker "unregistered" rejection only; manual path) | **tested with qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8** (clearance and targeted follow-up search) |
 | Radarr | 5.0 | `v6.4.4.10685` | HTTP API v3, API key header | **tested: 6.4.4.10685**; others contract-tested | **tested: 6.4.4.10685 with qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8** (manual and automatic dispatch) | **tested with qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8** (manual path; automatic fixture-tested) | **tested with all four clients** (qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8; tracker "unregistered" rejection only; manual path) | n/a (Sonarr-specific in v1) |
-| qBittorrent | 4.1 (WebUI API v2) | `release-4.6.7`, `release-5.3.0` | WebUI API v2, session cookie | **tested: 5.3.0, 4.6.7**; others contract-tested | **tested: 5.3.0** with Sonarr/Radarr above; 4.x not registered (privacy unknown: would be treated as private; untested) | **tested: 5.3.0** with Sonarr/Radarr above | **tested: 5.3.0** with Sonarr/Radarr above (`torrents/trackers`, status 5 "tracker error"); 4.x not run | — |
+| qBittorrent | 4.1 (WebUI API v2) | `release-4.6.7`, `release-5.3.0` | WebUI API v2, session cookie | **tested: 5.3.0, 4.6.7**; others contract-tested | **tested: 5.3.0, 4.6.7** with Sonarr/Radarr above (4.6.7: privacy unknown, treated as private, kept running) | **tested: 5.3.0** with Sonarr/Radarr above | **tested: 5.3.0** with Sonarr/Radarr above (`torrents/trackers`, status 5 "tracker error"); 4.x not run | — |
 | Transmission | 2.80 (RPC 15) | `4.0.6`, `4.1.4` | legacy RPC (deprecated in 4.1, still supported throughout 4.x), session-id handshake, optional basic auth | **tested: 4.0.6, 4.1.4**; others contract-tested | **tested: 4.0.6, 4.1.4** with Sonarr/Radarr above (`torrent-stop`, legacy RPC) | **tested: 4.0.6, 4.1.4** with Sonarr/Radarr above | **tested: 4.0.6, 4.1.4** with Sonarr/Radarr above (`error = 2` tracker rejection) | — |
 | Deluge | 2.0 | `deluge-2.0.0`, `deluge-2.1.1`, `deluge-2.2.0` | deluge-web JSON API (`/json`); daemon protocol unsupported | **tested: 2.2.0**; others contract-tested | **tested: 2.2.0** with Sonarr/Radarr above (`core.pause_torrent`) | **tested: 2.2.0** with Sonarr/Radarr above | **tested: 2.2.0** with Sonarr/Radarr above (`tracker_status` "Error: …") | — |
 | rTorrent | 0.9.8 | `v0.9.8`, `v0.16.28` | XML-RPC over an HTTP(S) SCGI gateway (tested: lighttpd `mod_scgi`); raw SCGI unsupported | **tested: 0.9.8**; others contract-tested | **tested: 0.9.8** with Sonarr/Radarr above (`d.stop`) | **tested: 0.9.8** with Sonarr/Radarr above | **tested: 0.9.8** with Sonarr/Radarr above (`d.message` with `t.multicall` failure/success times) | — |
