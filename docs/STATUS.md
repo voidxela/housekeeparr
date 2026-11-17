@@ -56,13 +56,14 @@ implemented.
   `downloadIgnored` history; a reappearing association is refused as a
   failure to diagnose. Nothing is sent to the client. Fixture-tested
   (`TestPartialPackEndToEnd`, `TestPartialPackUncertaintyRefuses`);
-  real-instance-tested and registered for Sonarr 4.0.20.3014 with
-  qBittorrent 5.3.0 (compatibility.md). After a verified clearance, each
+  real-instance-tested and registered for Sonarr 4.0.20.3014 with all four
+  clients (qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0,
+  rTorrent 0.9.8; compatibility.md). After a verified clearance, each
   episode the live evidence finds missing gets one targeted individual
   search under the `partial_pack` permission (proposals carry a governing
   permission; `missing_search` need not be enabled), then is ordinary
-  missing content (migration 0018). Not yet: other clients, restart
-  durability, packs larger than the history page.
+  missing content (migration 0018). Not yet: restart durability of the
+  ignore, packs larger than the history page.
 - **`source_confirm_window`** (default 30 m, proposal) is a diagnostic
   setting, part of the diagnostic revision, replacing the constant.
 - **Notifications** (`[[notify]]`, migration 0014): durable outbox written

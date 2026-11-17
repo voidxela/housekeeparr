@@ -131,8 +131,8 @@ do not turn a choice of defaults into a prolonged blocker for other work.
    "no acceptable result", per-search source evidence where the manager
    exposes it, episode batching per series, and recovery-first priority.
 2. **Partial-pack follow-ups (SPEC §8):** clearance and targeted searches
-   exist and pass with qBittorrent 5.3.0 (see STATUS); run with the other
-   three clients and after a Sonarr restart, and register what passes. The
+   pass with all four clients; still to establish: ignore durability across
+   a Sonarr restart, and packs whose history exceeds one page. The
    harness generates ffprobe-readable Matroska (h264 + AC-3) because
    Sonarr rejects random bytes and audio-less files.
 3. **Batch follow-ups:** real-instance automatic metadata dispatch and

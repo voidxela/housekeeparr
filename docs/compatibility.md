@@ -489,6 +489,11 @@ correctly refused to search a queued episode) the dispatcher sent one
 `EpisodeSearch` for E03 alone under the `partial_pack` permission
 (`missing_search` not enabled), accepted and verified. **Passed.**
 
+The same test at `22e549b` with Transmission 4.1.4, Transmission 4.0.6,
+Deluge 2.2.0 and rTorrent 0.9.8 as the download client (one run each):
+**all passed** (clearance on the fourth cycle, every effect verified,
+targeted search accepted). Registered for each.
+
 Not established yet: other clients, Sonarr restart durability of the
 ignore, and the behaviour after E03 is later grabbed separately.
 
@@ -543,7 +548,7 @@ exercised.
 
 | Application | Floor | Source evidence | Transport | Observation | No-progress recovery | Metadata recovery | Preserved-data failure handling | Partial-pack handling |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Sonarr | 4.0 | `v4.0.20.3014` | HTTP API v3, API key header | **tested: 4.0.20.3014**; others contract-tested | **tested: 4.0.20.3014 with qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8** (manual and automatic dispatch) | **tested with qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8** (manual path; automatic fixture-tested) | **tested with all four clients** (qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8; tracker "unregistered" rejection only; manual path) | **tested with qBittorrent 5.3.0** (clearance and targeted follow-up search) |
+| Sonarr | 4.0 | `v4.0.20.3014` | HTTP API v3, API key header | **tested: 4.0.20.3014**; others contract-tested | **tested: 4.0.20.3014 with qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8** (manual and automatic dispatch) | **tested with qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8** (manual path; automatic fixture-tested) | **tested with all four clients** (qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8; tracker "unregistered" rejection only; manual path) | **tested with qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8** (clearance and targeted follow-up search) |
 | Radarr | 5.0 | `v6.4.4.10685` | HTTP API v3, API key header | **tested: 6.4.4.10685**; others contract-tested | **tested: 6.4.4.10685 with qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8** (manual and automatic dispatch) | **tested with qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8** (manual path; automatic fixture-tested) | **tested with all four clients** (qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8; tracker "unregistered" rejection only; manual path) | n/a (Sonarr-specific in v1) |
 | qBittorrent | 4.1 (WebUI API v2) | `release-4.6.7`, `release-5.3.0` | WebUI API v2, session cookie | **tested: 5.3.0, 4.6.7**; others contract-tested | **tested: 5.3.0** with Sonarr/Radarr above; 4.x not registered (privacy unknown: would be treated as private; untested) | **tested: 5.3.0** with Sonarr/Radarr above | **tested: 5.3.0** with Sonarr/Radarr above (`torrents/trackers`, status 5 "tracker error"); 4.x not run | — |
 | Transmission | 2.80 (RPC 15) | `4.0.6`, `4.1.4` | legacy RPC (deprecated in 4.1, still supported throughout 4.x), session-id handshake, optional basic auth | **tested: 4.0.6, 4.1.4**; others contract-tested | **tested: 4.0.6, 4.1.4** with Sonarr/Radarr above (`torrent-stop`, legacy RPC) | **tested: 4.0.6, 4.1.4** with Sonarr/Radarr above | **tested: 4.0.6, 4.1.4** with Sonarr/Radarr above (`error = 2` tracker rejection) | — |
