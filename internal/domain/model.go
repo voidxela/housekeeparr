@@ -340,3 +340,26 @@ type MissingSnapshot struct {
 	Total    int  `json:"total"`
 	Complete bool `json:"complete"`
 }
+
+// Source is one of a manager's configured indexers as it reports it
+// (SPEC §9.2). Names come from the manager's configuration; URLs and
+// credentials are never read.
+type Source struct {
+	ID       int64  `json:"id"`
+	Name     string `json:"name"`
+	Protocol string `json:"protocol"` // "torrent", "usenet", or as reported
+	// AutomaticSearch is whether the manager uses it for automatic
+	// (non-interactive) searches, which is what proactive searches are.
+	AutomaticSearch bool `json:"automatic_search"`
+	// DisabledUntil is set while the manager has temporarily disabled the
+	// source after failures; LastFailure is its most recent failure.
+	DisabledUntil *time.Time `json:"disabled_until,omitempty"`
+	LastFailure   *time.Time `json:"last_failure,omitempty"`
+}
+
+// SourceSnapshot is one read of a manager's sources and their status.
+type SourceSnapshot struct {
+	ManagerID   string    `json:"manager_id"`
+	CollectedAt time.Time `json:"collected_at"`
+	Sources     []Source  `json:"sources"`
+}
