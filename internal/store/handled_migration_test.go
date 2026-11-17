@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"github.com/voidxela/housekeeparr/internal/domain"
 	"path/filepath"
 	"testing"
 	"time"
@@ -168,5 +169,89 @@ func TestForwardMigrationV13Notifications(t *testing.T) {
 	}
 	if n, err := s.PendingNotifications(ctx, "hook"); err != nil || n != 1 {
 		t.Fatalf("pending %d %v", n, err)
+	}
+}
+
+// Schema 15: missing content is upserted, marked gone only by a complete
+// read, and its search history survives reappearance.
+func TestMissingContentLifecycle(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, t.TempDir(), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	it := func(id int64) domain.MissingItem {
+		return domain.MissingItem{ManagerID: "sonarr", ContentKind: "episode", ContentID: id, SeriesID: 3, Title: "Show", Monitored: true,
+			Available: domain.KnownValue(true)}
+	}
+	save := func(snap domain.MissingSnapshot, at time.Time) int {
+		t.Helper()
+		var n int
+		if err := s.Write(ctx, func(tx *Tx) error { var err error; n, err = tx.SaveMissingSnapshot(snap, at); return err }); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	t1 := time.Unix(1000, 0)
+	save(domain.MissingSnapshot{ManagerID: "sonarr", Items: []domain.MissingItem{it(1), it(2)}, Complete: true}, t1)
+	next := t1.Add(time.Hour)
+	if err := s.Write(ctx, func(tx *Tx) error {
+		id := int64(7)
+		return tx.SetMissingSearch("sonarr", "episode:1", MissingBackoff, "no grab", &id, &t1, &next, true)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// An incomplete read marks nothing gone.
+	if n := save(domain.MissingSnapshot{ManagerID: "sonarr", Items: []domain.MissingItem{it(2)}}, t1.Add(time.Minute)); n != 0 {
+		t.Fatalf("incomplete read marked %d gone", n)
+	}
+	if n := save(domain.MissingSnapshot{ManagerID: "sonarr", Items: []domain.MissingItem{it(2)}, Complete: true}, t1.Add(2*time.Minute)); n != 1 {
+		t.Fatalf("complete read marked %d gone", n)
+	}
+	save(domain.MissingSnapshot{ManagerID: "sonarr", Items: []domain.MissingItem{it(1), it(2)}, Complete: true}, t1.Add(3*time.Minute))
+	r, _ := s.MissingRecord(ctx, "sonarr", "episode:1")
+	if r == nil || !r.Present || r.Searches != 1 || r.NextSearchAt == nil || r.State != MissingNotSearched {
+		t.Fatalf("reappeared: %+v", r)
+	}
+}
+
+// A database at schema 14 (with a queued notification) opens at schema 15.
+func TestForwardMigrationV14MissingContent(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(dir, dbFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, _ := migrationFS.ReadDir("migrations")
+	for _, e := range entries {
+		if e.Name() >= "0015" {
+			break
+		}
+		body, _ := migrationFS.ReadFile("migrations/" + e.Name())
+		if _, err := db.Exec(string(body)); err != nil {
+			t.Fatalf("%s: %v", e.Name(), err)
+		}
+	}
+	for _, q := range []string{
+		"INSERT INTO meta(key, value) VALUES('schema_version','14'),('data_origin','live'),('instance_id','v14inst'),('created_at','0')",
+		"INSERT INTO notification_events(target, dedup_key, kind, severity, title, body, created_at, next_at) VALUES('hook','k','finding.opened','warning','t','b',1,1)",
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+	s, err := Open(ctx, dir, Options{})
+	if err != nil {
+		t.Fatalf("open v14 database: %v", err)
+	}
+	defer s.Close()
+	if n, _ := s.PendingNotifications(ctx, "hook"); n != 1 {
+		t.Fatalf("queued notification lost: %d", n)
+	}
+	if list, err := s.MissingContent(ctx, MissingFilter{}); err != nil || len(list) != 0 {
+		t.Fatalf("missing content %v %v", list, err)
 	}
 }
