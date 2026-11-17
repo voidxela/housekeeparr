@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -279,6 +280,15 @@ func TestRadarrPrivatePreservedDataFailureWorkflow(t *testing.T) {
 // (every adapter classifies tracker results from a structured field).
 func settleRejected(t *testing.T, e managedEntry) bool {
 	t.Helper()
+	if path := os.Getenv("HK_IT_QBT_SESSION_LOG"); managerClientKind() == "qbittorrent" && path != "" {
+		if log, err := os.ReadFile(path); err == nil {
+			for _, line := range strings.Split(string(log), "\n") {
+				if strings.Contains(line, "BitTorrent session encountered a serious error") && strings.Contains(line, "Operation not permitted") {
+					t.Fatal("qBittorrent's BitTorrent session reported a denied socket operation; this host cannot exercise the tracker fixture")
+				}
+			}
+		}
+	}
 	deadline := time.Now().Add(120 * time.Second)
 	var last domain.Transfer
 	nudged := false

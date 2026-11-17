@@ -363,6 +363,7 @@ for t in json.load(open(manifest)):
         curl("--data", "hashes=" + t["hash"], qbt + "/api/v2/torrents/recheck")
 PY
 	export HK_IT_QBT_URL="$QBT" HK_IT_QBT_USER=admin HK_IT_QBT_PASS="$QBT_PASS" HK_IT_QBT_VERSION="$QBT_VERSION" HK_IT_QBT_SAVE="$save"
+	export HK_IT_QBT_SESSION_LOG="$WORK/qbt/qBittorrent/data/logs/qbittorrent.log"
 	TESTS+=(TestQBittorrentReleasedBehaviour)
 }
 

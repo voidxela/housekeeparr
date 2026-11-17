@@ -99,7 +99,7 @@ func TestQBittorrentReleasedBehaviour(t *testing.T) {
 				settled = false
 			}
 		}
-		if len(byHash) >= len(m) && settled || time.Now().After(deadline) {
+		if len(byHash) >= len(m) && settled {
 			if !snap.Complete {
 				t.Fatalf("real torrent listing reported incomplete: %v", snap.Limitations)
 			}
@@ -108,6 +108,9 @@ func TestQBittorrentReleasedBehaviour(t *testing.T) {
 				t.Fatal("normalized snapshot contains tracker data")
 			}
 			break
+		}
+		if !time.Now().Before(deadline) {
+			t.Fatalf("qBittorrent fixtures did not settle: %d of %d torrents listed", len(byHash), len(m))
 		}
 		time.Sleep(2 * time.Second)
 	}
@@ -163,11 +166,17 @@ func TestQBittorrentReleasedBehaviour(t *testing.T) {
 				t.Errorf("stopped: availability must be unknown, got %v", tr.Availability)
 			}
 		case "errored":
-			// Payload deleted after verification. libtorrent does not notice
-			// until it reads the data, so qBittorrent and Deluge still report
-			// the torrent complete: "complete" is not evidence that data exists.
-			if tr.StateClass != domain.StateComplete {
-				t.Errorf("errored: %s (%s); released behaviour differs from the recorded semantics", tr.StateClass, tr.NativeState)
+			// Removal while stopped can retain cached completion; 5.3.0
+			// also resumed from known zero on the amd64 review runner.
+			// See compatibility.md, review and remediation runs.
+			verified, known := tr.VerifiedBytes.Get()
+			switch {
+			case tr.StateClass == domain.StateComplete:
+				t.Log("errored: cached completion persists after deleting the stopped payload")
+			case os.Getenv("HK_IT_QBT_VERSION") == "5.3.0" && tr.StateClass == domain.StateDownloading && known && verified == 0:
+				t.Log("errored: qBittorrent 5.3.0 started from known zero after deleting the stopped payload")
+			default:
+				t.Errorf("errored: %s (%s) verified %v differs from recorded semantics", tr.StateClass, tr.NativeState, tr.VerifiedBytes)
 			}
 		case "errored-restart":
 			// Payload deleted while qBittorrent was stopped cleanly, then
@@ -176,11 +185,11 @@ func TestQBittorrentReleasedBehaviour(t *testing.T) {
 			// missingFiles or as a fresh download (stalledDL, verified 0, no
 			// error); what decides is not established. Either way the loss
 			// must never look like complete data.
-			v, _ := tr.VerifiedBytes.Get()
+			v, known := tr.VerifiedBytes.Get()
 			switch {
 			case tr.StateClass == domain.StateError:
 				t.Logf("errored-restart: missing data reported as an error (%s)", tr.NativeState)
-			case tr.StateClass == domain.StateDownloading && v == 0:
+			case tr.StateClass == domain.StateDownloading && known && v == 0:
 				t.Logf("errored-restart: qBittorrent %s resumed the loss as a fresh download (%s, verified 0): no error is reported", os.Getenv("HK_IT_QBT_VERSION"), tr.NativeState)
 			default:
 				t.Errorf("errored-restart: got state %s (%s) verified %v, want error", tr.StateClass, tr.NativeState, tr.VerifiedBytes)

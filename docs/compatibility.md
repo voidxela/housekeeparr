@@ -610,3 +610,31 @@ exercised.
 | Added time | `added_on` | `addedDate` | `time_added` | `d.load_date` (may reset on restart) |
 
 
+
+## Review and remediation runs — 2026-11-17
+
+Linux amd64, Go 1.27.4, with disposable applications and a private
+loopback-only network namespace. The release binaries and the rTorrent
+packages were checked against their pins before use.
+
+| Commit | Selection and versions | Result |
+| --- | --- | --- |
+| `919fea9` | Unselected, qBittorrent 5.3.0, Sonarr 4.0.20.3014, Radarr 6.4.4.10685 | Setup stopped before starting instances. The host denied `AF_NETLINK`, so `ip link set lo up` failed inside the new namespace. `00b27c8` brings up loopback through the interface ioctl and then checks TCP connectivity. |
+| `00b27c8` | Unselected, qBittorrent 5.3.0 (WebUI 2.16.2), Sonarr 4.0.20.3014, Radarr 6.4.4.10685 | **18 of 24 passed.** Passed both managers' observation, correlation, removal semantics, manual no-progress, metadata and private recovery, and proactive searches, plus Sonarr's partial-pack workflow and automatic no-progress recovery. The observation fixture and all five tracker-dependent preserved-data tests failed. |
+| `badb7e0` | Selected `--clients rtorrent --manager-client rtorrent --managers sonarr,radarr --only 'PartialPackWorkflow\|ProactiveSearch'`, rTorrent 0.9.8 / libtorrent 0.13.8 through lighttpd 1.4.79, Sonarr 4.0.20.3014, Radarr 6.4.4.10685 | **3 of 3 passed.** Both managers accepted and grabbed the releases from the proactive searches. Sonarr's clearance preserved both imports and the complete torrent, survived a manager restart, and sent the third episode's targeted search. |
+
+In the full `00b27c8` run, the qBittorrent `errored` fixture (verified
+payload removed while the job was stopped after the client had restarted)
+reported `stalledDL` with known zero verified bytes. The original recorded
+result was cached completion. The fixture now requires a positively
+verified stopped upload before removal and recognizes the two observed
+5.3.0 outcomes. The `errored-restart` check also requires known zero when
+the released client starts a fresh download.
+
+The qBittorrent process logged a BitTorrent session socket error with
+`Operation not permitted` and an `AF_NETLINK` denial on startup. Its Web
+API and manager-initiated grabs worked; the rejecting loopback tracker log
+received no announces throughout the run. The preserved-data cases failed
+while collecting the prerequisite tracker rejection, before Housekeeparr
+sent a workflow mutation. The harness recognizes that reported client
+session failure and surfaces it instead of waiting out the tracker deadline.
