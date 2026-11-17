@@ -21,6 +21,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 	"path/filepath"
 	"slices"
@@ -280,9 +281,19 @@ func settleRejected(t *testing.T, e managedEntry) bool {
 	t.Helper()
 	deadline := time.Now().Add(120 * time.Second)
 	var last domain.Transfer
+	nudged := false
 	for time.Now().Before(deadline) {
 		if tr, ok := clientState(t, e.Hash); ok {
 			last = tr
+			// qBittorrent resets a tracker's state when its check of the
+			// existing payload finishes after the first announce, and then
+			// waits its retry interval; the harness (not Housekeeparr) asks
+			// it to announce again once, rather than waiting minutes.
+			if managerClientKind() == "qbittorrent" && !nudged && !tr.SourceFailure.IsKnown() && tr.StateClass == domain.StateDownloading {
+				nudged = true
+				qbtReannounce(t, e.Hash)
+				t.Logf("%s: no tracker answer reported (%s); harness requested a re-announce", e.Key, tr.SourceFailure.Note)
+			}
 			if v, ok := tr.SourceFailure.Get(); ok && v == domain.SourceUnregistered {
 				t.Logf("%s: tracker rejection reported: %s/%s message %q", e.Key, tr.NativeState, tr.StateClass, tr.ClientMessage.Value)
 				return true
@@ -622,4 +633,22 @@ func requireSearchOutcome(t *testing.T, st *store.Store, intentID int64, searchN
 		t.Fatalf("action #%d: replacement search outcome %+v, want %s command %d attributed against a baseline", intentID, s, searchName, wantID)
 	}
 	t.Logf("action #%d: replacement search recorded: %s — %s", intentID, s.State, s.Note)
+}
+
+// qbtReannounce asks qBittorrent to announce a torrent now (harness only).
+func qbtReannounce(t *testing.T, hash string) {
+	t.Helper()
+	jar, _ := cookiejar.New(nil)
+	hc := &http.Client{Jar: jar, Timeout: 10 * time.Second}
+	base := env(t, "HK_IT_QBT_URL")
+	resp, err := hc.PostForm(base+"/api/v2/auth/login", url.Values{"username": {env(t, "HK_IT_QBT_USER")}, "password": {env(t, "HK_IT_QBT_PASS")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	resp, err = hc.PostForm(base+"/api/v2/torrents/reannounce", url.Values{"hashes": {hash}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
 }
