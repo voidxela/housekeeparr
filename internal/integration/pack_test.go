@@ -2,17 +2,28 @@
 
 package integration
 
-// TestSonarrPartialPackProbe records, on a released Sonarr, how a completed
-// season pack that contains only some of the season's expected episodes is
-// represented after import (SPEC §8), and what the ignore-path queue
-// removal does to it. It is evidence for designing partial-pack handling,
-// not a Housekeeparr workflow: the only write is the removal it measures,
-// sent with every flag explicit (removeFromClient=false, blocklist=false,
-// skipRedownload=true, changeCategory=false).
+// TestSonarrPartialPackWorkflow records, on a released Sonarr, how a
+// completed season pack that contains only some of the season's expected
+// episodes is represented after import (SPEC §8), then lets Housekeeparr's
+// production path clear the stale association and checks every effect
+// independently: rows gone durably, downloadIgnored recorded, the torrent,
+// its payload, and the imported files untouched.
 
 import (
+	"context"
 	"encoding/json"
+	"io"
+	"log/slog"
+
 	"fmt"
+	"github.com/voidxela/housekeeparr/internal/action"
+	"github.com/voidxela/housekeeparr/internal/adapter"
+	"github.com/voidxela/housekeeparr/internal/app"
+	"github.com/voidxela/housekeeparr/internal/config"
+	"github.com/voidxela/housekeeparr/internal/engine"
+	"github.com/voidxela/housekeeparr/internal/policy"
+	"github.com/voidxela/housekeeparr/internal/store"
+	"github.com/voidxela/housekeeparr/internal/workflow"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -45,7 +56,7 @@ type packEpisode struct {
 	Monitored     bool  `json:"monitored"`
 }
 
-func TestSonarrPartialPackProbe(t *testing.T) {
+func TestSonarrPartialPackWorkflow(t *testing.T) {
 	mm := managedManifest(t)
 	e := mm["tv-s02-pack"]
 	if e.Hash == "" {
@@ -129,12 +140,11 @@ func TestSonarrPartialPackProbe(t *testing.T) {
 	}
 	digest := payloadDigest(t, e.asEntry())
 
-	// The ignore path, every flag explicit.
-	q := url.Values{"removeFromClient": {"false"}, "blocklist": {"false"}, "skipRedownload": {"true"}, "changeCategory": {"false"}}
-	code, body := a.do(http.MethodDelete, fmt.Sprintf("/api/v3/queue/%d", rows[0].ID), q, nil)
-	if code != 200 {
-		t.Fatalf("ignore removal: HTTP %d %s", code, body)
-	}
+	// Housekeeparr's own workflow clears the association: the real engine
+	// raises the partial-pack finding (import_settle shortened to 1m), and
+	// automatic dispatch plans, revalidates with live import evidence, and
+	// sends the ignore-path removal through the coordinator.
+	clearPack(t, sid, e)
 	gone := len(packRows(a, e.Hash)) == 0
 	status := a.command("RefreshMonitoredDownloads")
 	time.Sleep(10 * time.Second)
@@ -240,4 +250,73 @@ func qbtPaths(t *testing.T, hash string) string {
 	}
 	_ = json.NewDecoder(resp.Body).Decode(&rows)
 	return jsonText(rows)
+}
+
+// clearPack runs the engine and automatic dispatch in-process until the
+// partial-pack action is journaled, and requires it to succeed.
+func clearPack(t *testing.T, sid int, e managedEntry) {
+	t.Helper()
+	ctx := context.Background()
+	dir := t.TempDir()
+	dcMap, clientBlock := managerTOMLConfig(t)
+	src := "version = 1\nmode = \"automatic\"\n[polling]\njitter = \"0s\"\n[policy]\nimport_settle = \"1m\"\n[automation.workflows]\npartial_pack = true\n" +
+		"[[sonarr]]\nid = \"sonarr\"\nurl = \"" + env(t, "HK_IT_SONARR_URL") + "\"\napi_key = \"env:HK_IT_SONARR_KEY\"\n" + dcMap + "\n" + clientBlock
+	cfg, _, err := config.Parse([]byte(src), filepath.Join(dir, "h.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	secrets, _ := cfg.ResolvedSecrets(nil)
+	conns, err := engine.Build(cfg, secrets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(ctx, dir, store.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	eng, err := engine.New(ctx, engine.Options{Config: cfg, Store: st, Conns: conns, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), RunKind: "once", Version: "it"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mp *adapter.Probe
+	svc := app.New(st, cfg, nil, eng)
+	svc.SetExecutor(workflow.FromConnections(conns.Clients, conns.Managers))
+	saved := action.Tested
+	defer func() { action.Tested = saved }()
+	deadline := time.Now().Add(4 * time.Minute)
+	for i := 1; ; i++ {
+		rep := eng.Cycle(ctx, nil)
+		if mp == nil {
+			recs, _ := st.Connections(ctx)
+			for _, c := range recs {
+				if c.ID == "sonarr" && c.Probe != nil {
+					mp = c.Probe
+					// What this test establishes, for exactly this version.
+					action.Tested = []action.TestedWorkflow{{Workflow: policy.WorkflowPartialPack, Manager: adapter.KindSonarr, ManagerVersion: strings.TrimPrefix(mp.Version, "v")}}
+				}
+			}
+		}
+		dr, err := svc.DispatchAutomatic(ctx, rep.Fresh())
+		if err != nil {
+			t.Fatal(err)
+		}
+		fs, _ := st.Findings(ctx, store.FindingFilter{Type: domain.FindingPartialPack})
+		acts, _ := st.Intents(ctx, store.IntentFilter{})
+		for _, ev := range dr.Evaluations {
+			t.Logf("cycle %d: finding #%d %s: %s", i, ev.FindingID, ev.Result, ev.Detail)
+		}
+		if len(acts) > 0 {
+			if acts[0].Workflow != string(policy.WorkflowPartialPack) || acts[0].State != store.IntentSucceeded {
+				b, _ := json.Marshal(acts[0].Steps)
+				t.Fatalf("action %+v steps %s", acts[0], b)
+			}
+			t.Logf("partial-pack action #%d succeeded after %d cycle(s); %d finding(s)", acts[0].ID, i, len(fs))
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no partial-pack action in time (%d findings)", len(fs))
+		}
+		time.Sleep(20 * time.Second)
+	}
 }
