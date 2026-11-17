@@ -5,7 +5,7 @@ Nothing here touches the network. Trackers point at a closed loopback port, so
 no peer can ever connect; payloads are random bytes generated locally.
 Writes manifest.json describing what each torrent should look like.
 """
-import hashlib, json, os, sys
+import hashlib, json, os, struct, sys
 
 PIECE = 256 * 1024
 TRACKER = "http://127.0.0.1:9/announce/0123456789abcdef0123456789abcdef"  # fake passkey, closed port
@@ -22,9 +22,32 @@ def bencode(v):
 def pieces(data):
     return b"".join(hashlib.sha1(data[i:i + PIECE]).digest() for i in range(0, len(data), PIECE))
 
-def make(out, name, files, private=False, tracker=TRACKER):
+def mkv(seconds, size):
+    """A minimal Matroska file that ffprobe reads as an h264 video of the
+    given duration (no decodable frames), padded to size bytes. Sonarr's
+    sample detection needs a plausible runtime; random bytes are rejected
+    as "Unable to determine if file is a sample"."""
+    def vsize(n):
+        for l in range(1, 9):
+            if n < (1 << (7 * l)) - 1:
+                return bytes([(1 << (8 - l)) | (n >> (8 * (l - 1)))]) + n.to_bytes(l, "big")[1:]
+        raise ValueError(n)
+    el = lambda i, p: i + vsize(len(p)) + p
+    u = lambda i, v: el(i, v.to_bytes(max(1, (v.bit_length() + 7) // 8), "big"))
+    s = lambda i, v: el(i, v.encode())
+    ebml = el(b"\x1a\x45\xdf\xa3", u(b"\x42\x86", 1) + u(b"\x42\xf7", 1) + u(b"\x42\xf2", 4) + u(b"\x42\xf3", 8) + s(b"\x42\x82", "matroska") + u(b"\x42\x87", 4) + u(b"\x42\x85", 2))
+    info = el(b"\x15\x49\xa9\x66", u(b"\x2a\xd7\xb1", 1000000) + el(b"\x44\x89", struct.pack(">d", seconds * 1000.0)) + s(b"\x4d\x80", "hk") + s(b"\x57\x41", "hk"))
+    track = el(b"\xae", u(b"\xd7", 1) + u(b"\x73\xc5", 1) + u(b"\x83", 1) + s(b"\x86", "V_MPEG4/ISO/AVC") + el(b"\xe0", u(b"\xb0", 16) + u(b"\xba", 16)))
+    blocks = b"".join(el(b"\x1f\x43\xb6\x75", u(b"\xe7", tc) + el(b"\xa3", b"\x81\x00\x00\x80" + b"\x00" * 16)) for tc in (0, int(seconds * 1000)))
+    head = ebml
+    body = info + el(b"\x16\x54\xae\x6b", track) + blocks
+    pad = size - len(head) - len(body) - 20
+    seg = el(b"\x18\x53\x80\x67", body + el(b"\xec", os.urandom(max(pad, 0))))
+    return head + seg
+
+def make(out, name, files, private=False, tracker=TRACKER, contents=None):
     """files: list of (relative path, size). Returns (info_hash, payload dict)."""
-    payload = {p: os.urandom(s) for p, s in files}
+    payload = {p: (contents[p] if contents and p in contents else os.urandom(s)) for p, s in files}
     if len(files) == 1 and files[0][0] == name:
         info = {"name": name, "length": files[0][1], "piece length": PIECE, "pieces": pieces(payload[name])}
     else:
@@ -121,6 +144,17 @@ def main(out, save):
     # Released only to the automatic preserved-data test.
     release("tv-e12-unregistered-auto", "Housekeeparr.Fixture.Show.S01E12.1080p.WEB-DL.x264-HKFIX", 4 * MB, tracker=reject, kind="tv", tvdbId=999001, season=1, episode=12)
     release("film-i-unregistered", "Housekeeparr.Ninth.Fixture.Film.2013.1080p.WEB-DL.x264-HKFIX", 4 * MB, tracker=reject, kind="movie", tmdbId=999010, imdbId="tt9990010")
+    # A season pack with two of the season's three episodes, fully
+    # downloaded (complete in the client) as playable-looking Matroska files,
+    # for the partial-pack probe: Sonarr imports E01-E02 and E03 stays
+    # expected.
+    pname = "Housekeeparr.Fixture.Show.S02.1080p.WEB-DL.x264-HKFIX"
+    pfiles = [("Housekeeparr.Fixture.Show.S02E%02d.1080p.WEB-DL.x264-HKFIX.mkv" % e, 2 * MB) for e in (1, 2)]
+    contents = {p: mkv(25 * 60, s) for p, s in pfiles}
+    h, payload = make(out, pname, pfiles, contents=contents)
+    write(save, pname, payload, False)
+    managed.append(dict(key="tv-s02-pack", name=pname, hash=h, size=4 * MB, files=[p for p, _ in pfiles], data="full",
+                        managed=dict(kind="tv", tvdbId=999001, season=2, episode=0)))
     # Magnet-only releases for random hashes: no .torrent and no payload, so
     # their metadata can never arrive (the metadata-recovery tests).
     def magnet(key, name, **ident):
