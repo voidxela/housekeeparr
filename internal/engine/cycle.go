@@ -10,6 +10,7 @@ import (
 	"github.com/voidxela/housekeeparr/internal/adapter"
 	"github.com/voidxela/housekeeparr/internal/adapter/arr"
 	"github.com/voidxela/housekeeparr/internal/findings"
+	"github.com/voidxela/housekeeparr/internal/notify"
 	"github.com/voidxela/housekeeparr/internal/redact"
 	"github.com/voidxela/housekeeparr/internal/store"
 )
@@ -59,6 +60,10 @@ func (e *Engine) Cycle(ctx context.Context, next *time.Time) CycleReport {
 			return err
 		}
 		res = r
+		// Notifications are queued with the changes they report.
+		if err := notify.Enqueue(tx, e.cfg.Notify, r, now); err != nil {
+			return err
+		}
 		if _, err := findings.ExpireSnoozes(tx, now); err != nil {
 			return err
 		}

@@ -535,3 +535,44 @@ func workflowNames() string {
 	}
 	return strings.Join(names, ", ")
 }
+
+func cmdNotifications(args []string, out, errOut io.Writer) int {
+	o := newFlags("notifications", errOut)
+	limit := o.fs.Int("limit", 50, "number of events")
+	if _, err := o.parse(args); err != nil {
+		return exitUsage
+	}
+	svc, done, code := readService(o)
+	if svc == nil {
+		return code
+	}
+	defer done()
+	list, err := svc.Notifications(context.Background(), *limit)
+	if err != nil {
+		fmt.Fprintln(errOut, err)
+		return exitFailure
+	}
+	if o.json {
+		return writeJSON(out, list)
+	}
+	if len(list) == 0 {
+		fmt.Fprintln(out, "No notification events. Configure [[notify]] targets to receive them.")
+		return exitOK
+	}
+	w := tw(out)
+	fmt.Fprintln(w, "QUEUED\tTARGET\tKIND\tSEVERITY\tSTATE\tTITLE")
+	for _, n := range list {
+		state := fmt.Sprintf("pending (attempts %d)", n.Attempts)
+		switch {
+		case n.SentAt != nil:
+			state = "sent " + ts(n.SentAt)
+		case n.DroppedAt != nil:
+			state = "dropped: " + n.LastError
+		case n.LastError != "":
+			state += "; last: " + n.LastError
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", ts(&n.CreatedAt), n.Target, n.Kind, n.Severity, state, n.Title)
+	}
+	w.Flush()
+	return exitOK
+}

@@ -70,6 +70,10 @@ func (t *Tx) Prune(now time.Time, r Retention) (PruneResult, error) {
 			if err := run(&n, "DELETE FROM automation_evaluations WHERE finding_id NOT IN (SELECT id FROM findings)"); err != nil {
 				return err
 			}
+			var notes int64
+			if err := run(&notes, "DELETE FROM notification_events WHERE (sent_at IS NOT NULL OR dropped_at IS NOT NULL) AND created_at < ?", ms(now.Add(-r.AuditEvents))); err != nil {
+				return err
+			}
 			return run(&out.Runs, "DELETE FROM runs WHERE stopped_at IS NOT NULL AND stopped_at < ?", ms(now.Add(-r.AuditEvents)))
 		},
 	}

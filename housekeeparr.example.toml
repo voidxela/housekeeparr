@@ -159,6 +159,20 @@ format = "text"  # text, json
 # never qualify.
 # require_pieces_unavailable = false
 
+# Notifications (optional). Each target is a webhook; its URL is a secret
+# reference because webhook URLs usually embed tokens. Events: a finding
+# opened (several at once become one digest), and the resolution of one
+# whose opening was delivered. Delivery is rate-limited per target with a
+# persisted hourly count; failed deliveries back off and are dropped after
+# 8 attempts or a day. `housekeeparr notifications` shows what was sent.
+# [[notify]]
+# id = "phone"
+# url = "env:HOUSEKEEPARR_NTFY_URL"   # e.g. an ntfy topic URL
+# format = "text"                     # "json" (structured) or "text" (ntfy-style headers)
+# min_severity = "warning"            # notice, warning, or error
+# max_per_hour = 10
+# link_base = "http://127.0.0.1:8484" # adds a link to the finding
+
 [[sonarr]]
 id = "sonarr"
 name = "Sonarr"

@@ -68,6 +68,8 @@ type Config struct {
 	Overrides  []OverrideConfig  `toml:"override"`
 	Exclusions []ExclusionConfig `toml:"exclude"`
 
+	Notify []NotifyConfig `toml:"notify"`
+
 	Sonarr       []ManagerConfig `toml:"sonarr"`
 	Radarr       []ManagerConfig `toml:"radarr"`
 	QBittorrent  []ClientConfig  `toml:"qbittorrent"`
@@ -242,6 +244,24 @@ type StateConfig struct {
 type WebConfig struct {
 	Enabled bool   `toml:"enabled"`
 	Listen  string `toml:"listen"`
+}
+
+// NotifyConfig is one webhook notification target (SPEC §11.2). The URL is
+// a secret reference: webhook URLs routinely embed tokens.
+type NotifyConfig struct {
+	ID  string    `toml:"id"`
+	URL SecretRef `toml:"url"`
+	// Format is "json" (a structured event) or "text" (a plain-text body
+	// with Title, Priority and Tags headers, as ntfy accepts).
+	Format string `toml:"format"`
+	// MinSeverity is the least severe finding notified: "notice",
+	// "warning" (default) or "error".
+	MinSeverity string `toml:"min_severity"`
+	// MaxPerHour bounds deliveries to this target (default 10); held
+	// events are delivered later, oldest first, or summarised.
+	MaxPerHour int `toml:"max_per_hour"`
+	// LinkBase, when set, is the interface's base URL used for links.
+	LinkBase string `toml:"link_base"`
 }
 
 // PollingConfig bounds external traffic.
@@ -442,6 +462,7 @@ func validate(cfg *Config, md toml.MetaData) []Problem {
 	} else if cfg.Version != CurrentVersion {
 		errf("version", "unsupported configuration version %d (this build reads version %d)", cfg.Version, CurrentVersion)
 	}
+	validateNotify(errf, cfg)
 	switch cfg.Mode {
 	case ModeObserve, ModePaused, ModeAutomatic:
 	default:
@@ -1418,6 +1439,9 @@ func (c *Config) ResolvedSecrets(lookupEnv func(string) (string, bool)) (map[str
 	for _, ce := range c.Clients() {
 		resolve(ce.Section+"."+ce.Config.ID+".password", ce.Config.Password)
 	}
+	for _, n := range c.Notify {
+		resolve("notify."+n.ID+".url", n.URL)
+	}
 	return out, probs
 }
 
@@ -1461,4 +1485,47 @@ func (c *Config) Clients() []ClientEntry {
 		out = append(out, ClientEntry{"rtorrent", &c.RTorrent[i]})
 	}
 	return out
+}
+
+// validateNotify checks notification targets and fills their defaults.
+func validateNotify(errf errFunc, cfg *Config) {
+	seen := map[string]bool{}
+	for i := range cfg.Notify {
+		n := &cfg.Notify[i]
+		field := fmt.Sprintf("notify[%d]", i)
+		if !idPattern.MatchString(n.ID) {
+			errf(field+".id", "required: lower-case letters, digits, '-' or '_' (at most 32)")
+		} else if seen[n.ID] {
+			errf(field+".id", "duplicate notify id %q", n.ID)
+		}
+		seen[n.ID] = true
+		if n.URL == "" {
+			errf(field+".url", "required, as a secret reference (env:NAME or file:/path): webhook URLs usually embed tokens")
+		} else if err := n.URL.validateSyntax(); err != nil {
+			errf(field+".url", "%v", err)
+		}
+		if n.Format == "" {
+			n.Format = "json"
+		}
+		if n.Format != "json" && n.Format != "text" {
+			errf(field+".format", "must be \"json\" or \"text\"")
+		}
+		if n.MinSeverity == "" {
+			n.MinSeverity = "warning"
+		}
+		switch n.MinSeverity {
+		case "notice", "warning", "error":
+		default:
+			errf(field+".min_severity", "must be \"notice\", \"warning\", or \"error\"")
+		}
+		if n.MaxPerHour == 0 {
+			n.MaxPerHour = 10
+		}
+		if n.MaxPerHour < 1 || n.MaxPerHour > 120 {
+			errf(field+".max_per_hour", "must be between 1 and 120")
+		}
+		if n.LinkBase != "" && !strings.HasPrefix(n.LinkBase, "http://") && !strings.HasPrefix(n.LinkBase, "https://") {
+			errf(field+".link_base", "must be an http(s) URL")
+		}
+	}
 }

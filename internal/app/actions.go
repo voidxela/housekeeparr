@@ -441,3 +441,11 @@ func SearchLabel(state string) string {
 	}
 	return state
 }
+
+// Notifications lists recent notification events.
+func (s *Service) Notifications(ctx context.Context, limit int) ([]store.Notification, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 50
+	}
+	return s.st.RecentNotifications(ctx, limit)
+}

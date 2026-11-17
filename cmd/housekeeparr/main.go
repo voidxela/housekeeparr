@@ -18,6 +18,7 @@ import (
 	"github.com/voidxela/housekeeparr/internal/app"
 	"github.com/voidxela/housekeeparr/internal/config"
 	"github.com/voidxela/housekeeparr/internal/engine"
+	"github.com/voidxela/housekeeparr/internal/notify"
 	"github.com/voidxela/housekeeparr/internal/store"
 	"github.com/voidxela/housekeeparr/internal/web"
 	"github.com/voidxela/housekeeparr/internal/workflow"
@@ -58,7 +59,8 @@ func commands() []command {
 		{"act", "run the previewed manual action through the coordinator: act <id> --confirm", cmdAct},
 		{"actions", "list journaled actions and holds (exit 1 if any need review)", cmdActions},
 		{"review", "resolve an uncertain action after checking: review <action-id> --as failed --note ...", cmdReview},
-		{"retained", "list transfers recovery stopped and kept with their data, against the configured ceilings (--all includes released)", cmdRetained},
+		{"retained", "list transfers recovery left in the client with their data (stopped or running), against the configured ceilings (--all includes released)", cmdRetained},
+		{"notifications", "list recent notification events and their delivery state", cmdNotifications},
 		{"attempts", "list recovery attempts and pacing use; allow more after review: attempts reset <manager>|episode:<id> --note ...", cmdAttempts},
 		{"pause", "pause a workflow (no automatic or manual actions) until resumed: pause <workflow> --note ...", cmdPause},
 		{"resume", "resume a paused workflow: resume <workflow> --note ...", cmdResume},
@@ -285,6 +287,21 @@ func cmdRun(args []string, out, errOut io.Writer) int {
 			}
 			for scope, why := range r.Breakers {
 				log.Warn("automation held", "scope", scope, "reason", why)
+			}
+		}
+		// Notifications go out after the cycle and dispatch; a failing
+		// notification path only affects notifications.
+		if len(cfg.Notify) > 0 {
+			urls := map[string]string{}
+			for _, n := range cfg.Notify {
+				urls[n.ID] = secrets["notify."+n.ID+".url"]
+			}
+			nr, err := notify.Deliver(ctx, st, cfg.Notify, urls, nil, time.Now())
+			switch {
+			case err != nil:
+				log.Error("notification delivery stopped", "err", err)
+			case nr.Sent+nr.Failed+nr.Dropped+nr.Held > 0:
+				log.Info("notifications", "sent", nr.Sent, "failed", nr.Failed, "dropped", nr.Dropped, "held_by_rate_limit", nr.Held)
 			}
 		}
 	}

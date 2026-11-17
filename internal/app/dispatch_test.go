@@ -868,3 +868,18 @@ func slicesContainsBlocker(p *action.Proposal, name string) bool {
 	}
 	return false
 }
+
+// A diagnosed finding is queued for each configured notification target in
+// the cycle that opens it, once; observe mode still notifies.
+func TestCycleQueuesNotifications(t *testing.T) {
+	w := newWorldWith(t, "observe", 20, "\n[[notify]]\nid = \"hook\"\nurl = \"env:HK_TEST_HOOK\"\n")
+	w.stalled(hashA, 1, 1)
+	w.run(4 * time.Hour)
+	ns, err := w.st.RecentNotifications(context.Background(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ns) != 1 || ns[0].Kind != "finding.opened" || ns[0].Target != "hook" || ns[0].FindingID == nil || *ns[0].FindingID != w.finding(hashA).ID {
+		t.Fatalf("notifications %+v", ns)
+	}
+}

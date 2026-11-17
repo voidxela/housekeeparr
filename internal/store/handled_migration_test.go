@@ -129,3 +129,44 @@ func TestRetainedDispositionAndRefresh(t *testing.T) {
 		t.Fatalf("after refresh: %+v", u)
 	}
 }
+
+// A database at schema 13 opens at schema 14 with an empty notification
+// outbox that accepts events and deduplicates them.
+func TestForwardMigrationV13Notifications(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(dir, dbFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, _ := migrationFS.ReadDir("migrations")
+	for _, e := range entries {
+		if e.Name() >= "0014" {
+			break
+		}
+		body, _ := migrationFS.ReadFile("migrations/" + e.Name())
+		if _, err := db.Exec(string(body)); err != nil {
+			t.Fatalf("%s: %v", e.Name(), err)
+		}
+	}
+	if _, err := db.Exec("INSERT INTO meta(key, value) VALUES('schema_version','13'),('data_origin','live'),('instance_id','v13inst'),('created_at','0')"); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	s, err := Open(ctx, dir, Options{})
+	if err != nil {
+		t.Fatalf("open v13 database: %v", err)
+	}
+	defer s.Close()
+	for i := 0; i < 2; i++ {
+		if err := s.Write(ctx, func(tx *Tx) error {
+			_, err := tx.EnqueueNotification(Notification{Target: "hook", DedupKey: "opened|1", Kind: "finding.opened", Severity: "warning", Title: "t", Body: "b", CreatedAt: time.Unix(1, 0)})
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n, err := s.PendingNotifications(ctx, "hook"); err != nil || n != 1 {
+		t.Fatalf("pending %d %v", n, err)
+	}
+}
