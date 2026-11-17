@@ -808,3 +808,33 @@ func TestReconciledPackClearanceKeepsTargetedFollowUp(t *testing.T) {
 		t.Fatal("reconciliation resent the clearance")
 	}
 }
+
+func TestReconciliationDoesNotCompleteAnIntentWithASkippedStep(t *testing.T) {
+	c, f, _ := setup(t)
+	var id int64
+	err := c.Store.Write(ctx, func(tx *store.Tx) error {
+		var err error
+		id, err = tx.CreateIntent(store.Intent{Key: "test-skipped", Workflow: "no_progress_recovery",
+			Steps: []store.Step{{Op: "manager.queue.fail"}, {Op: "client.stop"}}}, t0)
+		if err != nil {
+			return err
+		}
+		if err := tx.SetIntentState(id, store.IntentExecuting, "", t0); err != nil {
+			return err
+		}
+		if err := tx.BeginStep(id, 1, t0, nil); err != nil {
+			return err
+		}
+		if err := tx.FinishStep(id, 1, store.StepSucceeded, nil, "", t0); err != nil {
+			return err
+		}
+		return tx.FinishStep(id, 2, store.StepSkipped, nil, "", t0)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := c.Reconcile(ctx)
+	if err != nil || len(report.Uncertain) != 1 || report.Uncertain[0] != id || len(report.Settled) != 0 || len(f.sent) != 0 {
+		t.Fatalf("reconciliation lost the partial failure: %+v, %v, sent %v", report, err, f.sent)
+	}
+}

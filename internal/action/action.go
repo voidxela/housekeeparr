@@ -642,7 +642,7 @@ func (c *Coordinator) Reconcile(ctx context.Context) (ReconcileReport, error) {
 	for _, in := range active {
 		dispatched := false
 		for _, s := range in.Steps {
-			dispatched = dispatched || s.State != store.StepPending
+			dispatched = dispatched || (s.State != store.StepPending && s.State != store.StepSkipped)
 		}
 		if !dispatched {
 			c.skipRest(ctx, in.ID, in.Steps)
@@ -693,8 +693,11 @@ func (c *Coordinator) Reconcile(ctx context.Context) (ReconcileReport, error) {
 					uncertain = true
 					notes = append(notes, fmt.Sprintf("step %d (%s) %s", s.Seq, s.Op, note))
 				}
-			case store.StepPending:
+			case store.StepPending, store.StepSkipped:
 				allDone = false
+				if s.State == store.StepSkipped {
+					notes = append(notes, fmt.Sprintf("step %d (%s) had been skipped", s.Seq, s.Op))
+				}
 			case store.StepFailed:
 				uncertain = true
 				notes = append(notes, fmt.Sprintf("step %d (%s) failed", s.Seq, s.Op))
