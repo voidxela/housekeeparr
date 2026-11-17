@@ -37,8 +37,27 @@ State at the end of the 2026-11-17 session (`dev`; see STATUS for commits):
   manager to track the grab as downloading. Private and unknown-privacy
   torrents follow `private_recovery` exactly as in no-progress recovery
   (user decisions 2026-11-17; default `keep_running`).
-- Real-instance: see compatibility.md "Preserved-data failure runs" for
+- Tracker rejections are classified on all four clients (Transmission
+  `error = 2`, Deluge `tracker_status`, qBittorrent `torrents/trackers`
+  status 4/5 for active downloads ≤ 25 per listing, rTorrent `d.message`
+  only with a recent `t.failed_time_last` newer than `t.success_time_last`).
+  Real-instance: see compatibility.md "Preserved-data failure runs" for
   exactly which versions passed and what was registered.
+- **Notifications** (`[[notify]]` webhooks, JSON or ntfy-style text;
+  durable outbox in the cycle transaction; digest for bursts; persisted
+  hourly limit; backoff/drop) and **web authentication** (password secret,
+  signed sessions, per-session CSRF, rate-limited sign-in, allowed hosts,
+  TLS or trusted proxy for remote listeners) are implemented and tested
+  in-process; not browser-checked, no real notification service, no real
+  TLS certificate exercised.
+- **Proactive missing searches, first slice** (`missing_search`): hourly
+  bounded wanted/missing reads (only when some scope could enable it), one
+  journaled single-item search per pass ≥ 15 min apart within acquisition
+  budgets and the retained ceiling, live revalidation, acceptance-only
+  verification, 1 → 30 day backoff. Real-instance: see compatibility.md.
+  Remaining: search result/grab observation to distinguish "no acceptable
+  result" from a grab, per-series batching, search-coverage findings
+  (SPEC §9.2), targeted searches after partial packs.
 
 Still true from earlier sessions:
 
@@ -106,14 +125,15 @@ do not turn a choice of defaults into a prolonged blocker for other work.
 
 ## Immediate work, in priority order
 
-1. **Re-run the changed real-instance assertions once, in a batch:** the
-   private keep-running integration test now expects a `running` retained
-   record (assertion changed at `a65657c`, not yet re-run on real
-   instances), and preserved-data handling on any client/version not yet
-   recorded (qBittorrent has no tracker-result signal; rTorrent's message
-   can be stale — both stay unsupported until a fresh structured signal is
-   established). Register only what passes.
-2. (Done 2026-11-17: private unregistered torrents follow `private_recovery`.)
+1. **Search-coverage findings and search outcomes (SPEC §9.2):** follow
+   Housekeeparr's search command to completion (message "N reports
+   downloaded" on released managers — verify the wording per version),
+   read indexer status/health for source failures around it, and report
+   no-acceptable-result, incomplete coverage, and unverified coverage as
+   separate states; never treat zero results as source failure.
+2. **Partial-pack workflow (SPEC §8)** with positive settled-import and
+   coverage evidence on real Sonarr; this needs a stand-in season pack and
+   real imports in the harness.
 3. **Batch follow-ups:** real-instance automatic metadata dispatch and
    automatic preserved-data dispatch; a kept-running original completing
    after replacement; qBittorrent 4.6.7 unknown-privacy recovery and its

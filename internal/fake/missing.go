@@ -75,7 +75,12 @@ func (m *Manager) search(name string, ids []int64) (int64, error) {
 	m.ms.searches = append(m.ms.searches, append([]int64(nil), ids...))
 	m.w.nextID++
 	now := m.now()
-	c := arr.Command{ID: 1000 + m.w.nextID, Name: name, Status: "completed", Result: "successful", Trigger: "manual", Queued: now, Ended: &now}
+	// Released Sonarr 4.0.20 / Radarr 6.4.4 wording (captured fixtures).
+	msg := "Episode search completed. 0 reports downloaded."
+	if m.kind == adapter.KindRadarr {
+		msg = "Completed search for 1 movies. 0 reports downloaded."
+	}
+	c := arr.Command{ID: 1000 + m.w.nextID, Name: name, Status: "completed", Result: "successful", Message: msg, Trigger: "manual", Queued: now, Ended: &now}
 	if m.kind == adapter.KindRadarr {
 		c.MovieIDs = ids
 	} else {

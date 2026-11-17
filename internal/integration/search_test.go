@@ -139,10 +139,28 @@ func runProactiveSearch(t *testing.T, a arrAPI, section string, e managedEntry, 
 			t.Logf("grabbed after the search: queue item %d %q", r.ID, r.Title)
 			// A second pass right away sends nothing: the content is queued,
 			// the search is spaced, and it is backing off.
-			if sr2, err := svc.DispatchSearches(ctx, rep.Fresh()); err != nil || sr2.Sent != "" {
-				t.Fatalf("second pass sent %+v %v", sr2, err)
+			// Later passes send nothing (the content is queued, searches are
+			// spaced, and it is backing off) and follow the command to its
+			// end: the manager's "N reports downloaded" says it grabbed.
+			end := time.Now().Add(60 * time.Second)
+			for {
+				sr2, err := svc.DispatchSearches(ctx, rep.Fresh())
+				if err != nil || sr2.Sent != "" {
+					t.Fatalf("later pass sent %+v %v", sr2, err)
+				}
+				it, _ := st.MissingRecord(ctx, section, key)
+				if it.State != store.MissingSearched {
+					if it.State != store.MissingGrabbed {
+						t.Fatalf("search outcome %s: %s", it.State, it.Note)
+					}
+					t.Logf("search outcome: %s — %s", it.State, it.Note)
+					return
+				}
+				if time.Now().After(end) {
+					t.Fatalf("search outcome not followed: %+v", it)
+				}
+				time.Sleep(3 * time.Second)
 			}
-			return
 		}
 		time.Sleep(2 * time.Second)
 	}

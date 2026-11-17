@@ -986,7 +986,9 @@ func TestProactiveSearchEndToEnd(t *testing.T) {
 		t.Fatalf("searches %v (want exactly episode 102)", s)
 	}
 	it, _ := w.st.MissingRecord(context.Background(), "sonarr", "episode:102")
-	if it.State != store.MissingSearched || it.Searches != 1 || it.NextSearchAt == nil || it.NextSearchAt.Sub(*it.LastSearchAt) != 24*time.Hour {
+	// The next pass followed the command to its end: nothing downloaded.
+	if it.State != store.MissingNoResult || it.Searches != 1 || it.NextSearchAt == nil || it.NextSearchAt.Sub(*it.LastSearchAt) != 24*time.Hour ||
+		!strings.Contains(it.Note, "not evidence that no release exists") {
 		t.Fatalf("search state %+v", it)
 	}
 	// Still missing a few hours later: backing off, nothing more sent.

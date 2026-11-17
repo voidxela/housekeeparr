@@ -2,16 +2,20 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"time"
 
 	"github.com/voidxela/housekeeparr/internal/action"
 	"github.com/voidxela/housekeeparr/internal/adapter"
+	"github.com/voidxela/housekeeparr/internal/adapter/arr"
 	"github.com/voidxela/housekeeparr/internal/domain"
 	"github.com/voidxela/housekeeparr/internal/notify"
 	"github.com/voidxela/housekeeparr/internal/policy"
 	"github.com/voidxela/housekeeparr/internal/store"
+	"github.com/voidxela/housekeeparr/internal/workflow"
 )
 
 // Proactive-search pacing (implementation proposals, not validated
@@ -141,6 +145,9 @@ func (s *Service) DispatchSearches(ctx context.Context, fresh map[string]bool) (
 		rep.Skipped = "writes are held: " + js.RestoreHold.Reason
 		return rep, nil
 	}
+	if err := s.followSearches(ctx, s.now()); err != nil {
+		return rep, err
+	}
 	items, err := s.st.MissingContent(ctx, store.MissingFilter{PresentOnly: true, Limit: 500})
 	if err != nil {
 		return rep, err
@@ -208,4 +215,98 @@ func (s *Service) sendSearch(ctx context.Context, it store.MissingRecord, p *act
 // Missing lists recorded missing content and its search state.
 func (s *Service) Missing(ctx context.Context, presentOnly bool) ([]store.MissingRecord, error) {
 	return s.st.MissingContent(ctx, store.MissingFilter{PresentOnly: presentOnly, Limit: 1000})
+}
+
+// reportsRE matches the completion message of released Sonarr 4.0.20 and
+// Radarr 6.4.4 searches ("… 0 reports downloaded."); other wording leaves
+// the result unverified.
+var reportsRE = regexp.MustCompile(`(\d+) reports? downloaded`)
+
+// searchFollow bounds how long a search's end is looked for (a proposal).
+const searchFollow = time.Hour
+
+// followSearches settles the outcome of recent searches from the managers'
+// command lists: grabbed, nothing downloaded, failed, or not observed. It
+// distinguishes the manager's report of downloads from acceptance; it does
+// not evaluate source coverage.
+func (s *Service) followSearches(ctx context.Context, now time.Time) error {
+	items, err := s.st.MissingContent(ctx, store.MissingFilter{Limit: 1000})
+	if err != nil {
+		return err
+	}
+	cmds := map[string][]arr.Command{}
+	for _, it := range items {
+		if it.State != store.MissingSearched || it.LastIntentID == nil || it.LastSearchAt == nil {
+			continue
+		}
+		cid, err := s.searchCommandID(ctx, *it.LastIntentID)
+		if err != nil {
+			return err
+		}
+		if _, read := cmds[it.ManagerID]; !read {
+			cmds[it.ManagerID] = nil
+			if r, ok := s.executor.(*workflow.Recovery); ok {
+				if cr, ok := r.Managers[it.ManagerID].(workflow.CommandReader); ok {
+					if list, err := cr.Commands(ctx); err == nil {
+						cmds[it.ManagerID] = list
+					}
+				}
+			}
+		}
+		state, note := "", ""
+		for _, c := range cmds[it.ManagerID] {
+			if cid == 0 || c.ID != cid {
+				continue
+			}
+			switch c.Status {
+			case "completed":
+				if m := reportsRE.FindStringSubmatch(c.Message); m != nil {
+					if m[1] == "0" {
+						state, note = store.MissingNoResult, "the search completed and the manager reported no release downloaded ("+c.Message+"); "+
+							"that is not evidence that no release exists or that every source was searched"
+					} else {
+						state, note = store.MissingGrabbed, "the search completed and the manager reported "+m[1]+" release(s) downloaded"
+					}
+				} else {
+					state, note = store.MissingEndUnknown, "the search completed, but the manager's message does not say whether anything was downloaded"
+				}
+			case "failed", "aborted", "cancelled", "orphaned":
+				state, note = store.MissingSearchFail, "the manager's search command ended "+c.Status+": "+c.Message
+			}
+		}
+		if state == "" && now.Sub(*it.LastSearchAt) > searchFollow {
+			state, note = store.MissingEndUnknown, "the search's end was not observed in the manager's command list within "+policy.HumanDuration(searchFollow)
+		}
+		if state == "" {
+			continue
+		}
+		if err := s.st.Write(ctx, func(tx *store.Tx) error {
+			return tx.SetMissingSearch(it.ManagerID, it.ContentKey, state, note, nil, nil, it.NextSearchAt, false)
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// searchCommandID returns the command ID the manager returned for a search
+// action, or 0 when it was not recorded.
+func (s *Service) searchCommandID(ctx context.Context, intentID int64) (int64, error) {
+	in, err := s.st.Intent(ctx, intentID)
+	if err != nil {
+		return 0, err
+	}
+	for _, st := range in.Steps {
+		if st.Op != action.OpSearch {
+			continue
+		}
+		var ev struct {
+			Response struct {
+				CommandID int64 `json:"command_id"`
+			} `json:"response"`
+		}
+		_ = json.Unmarshal(st.Outcome, &ev)
+		return ev.Response.CommandID, nil
+	}
+	return 0, nil
 }

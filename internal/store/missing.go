@@ -13,11 +13,15 @@ import (
 // own searches; a search accepted or completed says nothing about a grab.
 const (
 	MissingNotSearched = "not_searched"
-	MissingSearching   = "searching" // a search action is in progress
-	MissingSearched    = "searched"  // the manager accepted the search; see note
-	MissingBackoff     = "backoff"   // searched without a grab; waiting
-	MissingUncertain   = "uncertain" // the search request's outcome is unknown
-	MissingGone        = "gone"      // no longer missing (or no longer listed)
+	MissingSearching   = "searching"      // a search action is in progress
+	MissingSearched    = "searched"       // the manager accepted the search; see note
+	MissingBackoff     = "backoff"        // searched without a grab; waiting
+	MissingUncertain   = "uncertain"      // the search request's outcome is unknown
+	MissingGone        = "gone"           // no longer missing (or no longer listed)
+	MissingGrabbed     = "grabbed"        // the search completed reporting a release downloaded
+	MissingNoResult    = "no_result"      // the search completed reporting nothing downloaded
+	MissingSearchFail  = "search_failed"  // the search command failed or was aborted
+	MissingEndUnknown  = "end_unverified" // the search's end, or its result, was not observed
 )
 
 // MissingRecord is one missing episode or movie and its search state.
