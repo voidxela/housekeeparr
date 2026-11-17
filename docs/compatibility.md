@@ -385,6 +385,7 @@ test asserts the signal is `unsupported` and sends nothing.
 | 2026-11-17 | `a9fc813`, same selection (qBittorrent `torrents/trackers` and rTorrent `t.multicall` classification added) | same managers with rTorrent 0.9.8 | **all 6 tests passed** |
 | 2026-11-17 | `a9fc813`, same selection | same managers with qBittorrent 5.3.0 | private no-progress recovery **passed** (both managers); the four preserved-data tests **failed**: the rejection was never classified (the real tracker list reports qBittorrent 5's status 5, "tracker error", which the adapter did not treat as a failure) |
 | 2026-11-17 | `633dbd8` (status 5/6 handled at `1152f65`), `--only PreservedDataFailure` | same managers with qBittorrent 5.3.0 | 3 of 4 **passed** (public Sonarr and Radarr, private Sonarr); private Radarr **failed**: the tracker rejected the first announce, then qBittorrent reported "no tracker has answered yet" for the whole 2-minute wait (its tracker state reset after the payload check, with the retry not yet due); the harness now requests one re-announce in that state |
+| 2026-11-17 | `7d49739`, `--only 'ProactiveSearch\|PreservedDataFailure'` (harness re-announce) | same managers with qBittorrent 5.3.0 | **all 4 preserved-data tests passed** (the harness re-announced once, for private Radarr) |
 
 Observed: qBittorrent 5.3.0 lists the stand-in tracker with status 5 and
 the failure reason as `msg`; rTorrent 0.9.8 sets `d.message` to the
@@ -405,6 +406,29 @@ the torrent stays downloading in the client, recorded as retained
 (`running`). Registered in `action.Tested` for exactly these combinations. Not run: qBittorrent 4.6.7 (whose tracker statuses stop at 4), automatic dispatch of this
 workflow on real instances (fixture-tested), and waiting out the real
 confirmation window.
+
+### Proactive search runs (SPEC §9.1)
+
+`TestSonarrProactiveSearch` and `TestRadarrProactiveSearch` add content
+whose only release is a dedicated stand-in release (episode 11; film
+999012), then run the production path in-process: a real engine cycle
+reads the manager's `wanted/missing` list (the item must be listed,
+monitored and available), and `DispatchSearches` plans, journals,
+revalidates live and sends exactly one `EpisodeSearch`/`MoviesSearch`
+through the coordinator, which verifies a new command for that content.
+Independent check: the manager grabs the stand-in release for it; a second
+pass sends nothing. For Sonarr the harness first waits, read-only
+(interactive release search), until Sonarr would accept the release: right
+after a series is added, its first search was observed to reject a release
+it accepts moments later.
+
+| Date | Commit and selection | Versions | Result |
+| --- | --- | --- | --- |
+| 2026-11-17 | `2fd75b0`, `--only ProactiveSearch` | Sonarr 4.0.20.3014 + Radarr 6.4.4.10685 (qBittorrent 5.3.0 as download client) | Radarr **passed** (search accepted, release grabbed); Sonarr: search accepted and the indexer queried, but Sonarr reported "0 reports downloaded" right after adding the series |
+| 2026-11-17 | `7d49739`, same plus the preserved-data tests | same | **both passed** (search accepted, release grabbed, nothing re-sent) |
+
+Registered in `action.Tested` for these manager versions (the workflow
+involves no client).
 
 ## Automatic dispatch runs
 
