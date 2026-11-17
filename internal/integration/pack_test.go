@@ -327,6 +327,9 @@ func clearPack(t *testing.T, sid int, e managedEntry, missingEp int64) {
 			if it, _ := st.MissingRecord(ctx, "sonarr", key); it == nil || it.Origin != "pack" {
 				t.Fatalf("follow-up not marked: %+v", it)
 			}
+			// The next observation cycle sees the rows gone; until then the
+			// planner treats the episode as queued and sends nothing.
+			rep = eng.Cycle(ctx, nil)
 			sr, err := svc.DispatchSearches(ctx, rep.Fresh())
 			if err != nil {
 				t.Fatal(err)
