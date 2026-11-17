@@ -42,6 +42,8 @@ implemented.
   enabled tracker's latest failure is recent (≤ 1 h) and newer than its
   latest success (`t.multicall`). See compatibility.md for which passed on
   real instances.
+- **`source_confirm_window`** (default 30 m, proposal) is a diagnostic
+  setting, part of the diagnostic revision, replacing the constant.
 - **Notifications** (`[[notify]]`, migration 0014): durable outbox written
   in the cycle's transaction; findings opened (more than five at once
   become one digest), resolutions of delivered findings, automatic action
@@ -76,7 +78,10 @@ implemented.
   no-result outcome notes torrent indexers the manager had disabled at the
   time (possible impact, not proof). Indexers and indexer status are read
   every cycle (names, protocol and automatic-search flag only; settings,
-  URLs and keys are never decoded); `source.unavailable` (a disabled
+  URLs and keys are never decoded). Real-instance finding: released Sonarr
+  4.0.20 has no `/api/v3/indexerstatus` (HTTP 404), so its sources' status
+  is recorded as unknown (never healthy) and coverage notes say coverage
+  could not be verified; `source.unavailable` (a disabled
   automatic torrent indexer; resolves after two consecutive reads without
   it disabled) and `source.none` (no automatic torrent indexer) findings.
   Not yet: direct per-search source diagnostics, rejection reasons, or
