@@ -130,9 +130,13 @@ do not turn a choice of defaults into a prolonged blocker for other work.
    notes exist (see STATUS). Remaining for SPEC §9.2: rejection reasons for
    "no acceptable result", per-search source evidence where the manager
    exposes it, episode batching per series, and recovery-first priority.
-2. **Partial-pack workflow (SPEC §8)** with positive settled-import and
-   coverage evidence on real Sonarr; this needs a stand-in season pack and
-   real imports in the harness.
+2. **Partial-pack follow-ups (SPEC §8):** the clearance slice exists (see
+   STATUS); add the workflow's own targeted individual searches for the
+   still-missing monitored, aired episodes (bounded, never a season search,
+   under the `partial_pack` permission), run it with the other three
+   clients and after a Sonarr restart, and register what passes. The
+   harness generates ffprobe-readable Matroska (h264 + AC-3) because
+   Sonarr rejects random bytes and audio-less files.
 3. **Batch follow-ups:** real-instance automatic metadata dispatch and
    automatic preserved-data dispatch; a kept-running original completing
    after replacement; qBittorrent 4.6.7 unknown-privacy recovery and its

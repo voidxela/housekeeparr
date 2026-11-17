@@ -44,6 +44,22 @@ implemented.
   real instances.
 - **Automatic preserved-data dispatch on a real instance** (production
   binary, real diagnosis) passed with Sonarr and qBittorrent 5.3.0.
+- **Partial season packs (SPEC §8), first slice:** a real-instance probe
+  established Sonarr 4.0.20's representation (compatibility.md, "Partial
+  season-pack probe"); `import.partial_pack` findings for a settled,
+  import-blocked pack with the partial-pack message; `PlanPack` clears only
+  the association through the ignore path (`removeFromClient=false,
+  blocklist=false, skipRedownload=true, changeCategory=false`), after a
+  live check that the import history for the download plus episode files
+  positively cover the present episodes, the rest have neither, and no
+  other import message exists; verification is rows gone plus new
+  `downloadIgnored` history; a reappearing association is refused as a
+  failure to diagnose. Nothing is sent to the client. Fixture-tested
+  (`TestPartialPackEndToEnd`, `TestPartialPackUncertaintyRefuses`);
+  real-instance result in compatibility.md. Not yet: targeted searches
+  for the still-missing episodes as part of the workflow (they remain
+  missing content for proactive searches), other clients, restart
+  durability.
 - **`source_confirm_window`** (default 30 m, proposal) is a diagnostic
   setting, part of the diagnostic revision, replacing the constant.
 - **Notifications** (`[[notify]]`, migration 0014): durable outbox written
