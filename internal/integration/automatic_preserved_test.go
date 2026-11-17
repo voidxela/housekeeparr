@@ -105,8 +105,12 @@ func TestAutomaticPreservedDataFailure(t *testing.T) {
 		t.Fatal("queue row still present")
 	}
 	tr, ok := clientState(t, e.Hash)
-	if !ok || tr.StateClass != domain.StatePaused {
-		t.Fatalf("torrent not stopped and registered: %v %s", ok, tr.StateClass)
+	want := domain.StatePaused
+	if ok && !tr.Private.IsKnown() {
+		want = domain.StateDownloading // privacy unknown: treated as private, kept running
+	}
+	if !ok || tr.StateClass != want {
+		t.Fatalf("torrent not %s and registered: %v %s", want, ok, tr.StateClass)
 	}
 	if d := payloadDigest(t, e.asEntry()); d != digest {
 		t.Fatal("payload changed")

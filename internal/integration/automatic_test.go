@@ -236,14 +236,15 @@ func TestAutomaticRecovery(t *testing.T) {
 	rows, cats := s.rows, s.category
 	start := time.Now().UTC().Add(-time.Second)
 
-	if !eligible && !(managerClientKind() == "qbittorrent" && strings.HasPrefix(strings.TrimPrefix(cp.Version, "v"), "4.")) {
+	if !eligible {
 		// Every other combination the harness runs is registered; a
 		// refusal there is a registry or probe mismatch, not a pass.
 		t.Fatalf("%s %s is not registered with these manager versions; the automatic run cannot exercise it", managerClientKind(), cp.Version)
 	}
-	if !eligible {
-		// Unregistered (or privacy-unknown) combination: every pass refuses
-		// before any request, visibly.
+	if false {
+		// Unregistered combination: every pass refuses before any request,
+		// visibly. (Unreachable since every harness combination is
+		// registered; kept for when one is not.)
 		for i := 1; i <= 2; i++ {
 			runOnce(fmt.Sprintf("automatic pass %d (unregistered %s %s)", i, managerClientKind(), cp.Version))
 		}
@@ -334,7 +335,13 @@ func TestAutomaticRecovery(t *testing.T) {
 		if !ok {
 			t.Fatalf("%s: no queue row recorded before dispatch", tg.e.Key)
 		}
-		after, hist, searches, replacement := verifyRecovered(t, tg.a, tg.mgr, tg.e.asEntry(), row, cats[tg.e.Hash], digest[tg.e.Hash], hist0[tg.e.Hash], start, tg.search, domain.StatePaused)
+		// A client that cannot report privacy (qBittorrent 4.x): treated as
+		// private, so the default keep_running leaves the torrent running.
+		want := domain.StatePaused
+		if tr, ok := clientState(t, tg.e.Hash); ok && !tr.Private.IsKnown() {
+			want = domain.StateDownloading
+		}
+		after, hist, searches, replacement := verifyRecovered(t, tg.a, tg.mgr, tg.e.asEntry(), row, cats[tg.e.Hash], digest[tg.e.Hash], hist0[tg.e.Hash], start, tg.search, want)
 		replacements[tg.e.Hash] = replacement
 		t.Logf("%s: verified after automatic dispatch: history %v, torrent %s, replacement searches %+v", tg.e.Key, hist, after.NativeState, searches)
 	}
