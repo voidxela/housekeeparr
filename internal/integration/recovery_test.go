@@ -203,7 +203,7 @@ func TestRadarrPrivateRecoveryWorkflow(t *testing.T) {
 // Preserved-data failure handling (SPEC §7.2): the grab announces to the
 // stand-in's tracker, which rejects every announce as "Unregistered
 // torrent". Where the client's adapter classifies tracker results
-// (Transmission), the real adapter must report the rejection and the
+// (Transmission, Deluge), the real adapter must report the rejection and the
 // workflow fails and blocklists the grab and stops the torrent, keeping
 // it and its data. Elsewhere the adapter must report the signal as
 // unsupported, so nothing could ever qualify there.
@@ -245,7 +245,7 @@ func TestRadarrPreservedDataFailureWorkflow(t *testing.T) {
 // misreported) for clients whose adapter does not classify tracker results.
 func settleRejected(t *testing.T, e managedEntry) bool {
 	t.Helper()
-	if managerClientKind() != "transmission" {
+	if k := managerClientKind(); k != "transmission" && k != "deluge" {
 		tr, ok := clientState(t, e.Hash)
 		if !ok || tr.SourceFailure.Status != domain.Unsupported {
 			t.Fatalf("%s: tracker results must be unsupported on %s, got %+v", e.Key, managerClientKind(), tr.SourceFailure)

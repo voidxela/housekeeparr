@@ -221,7 +221,7 @@ func (c *Client) Probe(ctx context.Context) (adapter.Probe, error) {
 	p.Limitations = []string{
 		"Requires deluge-web to stay connected to the daemon.",
 		"Piece availability reflects connected peers only; zero is indistinguishable from not computed.",
-		"Tracker URLs, tracker status text, and paths are never requested.",
+		"Tracker URLs and paths are never requested; tracker status text is classified locally and never stored.",
 	}
 	return p, nil
 }
@@ -235,9 +235,10 @@ func contains(list []string, s string) bool {
 	return false
 }
 
-// keys requested. trackers, tracker_status, tracker_host, save_path,
-// download_location, comment, files, and peers are deliberately excluded.
-var keys = []string{"hash", "name", "state", "message", "time_added", "total_wanted", "total_done", "total_size", "progress",
+// keys requested. tracker_status is requested only to classify a tracker
+// rejection into SourceFailure and is never stored; trackers, tracker_host,
+// save_path, download_location, comment, files, and peers remain excluded.
+var keys = []string{"hash", "name", "state", "message", "tracker_status", "time_added", "total_wanted", "total_done", "total_size", "progress",
 	"all_time_download", "download_payload_rate", "num_seeds", "num_peers", "total_seeds", "total_peers",
 	"distributed_copies", "private", "is_finished", "file_priorities", "num_pieces", "label"}
 
@@ -246,6 +247,7 @@ type status struct {
 	Name              string   `json:"name"`
 	State             string   `json:"state"`
 	Message           string   `json:"message"`
+	TrackerStatus     *string  `json:"tracker_status"`
 	TimeAdded         *float64 `json:"time_added"`
 	TotalWanted       *int64   `json:"total_wanted"`
 	TotalDone         *int64   `json:"total_done"`
@@ -345,7 +347,21 @@ func normalize(clientID string, s status) domain.Transfer {
 	if s.Message != "" && s.Message != "OK" {
 		t.ClientMessage = domain.KnownValue(redact.Truncate(redact.String(s.Message), 300))
 	}
-	t.SourceFailure = domain.UnsupportedValue[domain.SourceFailure]("Deluge's tracker status is not classified yet")
+	// A paused torrent may keep its last tracker status; the diagnosis only
+	// uses SourceFailure while the torrent is actively downloading (SPEC §7.2),
+	// so the adapter does not need to suppress it.
+	switch {
+	case s.State == "Error":
+		t.SourceFailure = domain.UnknownValue[domain.SourceFailure]("a local error hides any tracker result")
+	case s.TrackerStatus == nil:
+		t.SourceFailure = domain.UnknownValue[domain.SourceFailure]("tracker status not reported")
+	default:
+		if msg, ok := strings.CutPrefix(strings.TrimSpace(*s.TrackerStatus), "Error:"); ok {
+			t.SourceFailure = domain.KnownValue(domain.ClassifyTrackerError(msg))
+		} else {
+			t.SourceFailure = domain.KnownValue(domain.SourceNoFailure)
+		}
+	}
 	t.Category = domain.UnsupportedValue[string]("label plugin value not used as category")
 	t.AddedAt = domain.UnknownValue[time.Time]("added time not reported")
 	if s.TimeAdded != nil && *s.TimeAdded > 0 {

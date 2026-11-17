@@ -73,7 +73,7 @@ func (f *fakeWeb) handler(t *testing.T) http.Handler {
 			reply("2.1.1", 0)
 		case "core.get_torrents_status":
 			keys, _ := json.Marshal(req.Params[1])
-			for _, banned := range []string{"trackers", "tracker_status", "tracker_host", "save_path", "download_location", "comment", "files", "peers"} {
+			for _, banned := range []string{"trackers", "tracker_host", "save_path", "download_location", "comment", "files", "peers"} {
 				if strings.Contains(string(keys), `"`+banned+`"`) {
 					t.Errorf("requested sensitive key %s", banned)
 				}
