@@ -120,3 +120,44 @@ func TestPrivateModeScope(t *testing.T) {
 		t.Fatalf("private_recovery applied to metadata recovery: %+v", c)
 	}
 }
+
+// A private torrent its tracker rejects as not registered follows
+// private_recovery (user decision 2026-11-17); unknown privacy stays
+// observation-only for this workflow.
+func TestPreservedDataFailureFollowsPrivateRecovery(t *testing.T) {
+	base := func() PlanInput {
+		in := planInput()
+		in.Finding.Type = domain.FindingSourceRejected
+		in.Transfer.Assessment.Diagnosis = policy.DiagnosisSourceUnregistered
+		in.Policy.Automation = []policy.WorkflowPermission{{Workflow: policy.WorkflowPreservedDataFailure, Enabled: true, From: "test"}}
+		in.Queue[0].Latest.TrackedState = domain.KnownValue("downloading")
+		return in
+	}
+	for _, tc := range []struct {
+		mode           policy.PrivateMode
+		eligible, stop bool
+	}{{policy.PrivateKeepRunning, true, false}, {policy.PrivateStop, true, true}, {policy.PrivateObserve, false, false}} {
+		t.Run(string(tc.mode), func(t *testing.T) {
+			in := base()
+			in.Transfer.Latest.Private = domain.KnownValue(true)
+			in.Policy.PrivateRecovery, in.Policy.PrivateRecoveryFrom = tc.mode, "test"
+			p, _ := Plan(in)
+			c := find(p.Prerequisites, "public transfer")
+			if c == nil || c.Satisfied != tc.eligible {
+				t.Fatalf("privacy check %+v", c)
+			}
+			if tc.eligible && (p.PrivateMode != tc.mode || !hasOp(p, "manager.queue.fail") || hasOp(p, "client.stop") != tc.stop) {
+				t.Fatalf("mode %q ops %+v", p.PrivateMode, p.Operations)
+			}
+		})
+	}
+	t.Run("unknown privacy", func(t *testing.T) {
+		in := base()
+		in.Transfer.Latest.Private = domain.UnknownValue[bool]("not reported")
+		in.Policy.PrivateRecovery = policy.PrivateKeepRunning
+		p, _ := Plan(in)
+		if c := find(p.Prerequisites, "public transfer"); c == nil || c.Satisfied || p.PrivateMode != "" {
+			t.Fatalf("unknown privacy acted on: %+v", c)
+		}
+	})
+}

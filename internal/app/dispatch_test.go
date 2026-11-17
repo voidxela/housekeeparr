@@ -796,8 +796,12 @@ func TestPreservedDataFailureEndToEnd(t *testing.T) {
 		{"other tracker error", func(tr *domain.Transfer) {
 			tr.SourceFailure, tr.ClientMessage = domain.KnownValue(domain.SourceTrackerError), domain.KnownValue("Passkey not found")
 		}, 0, 0, ""},
+		// Private: private_recovery's default keep_running (blocklist, never stop).
 		{"private", func(tr *domain.Transfer) {
 			tr.SourceFailure, tr.Private = domain.KnownValue(domain.SourceUnregistered), domain.KnownValue(true)
+		}, 1, 0, domain.FindingSourceRejected},
+		{"unknown privacy", func(tr *domain.Transfer) {
+			tr.SourceFailure, tr.Private = domain.KnownValue(domain.SourceUnregistered), domain.UnknownValue[bool]("not reported")
 		}, 0, 0, domain.FindingSourceRejected},
 		{"local error", func(tr *domain.Transfer) {
 			tr.StateClass, tr.NativeState = domain.StateError, "local-error"
@@ -825,8 +829,12 @@ func TestPreservedDataFailureEndToEnd(t *testing.T) {
 				if len(acts) != 1 || acts[0].Workflow != string(policy.WorkflowPreservedDataFailure) || acts[0].State != store.IntentSucceeded {
 					t.Fatalf("actions %+v", acts)
 				}
+				want := store.RetainedStopped
+				if tc.stops == 0 {
+					want = store.RetainedRunning
+				}
 				ret, _ := w.st.RetainedTransfers(context.Background(), false, 0)
-				if len(ret) != 1 || ret[0].Disposition != store.RetainedStopped {
+				if len(ret) != 1 || ret[0].Disposition != want {
 					t.Fatalf("retained %+v", ret)
 				}
 			}
@@ -842,9 +850,9 @@ func TestPreservedDataFailureEndToEnd(t *testing.T) {
 				t.Fatal(err)
 			}
 			switch tc.name {
-			case "private":
+			case "unknown privacy":
 				if pv.Proposal == nil || !slicesContainsBlocker(pv.Proposal, "public transfer") {
-					t.Fatalf("private transfer not held: %+v", pv)
+					t.Fatalf("unknown-privacy transfer not held: %+v", pv)
 				}
 			case "local error":
 				if pv.Proposal != nil || !strings.Contains(pv.NoAction, "diagnosis only") {

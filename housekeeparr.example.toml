@@ -31,7 +31,9 @@ missing_search = false
 # How no-progress recovery treats a torrent the client reports as private,
 # and one whose privacy it cannot report (as on qBittorrent 4.x), which is
 # treated as private unless unknown_privacy.no_progress_recovery = false
-# (below). Tracker obligations
+# (below). It also applies to preserved_data_failure, for a torrent known to
+# be private whose tracker rejects it as not registered (unknown privacy is
+# left alone there). Tracker obligations
 # attach to data already downloaded, and a stopped torrent no longer seeds.
 #   "keep_running" (default): fail and blocklist the dead grab in the manager
 #       so it fetches a replacement, and leave the torrent running in the
