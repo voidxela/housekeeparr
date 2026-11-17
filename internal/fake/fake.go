@@ -255,6 +255,7 @@ func Transfer(id, name string, class domain.StateClass, verified, wanted int64, 
 		SwarmSeeds: domain.UnknownValue[int64]("not reported"), SwarmPeers: domain.UnknownValue[int64]("not reported"),
 		Availability: domain.UnknownValue[float64]("not computed"), AllFilesWanted: domain.KnownValue(true),
 		Private: domain.KnownValue(false), ClientMessage: domain.UnsupportedValue[string]("synthetic"),
+		SourceFailure: domain.KnownValue(domain.SourceNoFailure),
 	}
 	if class == domain.StateMetadata {
 		t.WantedBytes = domain.UnknownValue[int64]("no metadata")

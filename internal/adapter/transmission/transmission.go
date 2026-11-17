@@ -327,6 +327,19 @@ func normalize(clientID string, r *torrent) (domain.Transfer, error) {
 	if r.Error != 0 {
 		t.ClientMessage = domain.KnownValue(redact.Truncate(redact.String(r.ErrorString), 300))
 	}
+	// Transmission keeps one error at a time and clears a tracker error on
+	// the next successful announce, so error = 2 is the tracker's current
+	// failure reason; a local error (3) hides any tracker result.
+	switch r.Error {
+	case 0, 1:
+		t.SourceFailure = domain.KnownValue(domain.SourceNoFailure)
+	case 2:
+		t.SourceFailure = domain.KnownValue(domain.ClassifyTrackerError(r.ErrorString))
+	case 3:
+		t.SourceFailure = domain.UnknownValue[domain.SourceFailure]("a local error hides any tracker result")
+	default:
+		t.SourceFailure = domain.UnknownValue[domain.SourceFailure](fmt.Sprintf("unrecognised error code %d", r.Error))
+	}
 	t.Category = domain.UnsupportedValue[string]("Transmission uses labels rather than categories")
 	t.AddedAt = domain.UnknownValue[time.Time]("added time not reported")
 	if r.AddedDate != nil && *r.AddedDate > 0 {

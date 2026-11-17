@@ -420,6 +420,7 @@ func normalize(clientID string, r *torrent, v version) (domain.Transfer, error) 
 		t.Private = domain.KnownValue(p)
 	}
 	t.ClientMessage = domain.UnsupportedValue[string]("qBittorrent does not report error details in the torrent list")
+	t.SourceFailure = domain.UnsupportedValue[domain.SourceFailure]("tracker results are not read from qBittorrent yet")
 	return t, nil
 }
 

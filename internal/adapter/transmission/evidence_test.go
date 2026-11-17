@@ -83,3 +83,36 @@ func TestInvalidMetadataTypeIsMalformed(t *testing.T) {
 		t.Fatal("a non-numeric metadataPercentComplete must be rejected")
 	}
 }
+
+// Only a current tracker error (error = 2) is classified as a source
+// failure; a local error hides tracker results, and warnings are not
+// failures (SPEC §7.2).
+func TestSourceFailureClassification(t *testing.T) {
+	meta := 1.0
+	st := 4
+	size, left := int64(100), int64(50)
+	for _, tc := range []struct {
+		code  int
+		msg   string
+		want  domain.SourceFailure
+		known bool
+		state domain.StateClass
+	}{
+		{0, "", domain.SourceNoFailure, true, domain.StateDownloading},
+		{1, "Tracker gave a warning", domain.SourceNoFailure, true, domain.StateDownloading},
+		{2, "Unregistered torrent", domain.SourceUnregistered, true, domain.StateDownloading},
+		{2, "torrent not registered with this tracker", domain.SourceUnregistered, true, domain.StateDownloading},
+		{2, "Passkey not found", domain.SourceTrackerError, true, domain.StateDownloading},
+		{2, "Connection refused", domain.SourceTrackerError, true, domain.StateDownloading},
+		{3, "No data found! Ensure your drives are connected", "", false, domain.StateError},
+	} {
+		x, err := normalize("tr", &torrent{HashString: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", Status: &st, Error: tc.code, ErrorString: tc.msg,
+			SizeWhenDone: &size, LeftUntilDone: &left, MetadataPercent: &meta})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if v, ok := x.SourceFailure.Get(); ok != tc.known || v != tc.want || x.StateClass != tc.state {
+			t.Errorf("error %d %q: source %+v state %s", tc.code, tc.msg, x.SourceFailure, x.StateClass)
+		}
+	}
+}

@@ -72,7 +72,7 @@ func (e *Engine) evaluateClient(tx *store.Tx, snap domain.TransferSnapshot, gone
 		listed[t.NativeID] = true
 		base := scope + t.NativeID + "|"
 		if t.StateClass == domain.StateComplete {
-			for _, k := range []string{kindStalled, kindMetadata, kindError} {
+			for _, k := range []string{kindStalled, kindMetadata, kindError, kindSource} {
 				reasons[base+k] = fmt.Sprintf("Verified: the download completed (client state %s).", t.NativeState)
 			}
 			continue
@@ -153,6 +153,22 @@ func (e *Engine) evaluateClient(tx *store.Tx, snap domain.TransferSnapshot, gone
 				reasons[base+kindMetadata] = o.reason
 			} else {
 				carry(meta2, o)
+			}
+		}
+
+		// Source failure (SPEC §7.2).
+		srcF, err := active(kindSource)
+		if err != nil {
+			return findings.Result{}, err
+		}
+		switch {
+		case a.Status == policy.StatusQualified && a.Diagnosis == policy.DiagnosisSourceUnregistered:
+			ev.Drafts = append(ev.Drafts, e.sourceDraft(base+kindSource, meta, eff, t, a, queue, now))
+		case srcF != nil:
+			if o := decideSource(t, obs, a, s); o.resolve {
+				reasons[base+kindSource] = o.reason
+			} else {
+				carry(srcF, o)
 			}
 		}
 
@@ -889,4 +905,47 @@ func errorDetailMissing(t domain.Transfer) []string {
 		return nil
 	}
 	return []string{"Error detail is not reported by this client in its transfer listing."}
+}
+
+func (e *Engine) sourceDraft(key string, meta ConnMeta, eff policy.Effective, t domain.Transfer, a policy.Assessment, queue []store.QueueRecord, now time.Time) findings.Draft {
+	managers, links := e.managerLinks(queue)
+	next := now.Add(eff.Settings.PollInterval)
+	msg := signalText(t.ClientMessage, func(m string) string { return nonEmptyText(m, "none") })
+	steps := []string{fmt.Sprintf("Check the torrent's tracker status in %s; a tracker usually unregisters a torrent that was removed, replaced, or never uploaded.", meta.Name)}
+	if len(queue) > 0 {
+		mgr := e.conns.Meta[queue[0].ManagerID].Name
+		steps = append(steps, fmt.Sprintf("With preserved-data failure handling enabled for this scope, Housekeeparr can fail and blocklist this grab in %s so it fetches another release, keeping the torrent and its data; otherwise review it in %s → Activity → Queue.", mgr, mgr))
+	} else {
+		steps = append(steps, "No media-manager queue item is associated with this transfer.")
+	}
+	return findings.Draft{
+		DedupKey: key, Type: domain.FindingSourceRejected, Severity: domain.SeverityWarning,
+		Title:   "Rejected by its tracker: " + t.Name,
+		Summary: a.Headline,
+		Subject: domain.Subject{Connections: append([]string{meta.ID}, managers...), ClientID: meta.ID, NativeID: t.NativeID,
+			TransferName: t.Name, Content: contentLabels(queue)},
+		Detail: domain.FindingDetail{
+			Evidence: append([]domain.Evidence{
+				{Label: "Tracker result", Value: string(t.SourceFailure.Value) + " — " + msg, At: &now},
+				{Label: "Rejected without progress since", Value: a.StreakStart.UTC().Format(time.RFC3339)},
+				{Label: "Qualifying evidence", Value: fmt.Sprintf("%d observations, %s of %s confirmation (proposed)", a.Observations,
+					policy.HumanDuration(a.Elapsed), policy.HumanDuration(a.Window))},
+			}, transferEvidence(t, a, now)...),
+			Missing:    missingSignals(t),
+			Confidence: "Reported by the client from the tracker's response on consecutive fresh observations while the download was active and made no verified progress.",
+			Limitations: append(append([]string{}, a.Limitations...),
+				"Only an unregistered rejection qualifies; other tracker errors, local storage errors, and stale messages on stopped torrents never do."),
+			Eligibility: e.modeEligibility(),
+			NextSteps:   steps,
+			Links:       links,
+		},
+		PolicyID: eff.ID, PolicyRevision: eff.Revision, EvidenceAt: a.EvidenceAt, NextEvaluationAt: &next,
+	}
+}
+
+func nonEmptyText(s, def string) string {
+	if s == "" {
+		return def
+	}
+	return s
 }

@@ -279,6 +279,9 @@ func normalize(clientID string, c []any) (domain.Transfer, error) {
 	} else {
 		t.ClientMessage = domain.KnownValue("")
 	}
+	// d.message can stay stale across a user stop/start, so it is not a
+	// fresh tracker result (SPEC §7.2).
+	t.SourceFailure = domain.UnsupportedValue[domain.SourceFailure]("rTorrent's message can be stale; tracker results are not classified yet")
 	if hasMeta {
 		size, completed := n(7), n(8)
 		sizeChunks, doneChunks, wantedChunks, chunk := n(10), n(11), n(12), n(13)

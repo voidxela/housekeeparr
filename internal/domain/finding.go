@@ -42,6 +42,7 @@ const (
 	FindingTransferStalled   = "transfer.stalled"
 	FindingMetadataTimeout   = "transfer.metadata_timeout"
 	FindingTransferError     = "transfer.client_error"
+	FindingSourceRejected    = "transfer.source_rejected"
 	FindingImportAttention   = "import.attention"
 	FindingQueueUnmatched    = "queue.unmatched"
 	FindingQueueAmbiguous    = "queue.ambiguous_ownership"

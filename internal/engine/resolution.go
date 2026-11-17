@@ -14,6 +14,7 @@ const (
 	kindStalled  = "stalled"
 	kindMetadata = "metadata"
 	kindError    = "error"
+	kindSource   = "source"
 )
 
 // Baseline keys recorded when a stall is established.
@@ -186,4 +187,31 @@ func consecutiveCleared(obs []store.Observation, maxGap time.Duration) int {
 		n++
 	}
 	return n
+}
+
+// decideSource resolves a source-failure finding only on positive evidence
+// that the tracker no longer rejects the transfer: the two latest
+// observations both report a known, different tracker result, are fresh,
+// and are not separated by a gap. A paused transfer's stale message or an
+// unknown result proves nothing either way.
+func decideSource(t domain.Transfer, obs []store.Observation, a policy.Assessment, s policy.Settings) transferOutcome {
+	n := 0
+	for i := len(obs) - 1; i >= 0; i-- {
+		v, ok := obs[i].SourceFailure.Get()
+		if !ok || v == domain.SourceUnregistered {
+			break
+		}
+		if i < len(obs)-1 && (obs[i+1].At.Sub(obs[i].At) > s.MaxObservationGap || !obs[i+1].At.After(obs[i].At)) {
+			break
+		}
+		n++
+	}
+	if a.Status != policy.StatusStale && n >= 2 {
+		return transferOutcome{resolve: true, reason: "Verified: the client has reported no unregistered rejection from the tracker on consecutive observations."}
+	}
+	if v, ok := t.SourceFailure.Get(); ok && v == domain.SourceUnregistered {
+		return transferOutcome{note: suspendedNote(t, a) + " The tracker still rejects this torrent as not registered."}
+	}
+	return transferOutcome{note: suspendedNote(t, a) + " The tracker rejection is no longer reported in the latest observation (" +
+		t.SourceFailure.String() + "); this finding resolves after two consecutive observations without it."}
 }

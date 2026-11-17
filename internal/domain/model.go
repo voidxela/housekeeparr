@@ -122,6 +122,45 @@ type Transfer struct {
 	Private        Signal[bool] `json:"private"`
 	// ClientMessage is a client-provided error or status message, if any.
 	ClientMessage Signal[string] `json:"client_message"`
+	// SourceFailure is the adapter's classification of a structured
+	// tracker rejection the client currently reports for this transfer
+	// (SPEC §7.2). Unsupported where the adapter has no structured,
+	// fresh tracker result; unknown where one is hidden (for example by a
+	// local error).
+	SourceFailure Signal[SourceFailure] `json:"source_failure"`
+}
+
+// SourceFailure classifies a tracker's rejection of a transfer.
+type SourceFailure string
+
+const (
+	// SourceNoFailure: the client reports no tracker error.
+	SourceNoFailure SourceFailure = "none"
+	// SourceUnregistered: a tracker reports the torrent is not registered
+	// (removed, deleted, or unknown to it). The only qualifying cause.
+	SourceUnregistered SourceFailure = "unregistered"
+	// SourceTrackerError: any other tracker error; never qualifying.
+	SourceTrackerError SourceFailure = "tracker_error"
+)
+
+// unregisteredPhrases are lower-cased tracker failure reasons that mean
+// the tracker does not (or no longer) know the torrent. The set is
+// deliberately small: anything else is an unclassified tracker error.
+var unregisteredPhrases = []string{
+	"unregistered torrent", "torrent not registered", "not registered with this tracker", "torrent is not registered",
+	"torrent not found", "unknown torrent", "info_hash not found", "infohash not found", "torrent does not exist",
+	"torrent has been deleted", "torrent has been removed",
+}
+
+// ClassifyTrackerError classifies a tracker failure message.
+func ClassifyTrackerError(msg string) SourceFailure {
+	m := strings.ToLower(msg)
+	for _, p := range unregisteredPhrases {
+		if strings.Contains(m, p) {
+			return SourceUnregistered
+		}
+	}
+	return SourceTrackerError
 }
 
 // Progress returns verified/wanted when both are known and wanted > 0.

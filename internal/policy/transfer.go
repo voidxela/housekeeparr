@@ -26,6 +26,8 @@ type Sample struct {
 	// AvailabilityWantedOnly marks availability figures that already cover
 	// only wanted data; file selection then cannot make them non-specific.
 	AvailabilityWantedOnly bool
+	// SourceFailure is the adapter's classified tracker rejection, if any.
+	SourceFailure domain.Signal[domain.SourceFailure]
 }
 
 // TransferInput is everything the evaluator needs for one transfer.
@@ -65,7 +67,16 @@ const (
 	DiagnosisNoProgressUnavailable Diagnosis = "no_progress_pieces_unavailable"
 	// DiagnosisMetadataTimeout: metadata acquisition exceeded its timeout.
 	DiagnosisMetadataTimeout Diagnosis = "metadata_timeout"
+	// DiagnosisSourceUnregistered: a tracker rejected the active,
+	// incomplete transfer as not registered on consecutive fresh
+	// observations with no verified progress (SPEC §7.2).
+	DiagnosisSourceUnregistered Diagnosis = "source_unregistered"
 )
+
+// SourceConfirmWindow is the qualifying time a tracker rejection must
+// persist, without verified progress, before it is a diagnosis. Proposed
+// value, not a validated default.
+const SourceConfirmWindow = 30 * time.Minute
 
 // AvailabilityEvidence summarises piece availability over the qualifying
 // window. Unknown never becomes "unavailable".
@@ -159,6 +170,11 @@ func EvaluateTransfer(in TransferInput, s Settings, now time.Time) Assessment {
 	switch last.StateClass {
 	case domain.StateDownloading:
 		evaluateNoProgress(&a, in, s, now)
+		// A no-progress diagnosis keeps precedence, so the workflows (and
+		// privacy choices) that address it are unchanged.
+		if a.Status != StatusQualified && a.Status != StatusStale {
+			evaluateSource(&a, in, s)
+		}
 	case domain.StateMetadata:
 		evaluateMetadata(&a, in, s, now)
 	default:
@@ -441,6 +457,42 @@ func availabilityDescription(ev AvailabilityEvidence) string {
 	default:
 		return string(ev)
 	}
+}
+
+// evaluateSource establishes a source failure: the trailing observations
+// of the current no-progress streak (so without verified progress, with
+// known sizes and no baseline change) all report an unregistered rejection,
+// at least MinObservations of them after grace, over SourceConfirmWindow.
+func evaluateSource(a *Assessment, in TransferInput, s Settings) {
+	if a.StreakStart.IsZero() {
+		return
+	}
+	samples := in.Samples
+	from := len(samples)
+	for i := len(samples) - 1; i >= 0 && !samples[i].At.Before(a.StreakStart); i-- {
+		if v, ok := samples[i].SourceFailure.Get(); !ok || v != domain.SourceUnregistered {
+			break
+		}
+		from = i
+	}
+	if from == len(samples) {
+		return
+	}
+	run := samples[from:]
+	n, elapsed := qualifying(run, a.GraceEnds, s.PollInterval)
+	since := run[0].At.UTC().Format(time.RFC3339)
+	if n < s.MinObservations || elapsed < SourceConfirmWindow {
+		a.Details = append(a.Details, fmt.Sprintf("The tracker rejects this torrent as not registered (since %s, no verified progress): "+
+			"%d of %d observations and %s of %s confirmation counted before a source-failure diagnosis.", since, n, s.MinObservations,
+			roundDur(elapsed), roundDur(SourceConfirmWindow)))
+		return
+	}
+	a.Status, a.Diagnosis = StatusQualified, DiagnosisSourceUnregistered
+	a.Observations, a.Elapsed, a.QualifiesAt = n, elapsed, nil
+	a.Window, a.WindowReason = SourceConfirmWindow, "source-failure confirmation (proposed)"
+	a.Headline = fmt.Sprintf("The tracker rejects this torrent as not registered, without verified progress, on %d consecutive observations over %s (since %s).",
+		n, roundDur(elapsed), since)
+	a.Limitations = append(a.Limitations, "The rejection is the tracker's message as the client reports it; Housekeeparr cannot confirm why the tracker no longer accepts the torrent.")
 }
 
 func evaluateMetadata(a *Assessment, in TransferInput, s Settings, now time.Time) {

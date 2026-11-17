@@ -45,6 +45,9 @@ type Observation struct {
 	Availability      domain.Signal[float64] `json:"avail"`
 	AllFilesWanted    domain.Signal[bool]    `json:"all_wanted"`
 	AvailWantedOnly   bool                   `json:"avail_wanted_only,omitempty"`
+	// SourceFailure is absent from observations stored before it existed
+	// (zero signal: not known).
+	SourceFailure domain.Signal[domain.SourceFailure] `json:"source,omitempty"`
 }
 
 // Sample converts an observation for the policy evaluator.
@@ -52,7 +55,7 @@ func (o Observation) Sample() policy.Sample {
 	return policy.Sample{
 		At: o.At, RunID: o.RunID, MonoMS: o.MonoMS, StateClass: o.StateClass, NativeState: o.NativeState,
 		WantedBytes: o.WantedBytes, VerifiedBytes: o.VerifiedBytes, Availability: o.Availability, AllFilesWanted: o.AllFilesWanted,
-		AvailabilityWantedOnly: o.AvailWantedOnly,
+		AvailabilityWantedOnly: o.AvailWantedOnly, SourceFailure: o.SourceFailure,
 	}
 }
 
@@ -62,6 +65,7 @@ func observationOf(t domain.Transfer, at time.Time, runID string, mono int64) Ob
 		WantedBytes: t.WantedBytes, VerifiedBytes: t.VerifiedBytes, NetworkDownloaded: t.NetworkDownloadedBytes,
 		DownloadRate: t.DownloadRate, ConnectedSeeds: t.ConnectedSeeds, ConnectedPeers: t.ConnectedPeers,
 		Availability: t.Availability, AllFilesWanted: t.AllFilesWanted, AvailWantedOnly: t.AvailabilityWantedOnly,
+		SourceFailure: t.SourceFailure,
 	}
 }
 

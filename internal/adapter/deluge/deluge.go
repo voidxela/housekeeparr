@@ -345,6 +345,7 @@ func normalize(clientID string, s status) domain.Transfer {
 	if s.Message != "" && s.Message != "OK" {
 		t.ClientMessage = domain.KnownValue(redact.Truncate(redact.String(s.Message), 300))
 	}
+	t.SourceFailure = domain.UnsupportedValue[domain.SourceFailure]("Deluge's tracker status is not classified yet")
 	t.Category = domain.UnsupportedValue[string]("label plugin value not used as category")
 	t.AddedAt = domain.UnknownValue[time.Time]("added time not reported")
 	if s.TimeAdded != nil && *s.TimeAdded > 0 {
