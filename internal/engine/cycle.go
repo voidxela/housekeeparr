@@ -497,7 +497,7 @@ func (e *Engine) readMissing(ctx context.Context, results []*fetched) {
 		e.mu.Lock()
 		last, seen := e.missingRead[m.ID()]
 		e.mu.Unlock()
-		if seen && now.Sub(last) < missingInterval {
+		if age := now.Sub(last); seen && age >= 0 && age < missingInterval {
 			continue
 		}
 		snap, err := mr.Missing(ctx, missingMax)

@@ -1368,3 +1368,18 @@ func TestIncompleteMissingListHasActionableFinding(t *testing.T) {
 		t.Fatalf("a complete missing read must resolve the finding: %+v, %v", fs, err)
 	}
 }
+
+func TestMissingEvidenceFromFutureCannotAuthorizeSearch(t *testing.T) {
+	w := searchWorld(t, "automatic")
+	ctx := context.Background()
+	w.mgr.SetMissing(fake.MissingEpisode(102, 1, "Missing episode", t0.Add(-48*time.Hour)))
+	w.run(10 * time.Minute)
+	w.clock.JumpWall(-24 * time.Hour)
+	w.mgr.FailMissing(&adapter.Error{Class: adapter.ErrTransient, Op: "fake.missing", Message: "offline"})
+	if _, err := w.svc.DispatchSearches(ctx, w.eng.Cycle(ctx, nil).Fresh()); err != nil {
+		t.Fatal(err)
+	}
+	if s := w.mgr.Searches(); len(s) != 0 {
+		t.Fatalf("searched using missing evidence dated in the future: %v", s)
+	}
+}

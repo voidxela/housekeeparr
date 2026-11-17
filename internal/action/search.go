@@ -106,8 +106,9 @@ func PlanSearch(in SearchPlanInput) *Proposal {
 		add("tested write workflow", false, "no missing-content search workflow has been tested for "+combo+"; this build sends no searches there")
 	}
 	add("content identity known", id > 0 && (kind == "episode" || kind == "movie"), "content "+it.ContentKey)
-	fresh := it.Present && in.Now.Sub(it.LastSeen) <= MissingFreshness
-	add("still missing (fresh)", fresh, fmt.Sprintf("listed as missing by %s %s ago", it.ManagerID, policy.HumanDuration(in.Now.Sub(it.LastSeen))))
+	age := in.Now.Sub(it.LastSeen)
+	fresh := it.Present && age >= 0 && age <= MissingFreshness
+	add("still missing (fresh)", fresh, fmt.Sprintf("listed as missing by %s %s ago", it.ManagerID, policy.HumanDuration(age)))
 	avail := it.Available != nil && *it.Available
 	add("released and available", avail, map[bool]string{true: "the manager reports it available (aired or released per its availability settings)",
 		false: "the manager does not report it available yet, or availability is unknown; unknown is not available"}[avail])
