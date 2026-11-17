@@ -291,6 +291,27 @@ the sections below. Not covered on real instances: the replacement's grab,
 progress and completion tracking, and retained-data and capacity limits
 (fixture-tested).
 
+### Metadata recovery runs
+
+`TestSonarrMetadataRecoveryWorkflow` and `TestRadarrMetadataRecoveryWorkflow`
+run the same planner, coordinator, executor and independent checks for the
+`metadata_recovery` workflow. The stand-in indexer offers a magnet-only
+release for a random hash whose only tracker is a closed loopback port (DHT
+is off), so the manager grabs it and the client can never obtain metadata.
+The metadata-timeout diagnosis is supplied by the test (the timeout is
+covered by deterministic policy tests). There is no payload to compare.
+
+| Date | Versions | Result |
+| --- | --- | --- |
+| 2026-11-16 (first attempt, uncommitted tree) | Sonarr 4.0.20.3014, Radarr 6.4.4.10685, qBittorrent 5.3.0 | setup failed, nothing sent: both managers refuse a **trackerless** magnet when the client reports DHT disabled (`Magnet Links without trackers not supported if DHT is disabled`). The fixture magnet now carries the closed loopback tracker |
+| 2026-11-16 (`64062ee`, pinned worktree, `--only RecoveryWorkflow`) | Sonarr 4.0.20.3014 + qBittorrent 5.3.0; Radarr 6.4.4.10685 + qBittorrent 5.3.0 (isolated) | **passed**: qBittorrent reported the grab as `metaDL` with privacy and wanted size unknown; `manager.queue.fail` and `client.stop` were each verified; independently the row stayed absent after two refreshes, exactly this release was blocklisted with one new `downloadFailed`, the torrent stayed registered as `stoppedDL` in its category, and each manager queued its own replacement search, which Housekeeparr recorded. The same selected run re-passed both no-progress workflow tests after the fixture changes. Not run in this selection: observation tests, removal-semantics probes, automatic dispatch |
+
+Registered in `action.Tested` for `metadata_recovery`: Sonarr 4.0.20.3014 and
+Radarr 6.4.4.10685 with qBittorrent 5.3.0 only. Transmission, Deluge and
+rTorrent are not yet tested for this workflow and perform no metadata
+writes. Automatic dispatch of metadata recovery is fixture-tested only
+(`TestAutomaticMetadataRecoveryEndToEnd`).
+
 ## Automatic dispatch runs
 
 `internal/integration/automatic_test.go` (`TestAutomaticRecovery`, run last
@@ -342,12 +363,12 @@ exercised.
 
 | Application | Floor | Source evidence | Transport | Observation | No-progress recovery | Metadata recovery | Preserved-data failure handling | Partial-pack handling |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Sonarr | 4.0 | `v4.0.20.3014` | HTTP API v3, API key header | **tested: 4.0.20.3014**; others contract-tested | **tested: 4.0.20.3014 with qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8** (manual and automatic dispatch) | not implemented | not implemented | not implemented |
-| Radarr | 5.0 | `v6.4.4.10685` | HTTP API v3, API key header | **tested: 6.4.4.10685**; others contract-tested | **tested: 6.4.4.10685 with qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8** (manual and automatic dispatch) | not implemented | not implemented | n/a (Sonarr-specific in v1) |
-| qBittorrent | 4.1 (WebUI API v2) | `release-4.6.7`, `release-5.3.0` | WebUI API v2, session cookie | **tested: 5.3.0, 4.6.7**; others contract-tested | **tested: 5.3.0** with Sonarr/Radarr above; 4.x refused (privacy unknown) | not implemented | not implemented | — |
-| Transmission | 2.80 (RPC 15) | `4.0.6`, `4.1.4` | legacy RPC (deprecated in 4.1, still supported throughout 4.x), session-id handshake, optional basic auth | **tested: 4.0.6, 4.1.4**; others contract-tested | **tested: 4.0.6, 4.1.4** with Sonarr/Radarr above (`torrent-stop`, legacy RPC) | not implemented | not implemented | — |
-| Deluge | 2.0 | `deluge-2.0.0`, `deluge-2.1.1`, `deluge-2.2.0` | deluge-web JSON API (`/json`); daemon protocol unsupported | **tested: 2.2.0**; others contract-tested | **tested: 2.2.0** with Sonarr/Radarr above (`core.pause_torrent`) | not implemented | not implemented | — |
-| rTorrent | 0.9.8 | `v0.9.8`, `v0.16.28` | XML-RPC over an HTTP(S) SCGI gateway (tested: lighttpd `mod_scgi`); raw SCGI unsupported | **tested: 0.9.8**; others contract-tested | **tested: 0.9.8** with Sonarr/Radarr above (`d.stop`) | not implemented | not implemented | — |
+| Sonarr | 4.0 | `v4.0.20.3014` | HTTP API v3, API key header | **tested: 4.0.20.3014**; others contract-tested | **tested: 4.0.20.3014 with qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8** (manual and automatic dispatch) | **tested with qBittorrent 5.3.0** (manual path; automatic fixture-tested) | not implemented | not implemented |
+| Radarr | 5.0 | `v6.4.4.10685` | HTTP API v3, API key header | **tested: 6.4.4.10685**; others contract-tested | **tested: 6.4.4.10685 with qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8** (manual and automatic dispatch) | **tested with qBittorrent 5.3.0** (manual path; automatic fixture-tested) | not implemented | n/a (Sonarr-specific in v1) |
+| qBittorrent | 4.1 (WebUI API v2) | `release-4.6.7`, `release-5.3.0` | WebUI API v2, session cookie | **tested: 5.3.0, 4.6.7**; others contract-tested | **tested: 5.3.0** with Sonarr/Radarr above; 4.x refused (privacy unknown) | **tested: 5.3.0** with Sonarr/Radarr above | not implemented | — |
+| Transmission | 2.80 (RPC 15) | `4.0.6`, `4.1.4` | legacy RPC (deprecated in 4.1, still supported throughout 4.x), session-id handshake, optional basic auth | **tested: 4.0.6, 4.1.4**; others contract-tested | **tested: 4.0.6, 4.1.4** with Sonarr/Radarr above (`torrent-stop`, legacy RPC) | planned; not yet tested, no writes | not implemented | — |
+| Deluge | 2.0 | `deluge-2.0.0`, `deluge-2.1.1`, `deluge-2.2.0` | deluge-web JSON API (`/json`); daemon protocol unsupported | **tested: 2.2.0**; others contract-tested | **tested: 2.2.0** with Sonarr/Radarr above (`core.pause_torrent`) | planned; not yet tested, no writes | not implemented | — |
+| rTorrent | 0.9.8 | `v0.9.8`, `v0.16.28` | XML-RPC over an HTTP(S) SCGI gateway (tested: lighttpd `mod_scgi`); raw SCGI unsupported | **tested: 0.9.8**; others contract-tested | **tested: 0.9.8** with Sonarr/Radarr above (`d.stop`) | planned; not yet tested, no writes | not implemented | — |
 
 ## Observation signals by client
 
