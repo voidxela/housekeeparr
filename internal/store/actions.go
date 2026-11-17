@@ -639,6 +639,18 @@ func (s *Store) Intents(ctx context.Context, f IntentFilter) ([]Intent, error) {
 	return out, nil
 }
 
+// SuccessfulPackClearance returns the latest verified clearance for a manager association.
+func (s *Store) SuccessfulPackClearance(ctx context.Context, managerID, downloadID string) (int64, error) {
+	var id int64
+	err := s.r.QueryRowContext(ctx, `SELECT id FROM action_intents WHERE workflow='partial_pack' AND state='succeeded'
+		AND json_extract(subject_json, '$.manager_id')=? AND json_extract(subject_json, '$.download_id')=? COLLATE NOCASE
+		ORDER BY id DESC LIMIT 1`, managerID, downloadID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return id, err
+}
+
 // Intent returns one intent by id.
 func (s *Store) Intent(ctx context.Context, id int64) (Intent, error) {
 	all, err := s.Intents(ctx, IntentFilter{ID: id})

@@ -1208,6 +1208,55 @@ func TestPartialPackEndToEnd(t *testing.T) {
 	}
 }
 
+func TestPriorPackClearanceIsScopedAndNotLimitedByOtherActions(t *testing.T) {
+	for _, tc := range []struct {
+		name, manager string
+		laterActions  int
+		wantRemovals  int
+	}{
+		{name: "another manager", manager: "other-sonarr", wantRemovals: 1},
+		{name: "older clearance of the same association", manager: "sonarr", laterActions: 501},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := packWorld(t, nil)
+			if err := w.st.Write(context.Background(), func(tx *store.Tx) error {
+				succeed := func(in store.Intent) error {
+					id, err := tx.CreateIntent(in, t0)
+					if err != nil {
+						return err
+					}
+					if err := tx.SetIntentState(id, store.IntentExecuting, "", t0); err != nil {
+						return err
+					}
+					return tx.SetIntentState(id, store.IntentSucceeded, "", t0)
+				}
+				if err := succeed(store.Intent{
+					Key: "previous-pack", Workflow: string(policy.WorkflowPartialPack), Origin: "automatic",
+					Subject: []byte(`{"manager_id":"` + tc.manager + `","download_id":"` + strings.ToUpper(hashA) + `"}`),
+					Steps:   []store.Step{{Op: "manager.queue.remove"}},
+				}); err != nil {
+					return err
+				}
+				for i := 0; i < tc.laterActions; i++ {
+					if err := succeed(store.Intent{
+						Key: "other-" + strconv.Itoa(i), Workflow: string(policy.WorkflowMissingSearch), Origin: "automatic",
+						Steps: []store.Step{{Op: "manager.search"}},
+					}); err != nil {
+						return err
+					}
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			w.run(2 * time.Hour)
+			if got := len(w.mgr.Removals()); got != tc.wantRemovals {
+				t.Fatalf("applied %d removals, want %d", got, tc.wantRemovals)
+			}
+		})
+	}
+}
+
 func TestPartialPackUncertaintyRefuses(t *testing.T) {
 	for name, mutate := range map[string]func(*world, []domain.QueueItem) []domain.QueueItem{
 		"another import message": func(_ *world, rows []domain.QueueItem) []domain.QueueItem {

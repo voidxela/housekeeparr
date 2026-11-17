@@ -443,19 +443,9 @@ func (s *Service) previewPack(ctx context.Context, f *domain.Finding, origin act
 	if in.Cooldowns, err = s.st.ActiveCooldowns(ctx, now); err != nil {
 		return nil, err
 	}
-	// An earlier clearance of the same download that succeeded: a tracked
-	// association again means the clearance did not hold.
-	done, err := s.st.Intents(ctx, store.IntentFilter{States: []store.IntentState{store.IntentSucceeded}, Limit: 500})
-	if err != nil {
+	// An association that returns after verified clearance requires review.
+	if in.Handled, err = s.st.SuccessfulPackClearance(ctx, f.Subject.ManagerID, f.Subject.DownloadID); err != nil {
 		return nil, err
-	}
-	for _, d := range done {
-		var sub struct {
-			DownloadID string `json:"download_id"`
-		}
-		if d.Workflow == string(policy.WorkflowPartialPack) && json.Unmarshal(d.Subject, &sub) == nil && strings.EqualFold(sub.DownloadID, f.Subject.DownloadID) {
-			in.Handled = d.ID
-		}
 	}
 	p := action.PlanPack(in)
 	p.Prerequisites = append(p.Prerequisites, s.packContentBlockers(*p)...)
