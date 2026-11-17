@@ -32,6 +32,7 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -50,10 +51,13 @@ type route struct {
 
 // release is a manifest entry the indexer advertises.
 type release struct {
-	Key     string `json:"key"`
-	Name    string `json:"name"`
-	Hash    string `json:"hash"`
-	Size    int64  `json:"size"`
+	Key  string `json:"key"`
+	Name string `json:"name"`
+	Hash string `json:"hash"`
+	Size int64  `json:"size"`
+	// Magnet releases are offered only as a magnet link (no .torrent):
+	// their metadata can never arrive.
+	Magnet  bool `json:"magnet"`
 	Managed *struct {
 		Kind    string `json:"kind"` // "tv" or "movie"
 		TvdbID  int    `json:"tvdbId"`
@@ -349,12 +353,22 @@ func toItem(rel release, base, key string) item {
 	it.PubDate = time.Now().Add(-2 * time.Hour).UTC().Format(time.RFC1123Z)
 	it.Size = rel.Size
 	it.Enclosure.URL, it.Enclosure.Length, it.Enclosure.Type = it.Link, rel.Size, "application/x-bittorrent"
+	if rel.Magnet {
+		// The tracker is a closed loopback port (as in every fixture) and
+		// DHT is off, so nothing can supply metadata. Released Sonarr and
+		// Radarr refuse trackerless magnets when the client's DHT is off.
+		it.Link = "magnet:?xt=urn:btih:" + rel.Hash + "&dn=" + rel.Name + "&tr=" + url.QueryEscape("http://127.0.0.1:9/announce")
+		it.Enclosure.URL = it.Link
+	}
 	cat := "5040"
 	if rel.Managed.Kind == "movie" {
 		cat = "2040"
 	}
 	it.Attrs = []attr{{"category", cat}, {"size", strconv.FormatInt(rel.Size, 10)}, {"seeders", "1"}, {"peers", "1"},
 		{"infohash", rel.Hash}, {"downloadvolumefactor", "1"}, {"uploadvolumefactor", "1"}}
+	if rel.Magnet {
+		it.Attrs = append(it.Attrs, attr{"magneturl", it.Link})
+	}
 	if m := rel.Managed; m.Kind == "tv" {
 		it.Attrs = append(it.Attrs, attr{"tvdbid", strconv.Itoa(m.TvdbID)}, attr{"season", strconv.Itoa(m.Season)}, attr{"episode", strconv.Itoa(m.Episode)})
 	} else {

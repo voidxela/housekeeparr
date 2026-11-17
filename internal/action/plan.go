@@ -260,12 +260,12 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 		add("public transfer", false, true, "private torrents are observation-only for recovery: stopping or replacing one may conflict with tracker obligations")
 	case optIn:
 		p.UnknownPrivacy = true
-		add("public transfer", true, true, "privacy is unknown ("+t.Latest.Private.String()+"); the operator opted "+string(wf)+
-			" in to unknown privacy ("+optFrom+"), accepting that stopping and blocklisting this release is compatible with any tracker obligations")
+		add("public transfer", true, true, "privacy cannot be known before metadata arrives ("+t.Latest.Private.String()+"). No payload has been "+
+			"downloaded, so stopping this torrent forfeits nothing and leaves no seeding or ratio obligation, whether its tracker is public or private; "+
+			"allowed by "+optFrom+" (set unknown_privacy."+string(wf)+" = false to refuse)")
 	case policy.UnknownPrivacyDefined(wf):
-		add("public transfer", false, true, "privacy is unknown ("+t.Latest.Private.String()+"): no client reports the private flag before metadata "+
-			"arrives, and the manager does not report indexer privacy. Recovery stays observation-only unless the operator opts this scope in with "+
-			"unknown_privacy."+string(wf)+" = true (for example in a rule matching privacy = \"unknown\" for a public-only category)")
+		add("public transfer", false, true, "privacy is unknown ("+t.Latest.Private.String()+") and this scope refuses unknown privacy for "+
+			string(wf)+" ("+optFrom+"); remove unknown_privacy."+string(wf)+" = false there to allow it")
 	default:
 		add("public transfer", false, true, "privacy is unknown on this client, so recovery stays observation-only")
 	}

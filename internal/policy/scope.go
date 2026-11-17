@@ -100,14 +100,18 @@ type WorkflowPermission struct {
 	From     string   `json:"from"`
 }
 
-// UnknownPrivacyDefined reports whether a workflow may be opted in to act
-// on transfers whose privacy is unknown. Only metadata recovery: before
-// metadata arrives no supported client can report the private flag, and
-// released Sonarr/Radarr expose no indexer privacy. The opt-in is a
-// proposal (not an approved default): it is off unless configured, never
-// applies to a transfer known to be private, and the operator accepts that
-// stopping and blocklisting a release whose tracker obligations are
-// unknown is compatible with those obligations.
+// UnknownPrivacyDefined reports whether a workflow may act on transfers
+// whose privacy is unknown. Only metadata recovery: before metadata
+// arrives no supported client can report the private flag, and released
+// Sonarr/Radarr expose no indexer privacy, so refusing unknown privacy
+// would disable the workflow entirely. Tracker obligations (ratio,
+// hit-and-run, seeding time) attach to payload that was downloaded; a
+// transfer still acquiring metadata has none, so stopping it forfeits
+// nothing and the blocklist only stops the manager re-grabbing that
+// release. It is therefore allowed by default (user direction,
+// 2026-11-16) and a scope can turn it off with
+// unknown_privacy.metadata_recovery = false. A transfer known to be
+// private is never acted on.
 func UnknownPrivacyDefined(w Workflow) bool { return w == WorkflowMetadataRecovery }
 
 // AllowsUnknownPrivacy reports whether the workflow is opted in to acting
@@ -143,11 +147,11 @@ func (e Effective) ComputeRevision() string {
 	for _, p := range perms {
 		fmt.Fprintf(h, "|perm=%q:%t", p.Workflow, p.Enabled)
 	}
-	// Only opt-ins are hashed, so configurations without one keep their
+	// Only opt-outs are hashed, so configurations without one keep their
 	// earlier revision.
 	for _, p := range e.UnknownPrivacy {
-		if p.Enabled {
-			fmt.Fprintf(h, "|unknown-privacy=%q", p.Workflow)
+		if !p.Enabled {
+			fmt.Fprintf(h, "|unknown-privacy-refused=%q", p.Workflow)
 		}
 	}
 

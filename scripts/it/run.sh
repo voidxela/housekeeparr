@@ -15,6 +15,9 @@
 #   --capture         write sanitized raw responses to testdata/captured/ for review
 #   --keep            keep the work directory for debugging
 #   --no-netns        do not isolate the run in a loopback-only network namespace
+#   --only REGEX      run only the registered tests whose names match REGEX
+#                     (extended regex); the selection is printed and each
+#                     selected test is still required to pass
 #
 # Every selected application's tests must report PASS; a skipped test fails
 # the run, so a missing environment variable can never be recorded as a pass.
@@ -38,6 +41,7 @@ MANAGER_CLIENT=qbittorrent
 CAPTURE=0
 KEEP=0
 NETNS=1
+ONLY=
 ORIG_ARGS=("$@")
 while [ $# -gt 0 ]; do
 	case "$1" in
@@ -49,6 +53,7 @@ while [ $# -gt 0 ]; do
 	--capture) CAPTURE=1; shift ;;
 	--keep) KEEP=1; shift ;;
 	--no-netns) NETNS=0; shift ;;
+	--only) ONLY="$2"; shift 2 ;;
 	*) echo "unknown argument: $1" >&2; exit 2 ;;
 	esac
 done
@@ -559,7 +564,7 @@ start_sonarr() {
 		MANAGED_PROBES+=(TestSonarrManagedRemovalSemantics)
 		# The full recovery workflow runs through whichever client the
 		# managers use (--manager-client).
-		MANAGED_PROBES+=(TestSonarrRecoveryWorkflow)
+		MANAGED_PROBES+=(TestSonarrRecoveryWorkflow TestSonarrMetadataRecoveryWorkflow)
 	fi
 }
 
@@ -570,7 +575,7 @@ start_radarr() {
 	PROBES+=(TestRadarrQueueRemovalSemantics)
 	if [ "$STANDIN" = 1 ]; then
 		MANAGED_PROBES+=(TestRadarrManagedRemovalSemantics)
-		MANAGED_PROBES+=(TestRadarrRecoveryWorkflow)
+		MANAGED_PROBES+=(TestRadarrRecoveryWorkflow TestRadarrMetadataRecoveryWorkflow)
 	fi
 }
 
@@ -599,17 +604,28 @@ done
 # --- tests ------------------------------------------------------------------
 if [ "$CAPTURE" = 1 ]; then export HK_IT_CAPTURE_DIR="$ROOT/internal/integration/testdata/captured"; fi
 cd "$ROOT"
-RUN=$(IFS='|'; echo "^(${TESTS[*]})\$")
-set +e
-go test -tags integration -count=1 -v -run "$RUN" ./internal/integration/ | tee "$WORK/go-test.log"
-STATUS=${PIPESTATUS[0]}
-# Probes change manager and client state, so each runs on its own, in the
-# order registered (unknown-content probes before managed-content probes).
-# The automatic-dispatch test needs both managers and runs last.
 if [ "$STANDIN" = 1 ] && has "$MANAGERS" sonarr && has "$MANAGERS" radarr; then
 	MANAGED_PROBES+=(TestAutomaticRecovery)
 fi
 PROBES+=("${MANAGED_PROBES[@]}")
+if [ -n "${ONLY:-}" ]; then
+	select_only() { local t; for t in "$@"; do [[ "$t" =~ $ONLY ]] && echo "$t"; done; return 0; }
+	mapfile -t TESTS < <(select_only "${TESTS[@]}")
+	mapfile -t PROBES < <(select_only "${PROBES[@]}")
+	echo "--only $ONLY selected: ${TESTS[*]} ${PROBES[*]}"
+	[ $((${#TESTS[@]} + ${#PROBES[@]})) -gt 0 ] || { echo "--only $ONLY selected no registered test" >&2; exit 2; }
+fi
+set +e
+: > "$WORK/go-test.log"
+STATUS=0
+if [ ${#TESTS[@]} -gt 0 ]; then
+	RUN=$(IFS='|'; echo "^(${TESTS[*]})\$")
+	go test -tags integration -count=1 -v -run "$RUN" ./internal/integration/ | tee "$WORK/go-test.log"
+	STATUS=${PIPESTATUS[0]}
+fi
+# Probes change manager and client state, so each runs on its own, in the
+# order registered (unknown-content probes before managed-content probes).
+# The automatic-dispatch test needs both managers and runs last.
 for p in "${PROBES[@]}"; do
 	go test -tags integration -count=1 -v -run "^$p\$" ./internal/integration/ | tee -a "$WORK/go-test.log"
 	[ "${PIPESTATUS[0]}" -eq 0 ] || STATUS=1

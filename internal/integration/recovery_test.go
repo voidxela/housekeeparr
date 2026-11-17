@@ -139,7 +139,62 @@ func TestRadarrRecoveryWorkflow(t *testing.T) {
 	runRecovery(t, a, rc, e, "MoviesSearch")
 }
 
+// Metadata recovery: the manager grabs a magnet whose metadata can never
+// arrive (random hash, no tracker, loopback-only namespace). Its privacy is
+// unknown on every client, so the scope opts metadata_recovery in to
+// unknown privacy, as an operator would for a public-only category.
+func TestSonarrMetadataRecoveryWorkflow(t *testing.T) {
+	mm := managedManifest(t)
+	a := arrAPI{t: t, base: env(t, "HK_IT_SONARR_URL"), key: env(t, "HK_IT_SONARR_KEY")}
+	prepareManager(t, a, env(t, "HK_IT_WORK")+"/library/tv", []int{5000, 5040})
+	sid := ensureSeries(t, a)
+	ep := episodeID(t, a, sid, 1, 7)
+	e := mm["tv-e07-magnet"]
+	waitGrab(t, a, e, map[string]any{"name": "EpisodeSearch", "episodeIds": []int{ep}}, url.Values{"episodeId": {fmt.Sprint(ep)}})
+	settleMetadata(t, e)
+	runRecoveryFor(t, a, sonarrClient(t), e, "EpisodeSearch", policy.WorkflowMetadataRecovery)
+}
+
+func TestRadarrMetadataRecoveryWorkflow(t *testing.T) {
+	mm := managedManifest(t)
+	a := arrAPI{t: t, base: env(t, "HK_IT_RADARR_URL"), key: env(t, "HK_IT_RADARR_KEY")}
+	prepareManager(t, a, env(t, "HK_IT_WORK")+"/library/movies", []int{2000, 2040})
+	e := mm["film-g-magnet"]
+	id := addMovie(t, a, e.Managed.TmdbID)
+	waitGrab(t, a, e, map[string]any{"name": "MoviesSearch", "movieIds": []int{id}}, url.Values{"movieId": {fmt.Sprint(id)}})
+	settleMetadata(t, e)
+	rc, err := radarr.New(radarr.Options{ID: "radarr", BaseURL: env(t, "HK_IT_RADARR_URL"), APIKey: env(t, "HK_IT_RADARR_KEY"), Timeout: 15 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runRecoveryFor(t, a, rc, e, "MoviesSearch", policy.WorkflowMetadataRecovery)
+}
+
+// settleMetadata waits until the client reports the grab as acquiring
+// metadata (with privacy and size unknown).
+func settleMetadata(t *testing.T, e managedEntry) {
+	t.Helper()
+	deadline := time.Now().Add(60 * time.Second)
+	var last domain.Transfer
+	for time.Now().Before(deadline) {
+		if tr, ok := clientState(t, e.Hash); ok {
+			last = tr
+			if tr.StateClass == domain.StateMetadata {
+				t.Logf("%s: fetching metadata in client: %s, private %v, wanted %v", e.Key, tr.NativeState, tr.Private, tr.WantedBytes)
+				return
+			}
+		}
+		time.Sleep(2 * time.Second)
+	}
+	t.Fatalf("%s: grab never settled as metadata acquisition (last %s/%s)", e.Key, last.NativeState, last.StateClass)
+}
+
 func runRecovery(t *testing.T, a arrAPI, mgr recoveryManager, me managedEntry, searchName string) {
+	t.Helper()
+	runRecoveryFor(t, a, mgr, me, searchName, policy.WorkflowNoProgressRecovery)
+}
+
+func runRecoveryFor(t *testing.T, a arrAPI, mgr recoveryManager, me managedEntry, searchName string, wf policy.Workflow) {
 	t.Helper()
 	ctx := context.Background()
 	e := me.asEntry()
@@ -219,23 +274,40 @@ func runRecovery(t *testing.T, a arrAPI, mgr recoveryManager, me managedEntry, s
 		t.Fatal("engine stored no probes")
 	}
 	// Only the diagnosis is supplied: waiting out the stall window is not useful here.
-	stored.Assessment = &policy.Assessment{Status: policy.StatusQualified, Diagnosis: policy.DiagnosisNoProgress, Headline: "supplied by the integration test"}
+	diag, ftype := policy.DiagnosisNoProgress, domain.FindingTransferStalled
+	if wf == policy.WorkflowMetadataRecovery {
+		diag, ftype = policy.DiagnosisMetadataTimeout, domain.FindingMetadataTimeout
+	}
+	// The supplied diagnosis is made under the plan's (default) settings.
+	stored.Assessment = &policy.Assessment{Status: policy.StatusQualified, Diagnosis: diag, Headline: "supplied by the integration test",
+		PolicyRevision: policy.Settings{}.Revision()}
+	pol := policy.Effective{Mode: "automatic", Revision: "it", Automation: []policy.WorkflowPermission{{Workflow: wf, Enabled: true, From: "integration test"}}}
+	if wf == policy.WorkflowMetadataRecovery {
+		pol.UnknownPrivacy = []policy.WorkflowPermission{{Workflow: wf, Enabled: true, From: "integration test"}}
+	}
 	now := time.Now().UTC()
 	in := action.PlanInput{
-		Finding:  domain.Finding{ID: 1, Type: domain.FindingTransferStalled, State: domain.FindingOpen},
+		Finding:  domain.Finding{ID: 1, Type: ftype, State: domain.FindingOpen},
 		Transfer: stored, Queue: rows,
-		Policy: policy.Effective{Mode: "automatic", Revision: "it", Automation: []policy.WorkflowPermission{{Workflow: policy.WorkflowNoProgressRecovery, Enabled: true, From: "integration test"}}},
+		Policy: pol,
 		Origin: action.OriginAutomatic, ClientKind: clientKind, ClientProbe: cp, ManagerKind: mgr.Kind(), ManagerProbe: mp,
 		PollInterval: 10 * time.Minute, Now: now,
 		// What this test establishes, for exactly these versions.
-		Tested: []action.TestedWorkflow{{Workflow: policy.WorkflowNoProgressRecovery, Manager: mgr.Kind(), ManagerVersion: strings.TrimPrefix(mp.Version, "v"),
+		Tested: []action.TestedWorkflow{{Workflow: wf, Manager: mgr.Kind(), ManagerVersion: strings.TrimPrefix(mp.Version, "v"),
 			Client: clientKind, ClientVersion: strings.TrimPrefix(cp.Version, "v")}},
 	}
 	p, np := action.Plan(in)
 	if np != nil {
 		t.Fatal(np.Reason)
 	}
-	if priv, known := tr.Private.Get(); !known {
+	if priv, known := tr.Private.Get(); wf == policy.WorkflowMetadataRecovery {
+		if known {
+			t.Logf("privacy known (%v) before metadata on %s %s", priv, clientKind, cp.Version)
+		}
+		if !p.UnknownPrivacy && !known {
+			t.Fatal("unknown privacy accepted without recording the opt-in")
+		}
+	} else if !known {
 		// qBittorrent 4.x does not report privacy: recovery must refuse.
 		b := p.Blockers()
 		if len(b) != 1 || b[0].Name != "public transfer" {

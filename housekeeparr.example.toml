@@ -29,17 +29,18 @@ partial_pack = false
 missing_search = false
 
 [automation.unknown_privacy]
-# Recovery never acts on a transfer the client reports as private, and by
-# default also refuses one whose privacy is unknown. A magnet that never
-# received its metadata always has unknown privacy: no supported client can
-# read the private flag before metadata arrives, and Sonarr/Radarr do not
-# report indexer privacy. Setting this to true (proposal, off by default)
-# accepts that stopping and blocklisting such a release is compatible with
-# your trackers' obligations. Prefer a narrow [[rule]] (for example
-# match = { client = "...", category = "...", privacy = "unknown" } with
-# [rule.unknown_privacy] metadata_recovery = true) for public-only sources.
-# Only metadata_recovery accepts this setting.
-# metadata_recovery = false
+# Recovery never acts on a transfer the client reports as private. A magnet
+# that never received its metadata always has unknown privacy: no supported
+# client can read the private flag before metadata arrives, and Sonarr and
+# Radarr do not report indexer privacy. Metadata recovery accepts that by
+# default, because such a torrent has downloaded no payload: stopping it
+# forfeits nothing and leaves no ratio, hit-and-run or seeding obligation on
+# a public or a private tracker, and the blocklist only stops the manager
+# grabbing that same dead release again. Set this to false (here, or in a
+# [[rule]] / [[override]] under [rule.unknown_privacy]) to keep a scope
+# observation-only. Only metadata_recovery has this setting; it does not
+# enable the workflow (see [automation.workflows]).
+# metadata_recovery = true
 
 [automation.limits]
 # Bounds on actions that start an acquisition (manual and automatic alike).

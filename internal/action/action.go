@@ -89,7 +89,7 @@ type Proposal struct {
 	// Scope is the policy subject; the gate re-resolves policy for it.
 	Scope policy.Subject `json:"scope"`
 	// UnknownPrivacy records that the transfer's privacy was unknown and the
-	// scope opted the workflow in (policy.AllowsUnknownPrivacy); revalidation
+	// scope allows the workflow then (policy.AllowsUnknownPrivacy); revalidation
 	// then accepts privacy that is still unknown, never known private.
 	UnknownPrivacy bool `json:"unknown_privacy,omitempty"`
 	// Cooldown applied to every lock subject after success.

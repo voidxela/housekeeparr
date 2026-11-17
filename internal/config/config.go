@@ -676,7 +676,7 @@ func validateUnknownPrivacyMap(errf errFunc, prefix string, m map[string]bool) {
 			errf(prefix+"."+k, "unknown workflow %q", k)
 		case !policy.UnknownPrivacyDefined(wf):
 			errf(prefix+"."+k, "acting on transfers of unknown privacy is not defined for %s (only for metadata_recovery, "+
-				"where no client can report privacy before metadata arrives)", k)
+				"where no client can report privacy before metadata arrives and no payload has been downloaded)", k)
 		}
 	}
 }
@@ -1028,8 +1028,8 @@ func (c *Config) Resolve(sub policy.Subject) (policy.Effective, error) {
 	privEnabled := make(map[policy.Workflow]bool, len(workflows))
 	privFrom := make(map[policy.Workflow]string, len(workflows))
 	for _, wf := range workflows {
-		autoEnabled[wf], privEnabled[wf] = false, false
-		autoFrom[wf], privFrom[wf] = "built-in default", "built-in default (refuse)"
+		autoEnabled[wf], privEnabled[wf] = false, policy.UnknownPrivacyDefined(wf)
+		autoFrom[wf], privFrom[wf] = "built-in default", "built-in default (no payload exists before metadata)"
 	}
 
 	apply(&s, src, c.Policy, "config [policy]")

@@ -106,6 +106,13 @@ def main(out, save):
     # Released only to the automatic-dispatch test.
     release("tv-e06", "Housekeeparr.Fixture.Show.S01E06.1080p.WEB-DL.x264-HKFIX", 4 * MB, kind="tv", tvdbId=999001, season=1, episode=6)
     release("film-f", "Housekeeparr.Sixth.Fixture.Film.2016.1080p.WEB-DL.x264-HKFIX", 4 * MB, kind="movie", tmdbId=999007, imdbId="tt9990007")
+    # Magnet-only releases for random hashes: no .torrent and no payload, so
+    # their metadata can never arrive (the metadata-recovery tests).
+    def magnet(key, name, **ident):
+        managed.append(dict(key=key, name=name, hash=hashlib.sha1(os.urandom(32)).hexdigest(), size=4 * MB, files=[], data="none",
+                            magnet=True, managed=ident))
+    magnet("tv-e07-magnet", "Housekeeparr.Fixture.Show.S01E07.1080p.WEB-DL.x264-HKFIX", kind="tv", tvdbId=999001, season=1, episode=7)
+    magnet("film-g-magnet", "Housekeeparr.Seventh.Fixture.Film.2015.1080p.WEB-DL.x264-HKFIX", kind="movie", tmdbId=999008, imdbId="tt9990008")
     with open(os.path.join(out, "managed.json"), "w") as f:
         json.dump(managed, f, indent=1)
 

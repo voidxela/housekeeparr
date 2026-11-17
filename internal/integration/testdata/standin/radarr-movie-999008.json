@@ -1,0 +1,35 @@
+{
+ "tmdbId": 999008,
+ "imdbId": "tt9990008",
+ "title": "Housekeeparr Seventh Fixture Film",
+ "originalTitle": "Housekeeparr Seventh Fixture Film",
+ "titleSlug": "999008",
+ "overview": "Fictional film served by the Housekeeparr integration stand-in.",
+ "year": 2015,
+ "inCinema": "2015-03-01T00:00:00Z",
+ "physicalRelease": "2015-06-01T00:00:00Z",
+ "digitalRelease": "2015-05-15T00:00:00Z",
+ "runtime": 100,
+ "originalLanguage": "en",
+ "status": "Released",
+ "studio": "Fixture Studio",
+ "movieRatings": {
+  "tmdb": {
+   "count": 1,
+   "value": 7.0,
+   "type": "user"
+  }
+ },
+ "ratings": [],
+ "genres": [],
+ "keywords": [],
+ "alternativeTitles": [],
+ "translations": [],
+ "certifications": [],
+ "images": [],
+ "credits": {
+  "cast": [],
+  "crew": []
+ },
+ "recommendations": []
+}

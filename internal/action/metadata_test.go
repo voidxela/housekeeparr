@@ -30,8 +30,12 @@ func optIn(in *PlanInput) {
 	in.Policy.UnknownPrivacy = []policy.WorkflowPermission{{Workflow: policy.WorkflowMetadataRecovery, Enabled: true, From: "config rule \"public magnets\""}}
 }
 
-func TestMetadataRecoveryRefusesUnknownPrivacyByDefault(t *testing.T) {
-	p, np := Plan(metadataInput())
+// A scope that turned unknown privacy off (or a policy that does not state
+// it at all) refuses, naming the setting.
+func TestMetadataRecoveryRefusesUnknownPrivacyWhenTurnedOff(t *testing.T) {
+	in := metadataInput()
+	in.Policy.UnknownPrivacy = []policy.WorkflowPermission{{Workflow: policy.WorkflowMetadataRecovery, Enabled: false, From: "config rule \"private trackers\""}}
+	p, np := Plan(in)
 	if np != nil {
 		t.Fatal(np.Reason)
 	}
@@ -45,7 +49,11 @@ func TestMetadataRecoveryRefusesUnknownPrivacyByDefault(t *testing.T) {
 		}
 	}
 	if p.UnknownPrivacy {
-		t.Fatal("marked as opted in")
+		t.Fatal("marked as allowed")
+	}
+	bare, _ := Plan(metadataInput())
+	if c := find(bare.Prerequisites, "public transfer"); c == nil || c.Satisfied {
+		t.Fatalf("a policy that does not state the setting must fail closed: %+v", c)
 	}
 }
 

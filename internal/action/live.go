@@ -141,7 +141,7 @@ func Revalidate(p Proposal, i int, live Live) []Check {
 			fmt.Sprintf("wanted bytes planned %s, now %s", pl.Wanted, t.WantedBytes))
 		priv, known := t.Private.Get()
 		if p.UnknownPrivacy && !known {
-			add("public transfer", true, "privacy still unknown ("+t.Private.String()+"); this scope opted "+p.Workflow+" in to unknown privacy")
+			add("public transfer", true, "privacy still unknown ("+t.Private.String()+"); still no metadata, so still no payload")
 		} else {
 			add("public transfer", known && !priv, "privacy now "+t.Private.String())
 		}

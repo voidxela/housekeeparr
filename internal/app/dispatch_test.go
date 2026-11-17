@@ -517,3 +517,67 @@ func TestScopedSettingsDiagnosisIsCurrentUntilEdited(t *testing.T) {
 		t.Fatal("editing the transfer's override kept the older diagnosis usable")
 	}
 }
+
+const magnetRule = `
+[[rule]]
+name = "public magnets"
+priority = 1
+[rule.match]
+client = "qbit"
+privacy = "unknown"
+[rule.automation]
+metadata_recovery = true
+`
+
+// Metadata recovery runs through the same engine → dispatcher → coordinator
+// path, with its own diagnosis, permission and capability gates. Privacy is
+// always unknown before metadata; with no payload downloaded that is
+// accepted by default, and a scope can refuse it.
+func TestAutomaticMetadataRecoveryEndToEnd(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		extra string
+		act   bool
+	}{
+		{"recovered by default", magnetRule, true},
+		{"refused where the scope turned unknown privacy off", magnetRule + "[rule.unknown_privacy]\nmetadata_recovery = false\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newWorldWith(t, "automatic", 20, tc.extra)
+			action.Tested = append(action.Tested, action.TestedWorkflow{Workflow: policy.WorkflowMetadataRecovery, Manager: adapter.KindSonarr,
+				ManagerVersion: "0.0.0-fake", Client: adapter.KindQBittorrent, ClientVersion: "0.0.0-fake"})
+			pr, _ := w.client.Probe(context.Background())
+			pr.Read[adapter.CapMetadataState] = adapter.CapabilityStatus{Support: adapter.Supported}
+			w.client.SetProbe(pr)
+			w.client.SetTransfers(fake.Transfer(hashA, "Show.S01E01", domain.StateMetadata, 0, 0, t0))
+			w.mgr.SetQueue(fake.Episode(1, hashA, "Show.S01E01", "Show", 1, 1))
+			w.run(3 * time.Hour)
+			fs, _ := w.st.Findings(context.Background(), store.FindingFilter{Type: domain.FindingMetadataTimeout, ClientID: "qbit", NativeID: hashA})
+			if len(fs) != 1 {
+				t.Fatalf("metadata findings %+v", fs)
+			}
+			stops, removals := w.client.Stops(), w.mgr.Removals()
+			if !tc.act {
+				if len(stops) != 0 || len(removals) != 0 {
+					t.Fatalf("acted where unknown privacy is refused: %v %v", stops, removals)
+				}
+				d, _ := w.svc.Finding(context.Background(), fs[0].ID)
+				if d.Automation == nil || !strings.Contains(d.Automation.Detail, "unknown_privacy.metadata_recovery") {
+					t.Fatalf("refusal not explained: %+v", d.Automation)
+				}
+				return
+			}
+			if len(stops) != 1 || stops[0] != hashA || len(removals) != 1 || removals[0] != (arr.RemoveFlags{Blocklist: true}) {
+				t.Fatalf("stops %v removals %+v", stops, removals)
+			}
+			acts, _ := w.svc.Actions(context.Background(), 10)
+			if len(acts) != 1 || acts[0].Workflow != string(policy.WorkflowMetadataRecovery) || acts[0].State != store.IntentSucceeded {
+				t.Fatalf("actions %+v", acts)
+			}
+			ret, _ := w.st.RetainedTransfers(context.Background(), false, 0)
+			if len(ret) != 1 || ret[0].WantedBytes == nil || *ret[0].WantedBytes != 0 {
+				t.Fatalf("retained %+v (want zero payload bytes)", ret)
+			}
+		})
+	}
+}
