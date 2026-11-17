@@ -1423,3 +1423,13 @@ func TestPartialPackImportSettlingRestartsAfterObservationGap(t *testing.T) {
 		t.Fatalf("pack was not recovered after renewed settling: %+v", r)
 	}
 }
+
+func TestSearchRefusesAnAlreadyRunningManagerSearch(t *testing.T) {
+	w := searchWorld(t, "automatic")
+	w.mgr.SetMissing(fake.MissingEpisode(102, 1, "Already searched", t0.Add(-time.Hour)))
+	w.mgr.AddCommand(arr.Command{ID: 90, Name: "EpisodeSearch", Status: "started", EpisodeIDs: []int64{102}, Queued: t0})
+	w.runSearches(time.Hour)
+	if s := w.mgr.Searches(); len(s) != 0 {
+		t.Fatalf("duplicated the manager's running command: %v", s)
+	}
+}

@@ -216,6 +216,9 @@ func (s *Service) sendSearch(ctx context.Context, it store.MissingRecord, p *act
 	case store.IntentSucceeded:
 	case store.IntentUncertain:
 		state, note, sev = store.MissingUncertain, "the search request's outcome could not be established; held for review (not re-sent)", domain.SeverityError
+	case store.IntentCancelled:
+		state, note, sev = store.MissingNotSearched, "the search was not sent: "+res.Detail, domain.SeverityNotice
+		next = now.Add(s.cfg.Polling.Interval.Duration)
 	default:
 		state, note, sev = store.MissingNotSearched, "the search was not accepted: "+res.Detail, domain.SeverityWarning
 	}
@@ -224,6 +227,9 @@ func (s *Service) sendSearch(ctx context.Context, it store.MissingRecord, p *act
 			if err := tx.SetMissingSearch(it.ManagerID, it.ContentKey, state, note, &id, &now, &next, false); err != nil {
 				return err
 			}
+		}
+		if res.State == store.IntentCancelled {
+			return nil
 		}
 		return notify.EnqueueEvent(tx, s.cfg.Notify, notify.Event{DedupKey: fmt.Sprintf("search|%d", id), Kind: notify.KindAction, Severity: sev,
 			Title: "Search for missing " + it.Title + ": " + string(res.State), Body: note}, now)

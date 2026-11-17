@@ -86,6 +86,9 @@ func (r *Recovery) searchBaseline(ctx context.Context, st store.Step) (json.RawM
 	}
 	var max int64
 	for _, c := range cmds {
+		if (c.Status == "queued" || c.Status == "started") && searchCovers(c, []string{tg.Key}) {
+			return nil, fmt.Errorf("the manager already has an active search #%d covering %s", c.ID, tg.Key)
+		}
 		if c.ID > max {
 			max = c.ID
 		}
