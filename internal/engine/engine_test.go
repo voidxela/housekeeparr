@@ -882,3 +882,109 @@ func TestReplacementSearchFollowedFromCommandList(t *testing.T) {
 		t.Fatalf("command list still read after the search settled: %v", need)
 	}
 }
+
+// R9: a fresh manager row establishes a grab, never the replacement's
+// progress or completion; those need a complete client listing in the
+// same cycle, so cached (possibly pre-recovery) client facts never count.
+func TestOutcomeProgressRequiresFreshClient(t *testing.T) {
+	const replacement = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	h := newHarness(t, baseConfig)
+	h.client.SetTransfers(fake.Transfer(replacement, "Replacement", domain.StateComplete, 10*gib, 10*gib, t0))
+	h.cycle()
+	h.clock.Advance(time.Minute)
+	if err := h.st.Write(ctx, func(tx *store.Tx) error {
+		return tx.CreateOutcome(store.RecoveryOutcome{IntentID: 31, ManagerID: "sonarr", Content: []string{"episode:101"}, OldDownloadID: hash, StartedAt: h.clock.Now()})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	state := func() store.RecoveryOutcome {
+		t.Helper()
+		m, err := h.st.Outcomes(ctx, []int64{31})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m[31]
+	}
+	h.mgr.SetQueue(fake.Episode(2, replacement, "Replacement", "Example Show", 1, 1))
+	h.client.Fail(&adapter.Error{Class: adapter.ErrTransient, Op: "list", Message: "offline"})
+	h.run(10, 10)
+	if o := state(); o.State != store.OutcomeGrabbed || o.CompletedAt != nil || o.GrabVerified != nil {
+		t.Fatalf("offline client: want a grab only, got %+v", o)
+	}
+	// An incomplete listing is not fresh client evidence either.
+	h.client.Fail(nil)
+	h.client.Partial(true)
+	h.run(10, 10)
+	if o := state(); o.State != store.OutcomeGrabbed || o.CompletedAt != nil {
+		t.Fatalf("incomplete listing: %+v", o)
+	}
+	// A complete listing after the grab establishes completion now.
+	h.client.Partial(false)
+	h.run(10, 10)
+	o := state()
+	if o.State != store.OutcomeCompleted || o.CompletedAt == nil || !o.CompletedAt.After(*o.GrabbedAt) {
+		t.Fatalf("fresh client: %+v", o)
+	}
+}
+
+// R10: the download and search outcomes settle independently; a terminal
+// download keeps its unsettled search followed (or expired within the
+// bounded window) and the command list stops being read once both settle.
+func TestSearchSettlesIndependentlyOfDownload(t *testing.T) {
+	const replacement = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	h := newHarness(t, baseConfig)
+	h.cycle()
+	since := h.clock.Now()
+	if err := h.st.Write(ctx, func(tx *store.Tx) error {
+		if err := tx.CreateOutcome(store.RecoveryOutcome{IntentID: 32, ManagerID: "sonarr", Content: []string{"episode:101"}, OldDownloadID: hash,
+			StartedAt: since, Search: store.SearchOutcome{Since: &since}}); err != nil {
+			return err
+		}
+		// Tracking of this download already expired; its search is new.
+		return tx.CreateOutcome(store.RecoveryOutcome{IntentID: 33, ManagerID: "sonarr", Content: []string{"episode:102"}, OldDownloadID: "dd",
+			StartedAt: since.Add(-8 * 24 * time.Hour), Search: store.SearchOutcome{Since: &since}})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	state := func(id int64) store.RecoveryOutcome {
+		t.Helper()
+		m, err := h.st.Outcomes(ctx, []int64{id})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m[id]
+	}
+	search := arr.Command{ID: 77, Name: "EpisodeSearch", Status: "queued", Trigger: "unspecified", Queued: since, EpisodeIDs: []int64{101}}
+	h.mgr.AddCommand(search)
+	h.mgr.SetQueue(fake.Episode(2, replacement, "Replacement", "Example Show", 1, 1))
+	h.client.SetTransfers(fake.Transfer(replacement, "Replacement", domain.StateComplete, 10*gib, 10*gib, t0))
+	h.run(10, 10)
+	if o := state(32); o.State != store.OutcomeCompleted || o.Search.State != store.SearchAccepted {
+		t.Fatalf("setup: %+v", o)
+	}
+	if o := state(33); o.State != store.OutcomeUntracked || o.Search.State != store.SearchUnobserved {
+		t.Fatalf("setup (expired download): %+v", o)
+	}
+	// Survives a restart and a command-list outage.
+	h.restart(false)
+	h.mgr.SetCommandsError(&adapter.Error{Class: adapter.ErrTransient, Op: "fake", Message: "down"})
+	h.run(10, 10)
+	if o := state(32); o.Search.State != store.SearchAccepted {
+		t.Fatalf("moved on a failed command read: %+v", o.Search)
+	}
+	h.mgr.SetCommandsError(nil)
+	search.Status = "completed"
+	h.mgr.AddCommand(search)
+	h.run(10, 10)
+	if o := state(32); o.Search.State != store.SearchCompleted || o.State != store.OutcomeCompleted {
+		t.Fatalf("search after a completed download: %+v", o)
+	}
+	// The unobserved search of the expired download ends within its window.
+	h.run(70, 10)
+	if o := state(33); o.Search.State != store.SearchNotObserved || o.State != store.OutcomeUntracked {
+		t.Fatalf("search after an expired download: %+v", o)
+	}
+	if need, _ := h.st.ManagersAwaitingSearch(ctx); len(need) != 0 {
+		t.Fatalf("command list still read after both outcomes settled: %v", need)
+	}
+}

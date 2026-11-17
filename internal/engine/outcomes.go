@@ -25,12 +25,18 @@ const (
 // was first seen; completion is that transfer reaching the complete state.
 // The replacement row must have been first seen after the recovery.
 // Only managers whose queue was read completely this cycle are evaluated,
-// so a failed read never moves an outcome. Absence of a grab is reported
+// so a failed read never moves an outcome. Progress and completion further
+// require a complete listing of the replacement's client in this same cycle
+// (freshClients): a fresh grab in the manager says nothing about the
+// client's current progress, and cached client facts may predate the
+// recovery. Absence of a grab is reported
 // as not observed, never as proof that no release exists.
 //
 // The replacement search is followed separately, from the manager's command
-// list when it was read this cycle (see workflow.ObserveSearch).
-func (e *Engine) trackOutcomes(tx *store.Tx, freshManagers map[string]bool, commands map[string][]arr.Command, now time.Time) error {
+// list when it was read this cycle (see workflow.ObserveSearch). The two are
+// independent: a terminal download outcome keeps its search followed (or
+// expired within its bounded window) until that is settled too.
+func (e *Engine) trackOutcomes(tx *store.Tx, freshManagers, freshClients map[string]bool, commands map[string][]arr.Command, now time.Time) error {
 	open, err := tx.OpenOutcomes()
 	if err != nil {
 		return err
@@ -45,6 +51,8 @@ func (e *Engine) trackOutcomes(tx *store.Tx, freshManagers map[string]bool, comm
 			searchChanged = workflow.ExpireSearch(&o, now)
 		}
 		switch {
+		case o.State == store.OutcomeCompleted || o.State == store.OutcomeUntracked:
+			// Download outcome settled; only the search is still followed.
 		case now.Sub(o.StartedAt) > outcomeWindow:
 			o.State = store.OutcomeUntracked
 			o.Note = "tracking ended after " + outcomeWindow.String() + " without an observed completion; check the manager's activity"
@@ -56,7 +64,7 @@ func (e *Engine) trackOutcomes(tx *store.Tx, freshManagers map[string]bool, comm
 				}
 				rowsBy[o.ManagerID] = rows
 			}
-			if err := e.advanceOutcome(tx, &o, rows, now); err != nil {
+			if err := e.advanceOutcome(tx, &o, rows, freshClients, now); err != nil {
 				return err
 			}
 		}
@@ -76,7 +84,7 @@ func (e *Engine) trackOutcomes(tx *store.Tx, freshManagers map[string]bool, comm
 	return nil
 }
 
-func (e *Engine) advanceOutcome(tx *store.Tx, o *store.RecoveryOutcome, rows []store.QueueRecord, now time.Time) error {
+func (e *Engine) advanceOutcome(tx *store.Tx, o *store.RecoveryOutcome, rows []store.QueueRecord, freshClients map[string]bool, now time.Time) error {
 	if o.GrabbedAt == nil {
 		for _, r := range rows {
 			key := r.Latest.ContentRef()
@@ -110,6 +118,14 @@ func (e *Engine) advanceOutcome(tx *store.Tx, o *store.RecoveryOutcome, rows []s
 			return nil
 		}
 	}
+	if !freshClients[o.NewClientID] {
+		// No complete client listing this cycle: keep the last known state
+		// (its CheckedAt shows its age) rather than infer progress from
+		// cached facts.
+		return nil
+	}
+	// A complete listing this cycle marks absent transfers gone, so a present
+	// record is current (unchanged complete rows keep an older last_seen).
 	tr, err := tx.Transfer(o.NewClientID, o.NewNativeID)
 	if err != nil || tr == nil || !tr.Present {
 		return err

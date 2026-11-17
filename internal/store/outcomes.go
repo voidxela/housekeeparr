@@ -157,9 +157,11 @@ func scanOutcomes(rows *sql.Rows) ([]RecoveryOutcome, error) {
 	return out, rows.Err()
 }
 
-// OpenOutcomes returns outcomes still being tracked.
+// OpenOutcomes returns outcomes still being tracked: the download outcome
+// is not terminal, or the replacement search is not yet settled.
 func (t *Tx) OpenOutcomes() ([]RecoveryOutcome, error) {
-	rows, err := t.query("SELECT "+outcomeCols+" FROM recovery_outcomes WHERE state NOT IN (?, ?) ORDER BY intent_id", OutcomeCompleted, OutcomeUntracked)
+	rows, err := t.query("SELECT "+outcomeCols+" FROM recovery_outcomes WHERE state NOT IN (?, ?) OR search_state IN (?, ?, ?) ORDER BY intent_id",
+		OutcomeCompleted, OutcomeUntracked, SearchUnobserved, SearchAccepted, SearchRunning)
 	if err != nil {
 		return nil, err
 	}
@@ -170,8 +172,8 @@ func (t *Tx) OpenOutcomes() ([]RecoveryOutcome, error) {
 // replacement search is not yet settled, so the engine reads their command
 // lists only while that is useful.
 func (s *Store) ManagersAwaitingSearch(ctx context.Context) (map[string]bool, error) {
-	rows, err := s.r.QueryContext(ctx, `SELECT DISTINCT manager_id FROM recovery_outcomes WHERE state NOT IN (?, ?) AND search_state IN (?, ?, ?)`,
-		OutcomeCompleted, OutcomeUntracked, SearchUnobserved, SearchAccepted, SearchRunning)
+	rows, err := s.r.QueryContext(ctx, `SELECT DISTINCT manager_id FROM recovery_outcomes WHERE search_state IN (?, ?, ?)`,
+		SearchUnobserved, SearchAccepted, SearchRunning)
 	if err != nil {
 		return nil, err
 	}

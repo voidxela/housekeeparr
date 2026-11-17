@@ -338,7 +338,7 @@ func (e *Engine) evaluate(tx *store.Tx, results []*fetched, gone map[string][]st
 			commands[f.id] = f.commands
 		}
 	}
-	if err := e.trackOutcomes(tx, freshManagers, commands, now); err != nil {
+	if err := e.trackOutcomes(tx, freshManagers, fresh, commands, now); err != nil {
 		return total, err
 	}
 	// 2. Transfer diagnoses.
