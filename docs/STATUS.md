@@ -42,6 +42,8 @@ implemented.
   enabled tracker's latest failure is recent (≤ 1 h) and newer than its
   latest success (`t.multicall`). See compatibility.md for which passed on
   real instances.
+- **Automatic preserved-data dispatch on a real instance** (production
+  binary, real diagnosis) passed with Sonarr and qBittorrent 5.3.0.
 - **`source_confirm_window`** (default 30 m, proposal) is a diagnostic
   setting, part of the diagnostic revision, replacing the constant.
 - **Notifications** (`[[notify]]`, migration 0014): durable outbox written

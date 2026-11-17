@@ -403,7 +403,17 @@ The private variants (`TestSonarrPrivatePreservedDataFailureWorkflow`,
 announcing to the same rejecting tracker and run under the default
 `private_recovery = "keep_running"`: only `manager.queue.fail` is sent, and
 the torrent stays downloading in the client, recorded as retained
-(`running`). Registered in `action.Tested` for exactly these combinations. Not run: qBittorrent 4.6.7 (whose tracker statuses stop at 4), automatic dispatch of this
+(`running`). **Automatic dispatch** (`TestAutomaticPreservedDataFailure`, production
+`run --once` binary, no supplied diagnosis; a transfer override sets grace
+0 s, `source_confirm_window = "1m"`, 3 observations and enables the
+workflow for that transfer only): on 2026-11-17 at `0107479` with Sonarr
+4.0.20.3014 and qBittorrent 5.3.0 the engine diagnosed
+`source_unregistered` on the fourth cycle and the same pass dispatched one
+action that succeeded; independently, one new `downloadFailed`, the queue
+row gone, the torrent stopped and registered, the payload byte-identical.
+Not run with the other clients or Radarr.
+
+Registered in `action.Tested` for exactly these combinations. Not run: qBittorrent 4.6.7 (whose tracker statuses stop at 4), automatic dispatch beyond the run above of this
 workflow on real instances (fixture-tested), and waiting out the real
 confirmation window.
 
