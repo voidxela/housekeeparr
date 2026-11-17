@@ -427,6 +427,8 @@ it accepts moments later.
 | 2026-11-17 | `2fd75b0`, `--only ProactiveSearch` | Sonarr 4.0.20.3014 + Radarr 6.4.4.10685 (qBittorrent 5.3.0 as download client) | Radarr **passed** (search accepted, release grabbed); Sonarr: search accepted and the indexer queried, but Sonarr reported "0 reports downloaded" right after adding the series |
 | 2026-11-17 | `7d49739`, same plus the preserved-data tests | same | **both passed** (search accepted, release grabbed, nothing re-sent) |
 | 2026-11-17 | `c1b01f8`, `--only ProactiveSearch` (search outcome followed) | same | **both passed**: later passes followed the command to its end and recorded "grabbed" from the managers' own "1 reports downloaded" |
+| 2026-11-17 | `ebdd9ee` (indexer and indexer-status reads added) | same | **both failed**: no sources stored; released Sonarr 4.0.20 answers HTTP 404 for `/api/v3/indexerstatus` (the adapter required it) |
+| 2026-11-17 | `0861bea` (indexer status optional, unknown never healthy) | same | **both passed**: the stand-in indexer is read as an automatic torrent source, no source finding opens, search outcome "grabbed" |
 
 Registered in `action.Tested` for these manager versions (the workflow
 involves no client).
