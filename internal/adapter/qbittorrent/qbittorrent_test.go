@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -20,15 +21,20 @@ const fakePasskey = "0123456789abcdef0123456789abcdef"
 // fakeQBit emulates the qBittorrent WebUI API authentication and read
 // endpoints using fixture bodies.
 type fakeQBit struct {
-	version  string
-	webapi   string
-	torrents []byte
-	user     string
-	pass     string
-	logins   atomic.Int32
-	expireOn atomic.Int32 // reject the session once on this request number
-	reqs     atomic.Int32
-	writes   atomic.Int32 // non-login POSTs (must stay zero)
+	version       string
+	webapi        string
+	torrents      []byte
+	trackers      map[string][]byte // hash -> JSON array; defaults to []
+	trackerStatus map[string]int    // optional per-hash HTTP status override
+	user          string
+	pass          string
+	logins        atomic.Int32
+	expireOn      atomic.Int32 // reject the session once on this request number
+	reqs          atomic.Int32
+	writes        atomic.Int32 // non-login POSTs (must stay zero)
+	trackerReqs   atomic.Int32
+	mu            sync.Mutex
+	trackerHashes []string
 }
 
 func (f *fakeQBit) handler() http.Handler {
@@ -66,6 +72,25 @@ func (f *fakeQBit) handler() http.Handler {
 	mux.HandleFunc("/api/v2/torrents/info", auth(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(f.torrents)
+	}))
+	mux.HandleFunc("/api/v2/torrents/trackers", auth(func(w http.ResponseWriter, r *http.Request) {
+		f.trackerReqs.Add(1)
+		hash := r.URL.Query().Get("hash")
+		f.mu.Lock()
+		f.trackerHashes = append(f.trackerHashes, hash)
+		status := f.trackerStatus[hash]
+		body := f.trackers[hash]
+		f.mu.Unlock()
+		if status != 0 {
+			w.WriteHeader(status)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if body == nil {
+			_, _ = w.Write([]byte("[]"))
+			return
+		}
+		_, _ = w.Write(body)
 	}))
 	return mux
 }

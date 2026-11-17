@@ -202,11 +202,9 @@ func TestRadarrPrivateRecoveryWorkflow(t *testing.T) {
 
 // Preserved-data failure handling (SPEC §7.2): the grab announces to the
 // stand-in's tracker, which rejects every announce as "Unregistered
-// torrent". Where the client's adapter classifies tracker results
-// (Transmission, Deluge, rTorrent), the real adapter must report the rejection and the
-// workflow fails and blocklists the grab and stops the torrent, keeping
-// it and its data. Elsewhere the adapter must report the signal as
-// unsupported, so nothing could ever qualify there.
+// torrent". The real adapter must report the rejection, and the workflow
+// fails and blocklists the grab and stops the torrent, keeping it and its
+// data.
 func TestSonarrPreservedDataFailureWorkflow(t *testing.T) {
 	mm := managedManifest(t)
 	a := arrAPI{t: t, base: env(t, "HK_IT_SONARR_URL"), key: env(t, "HK_IT_SONARR_KEY")}
@@ -276,19 +274,10 @@ func TestRadarrPrivatePreservedDataFailureWorkflow(t *testing.T) {
 	runRecoveryMode(t, a, rc, e, "MoviesSearch", policy.WorkflowPreservedDataFailure, policy.PrivateKeepRunning)
 }
 
-// settleRejected waits until the client reports the tracker's rejection.
-// It returns false (after checking the signal is unsupported, not
-// misreported) for clients whose adapter does not classify tracker results.
+// settleRejected waits until the client reports the tracker's rejection
+// (every adapter classifies tracker results from a structured field).
 func settleRejected(t *testing.T, e managedEntry) bool {
 	t.Helper()
-	if k := managerClientKind(); k != "transmission" && k != "deluge" && k != "rtorrent" {
-		tr, ok := clientState(t, e.Hash)
-		if !ok || tr.SourceFailure.Status != domain.Unsupported {
-			t.Fatalf("%s: tracker results must be unsupported on %s, got %+v", e.Key, managerClientKind(), tr.SourceFailure)
-		}
-		t.Logf("%s: %s does not classify tracker results (%s); preserved-data handling cannot qualify there", e.Key, managerClientKind(), tr.SourceFailure.Note)
-		return false
-	}
 	deadline := time.Now().Add(120 * time.Second)
 	var last domain.Transfer
 	for time.Now().Before(deadline) {

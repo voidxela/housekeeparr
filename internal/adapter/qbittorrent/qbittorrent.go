@@ -29,6 +29,11 @@ import (
 // metadata report 0 (observed on 5.3.0), so the adapter treats those as unknown.
 const AvailabilityMeaning = "qBittorrent availability is libtorrent's distributed-copies figure: it covers this client and currently connected peers only, not the whole swarm."
 
+// maxTrackerReads bounds the per-torrent /api/v2/torrents/trackers requests
+// issued during one ListTransfers snapshot so large queues do not generate
+// unbounded API traffic.
+const maxTrackerReads = 25
+
 // Options configure the adapter.
 type Options struct {
 	ID       string
@@ -292,14 +297,82 @@ func (c *Client) ListTransfers(ctx context.Context) (domain.TransferSnapshot, er
 	c.mu.Unlock()
 	snap := domain.TransferSnapshot{ClientID: c.id, CollectedAt: collected, Complete: true}
 	snap.Transfers = make([]domain.Transfer, 0, len(raw))
+	trackerReads := 0
 	for i := range raw {
 		t, err := normalize(c.id, &raw[i], v)
 		if err != nil {
 			return domain.TransferSnapshot{}, httpx.Malformed("qbittorrent.torrents_info", err)
 		}
+		if t.StateClass != domain.StateDownloading {
+			t.SourceFailure = domain.UnknownValue[domain.SourceFailure]("tracker results are read only for active downloads")
+		} else if trackerReads >= maxTrackerReads {
+			t.SourceFailure = domain.UnknownValue[domain.SourceFailure](fmt.Sprintf("tracker results not read this cycle (bounded to %d per listing)", maxTrackerReads))
+		} else {
+			trackerReads++
+			t.SourceFailure = c.readSourceFailure(ctx, t.NativeID)
+		}
 		snap.Transfers = append(snap.Transfers, t)
 	}
 	return snap, nil
+}
+
+// trackerEntry mirrors the fields read from /api/v2/torrents/trackers.
+// URL is checked only to ignore pseudo-trackers ("** [DHT] **", etc.) and
+// is never stored, logged, or returned in notes/errors because it carries
+// passkeys.
+type trackerEntry struct {
+	URL    string `json:"url"`
+	Status int    `json:"status"`
+	Msg    string `json:"msg"`
+}
+
+func (c *Client) readSourceFailure(ctx context.Context, hash string) domain.Signal[domain.SourceFailure] {
+	body, err := c.get(ctx, "qbittorrent.torrents_trackers", "/api/v2/torrents/trackers", url.Values{"hash": {hash}})
+	if err != nil {
+		return domain.UnknownValue[domain.SourceFailure]("tracker list could not be read: " + string(adapter.ClassOf(err)))
+	}
+	var list *[]trackerEntry
+	dec := json.NewDecoder(bytes.NewReader(body))
+	if err := dec.Decode(&list); err != nil {
+		err = httpx.Malformed("qbittorrent.torrents_trackers", err)
+		return domain.UnknownValue[domain.SourceFailure]("tracker list could not be read: " + string(adapter.ClassOf(err)))
+	}
+	if list == nil {
+		err = httpx.Malformed("qbittorrent.torrents_trackers", fmt.Errorf("tracker list is null"))
+		return domain.UnknownValue[domain.SourceFailure]("tracker list could not be read: " + string(adapter.ClassOf(err)))
+	}
+	return classifyTrackers(*list)
+}
+
+func classifyTrackers(entries []trackerEntry) domain.Signal[domain.SourceFailure] {
+	realCount := 0
+	hasErrMsg := false
+	allUnregistered := true
+	for _, e := range entries {
+		if strings.HasPrefix(e.URL, "** [") {
+			continue
+		}
+		realCount++
+		if e.Status == 2 {
+			return domain.KnownValue(domain.SourceNoFailure)
+		}
+		if e.Status == 4 && strings.TrimSpace(e.Msg) != "" {
+			hasErrMsg = true
+			if domain.ClassifyTrackerError(e.Msg) != domain.SourceUnregistered {
+				allUnregistered = false
+			}
+		}
+	}
+	if realCount == 0 {
+		return domain.KnownValue(domain.SourceNoFailure)
+	}
+	if hasErrMsg {
+		if allUnregistered {
+			return domain.KnownValue(domain.SourceUnregistered)
+		}
+		return domain.KnownValue(domain.SourceTrackerError)
+	}
+	return domain.UnknownValue[domain.SourceFailure]("no tracker has answered yet")
 }
 
 // stateClass maps qBittorrent 4.x and 5.x state strings.
@@ -420,7 +493,11 @@ func normalize(clientID string, r *torrent, v version) (domain.Transfer, error) 
 		t.Private = domain.KnownValue(p)
 	}
 	t.ClientMessage = domain.UnsupportedValue[string]("qBittorrent does not report error details in the torrent list")
-	t.SourceFailure = domain.UnsupportedValue[domain.SourceFailure]("tracker results are not read from qBittorrent yet")
+	if class != domain.StateDownloading {
+		t.SourceFailure = domain.UnknownValue[domain.SourceFailure]("tracker results are read only for active downloads")
+	} else {
+		t.SourceFailure = domain.UnknownValue[domain.SourceFailure]("tracker results not read yet")
+	}
 	return t, nil
 }
 
