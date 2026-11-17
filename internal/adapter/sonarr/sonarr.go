@@ -202,3 +202,69 @@ func (c *Client) Content(ctx context.Context, key string) (arr.Content, error) {
 	}
 	return out, nil
 }
+
+type missingRecord struct {
+	ID            *int64  `json:"id"`
+	SeriesID      int64   `json:"seriesId"`
+	SeasonNumber  int     `json:"seasonNumber"`
+	EpisodeNumber int     `json:"episodeNumber"`
+	Title         string  `json:"title"`
+	AirDateUtc    *string `json:"airDateUtc"`
+	Monitored     *bool   `json:"monitored"`
+	HasFile       bool    `json:"hasFile"`
+	Series        *struct {
+		Title string `json:"title"`
+	} `json:"series"`
+}
+
+func normalizeMissing(raw json.RawMessage, now time.Time) (domain.MissingItem, error) {
+	var r missingRecord
+	if err := json.Unmarshal(raw, &r); err != nil {
+		return domain.MissingItem{}, err
+	}
+	if r.ID == nil || *r.ID <= 0 || r.Monitored == nil {
+		return domain.MissingItem{}, fmt.Errorf("missing episode record without valid id or monitored")
+	}
+	if r.HasFile {
+		return domain.MissingItem{}, nil
+	}
+	title := r.Title
+	if r.Series != nil && r.Series.Title != "" {
+		title = fmt.Sprintf("%s S%02dE%02d", r.Series.Title, r.SeasonNumber, r.EpisodeNumber)
+	}
+	avail := domain.UnknownValue[bool]("air date not reported")
+	var airedAt *time.Time
+	if r.AirDateUtc != nil && *r.AirDateUtc != "" {
+		if t, err := time.Parse(time.RFC3339, *r.AirDateUtc); err == nil {
+			utc := t.UTC()
+			airedAt = &utc
+			avail = domain.KnownValue(!utc.After(now))
+		}
+	}
+	return domain.MissingItem{
+		ContentKind: "episode",
+		ContentID:   *r.ID,
+		SeriesID:    r.SeriesID,
+		Season:      r.SeasonNumber,
+		Episode:     r.EpisodeNumber,
+		Title:       title,
+		Monitored:   *r.Monitored,
+		AiredAt:     airedAt,
+		Available:   avail,
+	}, nil
+}
+
+// Missing reads monitored, missing episodes (most recently aired first), up
+// to maxItems (or the configured page limit when maxItems <= 0).
+func (c *Client) Missing(ctx context.Context, maxItems int) (domain.MissingSnapshot, error) {
+	now := time.Now().UTC()
+	q := url.Values{"sortKey": {"episodes.airDateUtc"}, "sortDirection": {"descending"}, "includeSeries": {"true"}}
+	return c.api.Missing(ctx, c.id, q, maxItems, func(raw json.RawMessage) (domain.MissingItem, error) {
+		return normalizeMissing(raw, now)
+	})
+}
+
+// SearchEpisodes triggers a Sonarr EpisodeSearch command for 1 to 10 episode IDs.
+func (c *Client) SearchEpisodes(ctx context.Context, episodeIDs []int64) (int64, error) {
+	return c.api.Search(ctx, "EpisodeSearch", "episodeIds", episodeIDs)
+}

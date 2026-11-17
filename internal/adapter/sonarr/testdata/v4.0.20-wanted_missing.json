@@ -1,0 +1,97 @@
+{
+ "page": 1,
+ "pageSize": 200,
+ "sortKey": "episodes.airDateUtc",
+ "sortDirection": "descending",
+ "totalRecords": 5,
+ "records": [
+  {
+   "seriesId": 12,
+   "tvdbId": 999105,
+   "episodeFileId": 0,
+   "seasonNumber": 1,
+   "episodeNumber": 5,
+   "title": "Future Episode",
+   "airDate": "2099-01-15",
+   "airDateUtc": "2099-01-15T20:00:00Z",
+   "hasFile": false,
+   "monitored": true,
+   "series": {
+    "title": "Example Show",
+    "sortTitle": "example show",
+    "id": 12,
+    "tvdbId": 999001
+   },
+   "id": 501
+  },
+  {
+   "seriesId": 12,
+   "tvdbId": 999104,
+   "episodeFileId": 0,
+   "seasonNumber": 1,
+   "episodeNumber": 4,
+   "title": "Aired Episode",
+   "airDate": "2024-06-01",
+   "airDateUtc": "2024-06-01T20:00:00Z",
+   "hasFile": false,
+   "monitored": true,
+   "series": {
+    "title": "Example Show",
+    "sortTitle": "example show",
+    "id": 12,
+    "tvdbId": 999001
+   },
+   "id": 502
+  },
+  {
+   "seriesId": 12,
+   "tvdbId": 999103,
+   "episodeFileId": 77,
+   "seasonNumber": 1,
+   "episodeNumber": 3,
+   "title": "Already Imported",
+   "airDate": "2024-05-25",
+   "airDateUtc": "2024-05-25T20:00:00Z",
+   "hasFile": true,
+   "monitored": true,
+   "series": {
+    "title": "Example Show",
+    "sortTitle": "example show",
+    "id": 12,
+    "tvdbId": 999001
+   },
+   "id": 503
+  },
+  {
+   "seriesId": 13,
+   "tvdbId": 999201,
+   "episodeFileId": 0,
+   "seasonNumber": 2,
+   "episodeNumber": 1,
+   "title": "Undated Standalone Title",
+   "airDateUtc": null,
+   "hasFile": false,
+   "monitored": true,
+   "id": 504
+  },
+  {
+   "seriesId": 14,
+   "tvdbId": 999301,
+   "episodeFileId": 0,
+   "seasonNumber": 1,
+   "episodeNumber": 12,
+   "title": "Pilot",
+   "airDate": "2023-01-01",
+   "airDateUtc": "2023-01-01T00:00:00Z",
+   "hasFile": false,
+   "monitored": true,
+   "series": {
+    "title": "Another Show",
+    "sortTitle": "another show",
+    "id": 14,
+    "tvdbId": 999002
+   },
+   "id": 505
+  }
+ ]
+}

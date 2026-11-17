@@ -1,0 +1,59 @@
+{
+ "page": 1,
+ "pageSize": 200,
+ "sortKey": "movieMetadata.sortTitle",
+ "sortDirection": "ascending",
+ "totalRecords": 4,
+ "records": [
+  {
+   "title": "Example Film A",
+   "sortTitle": "example film a",
+   "year": 2024,
+   "monitored": true,
+   "hasFile": false,
+   "isAvailable": true,
+   "minimumAvailability": "released",
+   "inCinemas": "2024-03-01T00:00:00Z",
+   "digitalRelease": "2024-05-15T00:00:00Z",
+   "physicalRelease": "2024-06-01T00:00:00Z",
+   "tmdbId": 900101,
+   "id": 601
+  },
+  {
+   "title": "Example Film B",
+   "sortTitle": "example film b",
+   "year": 2025,
+   "monitored": true,
+   "hasFile": false,
+   "isAvailable": false,
+   "minimumAvailability": "released",
+   "inCinemas": "2025-11-01T00:00:00Z",
+   "digitalRelease": "2025-10-01T00:00:00Z",
+   "physicalRelease": null,
+   "tmdbId": 900102,
+   "id": 602
+  },
+  {
+   "title": "Example Film C",
+   "sortTitle": "example film c",
+   "year": 2023,
+   "monitored": true,
+   "hasFile": true,
+   "isAvailable": true,
+   "minimumAvailability": "released",
+   "inCinemas": "2023-02-01T00:00:00Z",
+   "tmdbId": 900103,
+   "id": 603
+  },
+  {
+   "title": "Example Film D",
+   "sortTitle": "example film d",
+   "year": 2026,
+   "monitored": true,
+   "hasFile": false,
+   "minimumAvailability": "tba",
+   "tmdbId": 900104,
+   "id": 604
+  }
+ ]
+}

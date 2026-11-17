@@ -166,3 +166,69 @@ func (c *Client) Content(ctx context.Context, key string) (arr.Content, error) {
 	}
 	return out, nil
 }
+
+type missingRecord struct {
+	ID                  *int64  `json:"id"`
+	Title               string  `json:"title"`
+	Year                int     `json:"year"`
+	Monitored           *bool   `json:"monitored"`
+	HasFile             bool    `json:"hasFile"`
+	IsAvailable         *bool   `json:"isAvailable"`
+	MinimumAvailability string  `json:"minimumAvailability"`
+	InCinemas           *string `json:"inCinemas"`
+	DigitalRelease      *string `json:"digitalRelease"`
+	PhysicalRelease     *string `json:"physicalRelease"`
+}
+
+func normalizeMissing(raw json.RawMessage) (domain.MissingItem, error) {
+	var r missingRecord
+	if err := json.Unmarshal(raw, &r); err != nil {
+		return domain.MissingItem{}, err
+	}
+	if r.ID == nil || *r.ID <= 0 || r.Monitored == nil {
+		return domain.MissingItem{}, fmt.Errorf("missing movie record without valid id or monitored")
+	}
+	if r.HasFile {
+		return domain.MissingItem{}, nil
+	}
+	title := r.Title
+	if r.Year > 0 {
+		title = fmt.Sprintf("%s (%d)", r.Title, r.Year)
+	}
+	avail := domain.UnknownValue[bool]("availability not reported")
+	if r.IsAvailable != nil {
+		avail = domain.KnownValue(*r.IsAvailable)
+	}
+	var airedAt *time.Time
+	for _, rawDate := range []*string{r.DigitalRelease, r.PhysicalRelease, r.InCinemas} {
+		if rawDate == nil || *rawDate == "" {
+			continue
+		}
+		if t, err := time.Parse(time.RFC3339, *rawDate); err == nil {
+			utc := t.UTC()
+			if airedAt == nil || utc.Before(*airedAt) {
+				airedAt = &utc
+			}
+		}
+	}
+	return domain.MissingItem{
+		ContentKind: "movie",
+		ContentID:   *r.ID,
+		Title:       title,
+		Monitored:   *r.Monitored,
+		AiredAt:     airedAt,
+		Available:   avail,
+	}, nil
+}
+
+// Missing reads monitored, missing movies up to maxItems (or the configured
+// page limit when maxItems <= 0).
+func (c *Client) Missing(ctx context.Context, maxItems int) (domain.MissingSnapshot, error) {
+	q := url.Values{"sortKey": {"movieMetadata.sortTitle"}, "sortDirection": {"ascending"}}
+	return c.api.Missing(ctx, c.id, q, maxItems, normalizeMissing)
+}
+
+// SearchMovies triggers a Radarr MoviesSearch command for 1 to 10 movie IDs.
+func (c *Client) SearchMovies(ctx context.Context, movieIDs []int64) (int64, error) {
+	return c.api.Search(ctx, "MoviesSearch", "movieIds", movieIDs)
+}

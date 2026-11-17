@@ -5,6 +5,7 @@
 package arr
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -122,13 +123,17 @@ type page struct {
 }
 
 func (pg *page) validate() error {
+	return pg.validateFor("queue")
+}
+
+func (pg *page) validateFor(kind string) error {
 	switch {
 	case pg.TotalRecords == nil:
-		return fmt.Errorf("queue page has no totalRecords")
+		return fmt.Errorf("%s page has no totalRecords", kind)
 	case *pg.TotalRecords < 0:
-		return fmt.Errorf("queue page reports negative totalRecords %d", *pg.TotalRecords)
+		return fmt.Errorf("%s page reports negative totalRecords %d", kind, *pg.TotalRecords)
 	case pg.Records == nil:
-		return fmt.Errorf("queue page has no records list")
+		return fmt.Errorf("%s page has no records list", kind)
 	}
 	return nil
 }
@@ -204,6 +209,86 @@ func (c *Client) Queue(ctx context.Context, managerID string, extra url.Values, 
 		incomplete(fmt.Sprintf("The queue reported %d rows but returned %d; absent rows are not treated as removed this cycle.", total, rows))
 	}
 	snap.TotalRecords = total
+	return snap, nil
+}
+
+// Missing reads monitored, missing items from /api/v3/wanted/missing within
+// configured pagination bounds and maxItems (when maxItems > 0). Missing or
+// null envelope fields are malformed responses. If normalize returns a zero
+// ContentID with nil error, that record is skipped (for example when hasFile is
+// true) while still counting toward totalRecords. Complete is true only when
+// all reported records were read, totalRecords did not change between pages,
+// and no record ID repeated.
+func (c *Client) Missing(ctx context.Context, managerID string, extra url.Values, maxItems int, normalize func(json.RawMessage) (domain.MissingItem, error)) (domain.MissingSnapshot, error) {
+	op := c.app + ".missing"
+	snap := domain.MissingSnapshot{ManagerID: managerID, Complete: true}
+	seen := map[int64]bool{}
+	total, rows := -1, 0
+	truncated := false
+	for p := 1; p <= c.MaxPages; p++ {
+		q := url.Values{
+			"page":          {strconv.Itoa(p)},
+			"pageSize":      {strconv.Itoa(c.PageSize)},
+			"sortKey":       {"id"},
+			"sortDirection": {"ascending"},
+			"monitored":     {"true"},
+		}
+		for k, v := range extra {
+			q[k] = v
+		}
+		var pg page
+		if err := c.Get(ctx, "missing", "/api/v3/wanted/missing", q, &pg); err != nil {
+			return domain.MissingSnapshot{}, err
+		}
+		if err := pg.validateFor("missing"); err != nil {
+			return domain.MissingSnapshot{}, httpx.Malformed(op, err)
+		}
+		if p == 1 {
+			snap.CollectedAt = time.Now().UTC()
+			total = *pg.TotalRecords
+		} else if *pg.TotalRecords != total {
+			snap.Complete = false
+		}
+		records := *pg.Records
+		for _, raw := range records {
+			if maxItems > 0 && len(snap.Items) >= maxItems {
+				truncated = true
+				break
+			}
+			rows++
+			var id struct {
+				ID *int64 `json:"id"`
+			}
+			if err := json.Unmarshal(raw, &id); err != nil || id.ID == nil || *id.ID <= 0 {
+				return domain.MissingSnapshot{}, httpx.Malformed(op, fmt.Errorf("missing record without a valid id"))
+			}
+			if seen[*id.ID] {
+				snap.Complete = false
+				continue
+			}
+			seen[*id.ID] = true
+			it, err := normalize(raw)
+			if err != nil {
+				return domain.MissingSnapshot{}, httpx.Malformed(op, err)
+			}
+			if it.ContentID == 0 {
+				continue
+			}
+			it.ManagerID = managerID
+			snap.Items = append(snap.Items, it)
+		}
+		if truncated || len(records) < c.PageSize || rows >= total {
+			break
+		}
+		if (maxItems > 0 && len(snap.Items) >= maxItems) || p == c.MaxPages {
+			truncated = true
+			break
+		}
+	}
+	if truncated || rows != total {
+		snap.Complete = false
+	}
+	snap.Total = total
 	return snap, nil
 }
 
@@ -534,6 +619,56 @@ func (c *Client) Commands(ctx context.Context) ([]Command, error) {
 			Queued: *r.Queued, Started: r.Started, Ended: r.Ended, EpisodeIDs: r.Body.EpisodeIDs, MovieIDs: r.Body.MovieIDs})
 	}
 	return out, nil
+}
+
+// Search dispatches a search command (POST /api/v3/command) with body
+// {"name": name, idsField: ids} for 1 to 10 positive IDs. A timeout is
+// classified as an uncertain outcome (Write: true).
+func (c *Client) Search(ctx context.Context, name string, idsField string, ids []int64) (int64, error) {
+	op := c.app + ".search"
+	if name == "" || idsField == "" {
+		return 0, &adapter.Error{Class: adapter.ErrPermanent, Op: op, Message: "search requires command name and id field"}
+	}
+	if len(ids) == 0 {
+		return 0, &adapter.Error{Class: adapter.ErrPermanent, Op: op, Message: "search requires at least one id"}
+	}
+	if len(ids) > 10 {
+		return 0, &adapter.Error{Class: adapter.ErrPermanent, Op: op, Message: fmt.Sprintf("search accepts at most 10 ids, got %d", len(ids))}
+	}
+	for _, id := range ids {
+		if id <= 0 {
+			return 0, &adapter.Error{Class: adapter.ErrPermanent, Op: op, Message: "search id must be positive"}
+		}
+	}
+	payload, err := json.Marshal(map[string]any{"name": name, idsField: ids})
+	if err != nil {
+		return 0, &adapter.Error{Class: adapter.ErrPermanent, Op: op, Message: "could not encode search command", Err: err}
+	}
+	resp, err := c.http.Do(ctx, httpx.Request{
+		Op:     op,
+		Method: http.MethodPost,
+		Path:   "/api/v3/command",
+		Header: http.Header{"X-Api-Key": {c.apiKey}, "Content-Type": {"application/json"}},
+		Body:   bytes.NewReader(payload),
+		Write:  true,
+	})
+	if err != nil {
+		return 0, err
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "" && !strings.Contains(ct, "json") {
+		return 0, &adapter.Error{Class: adapter.ErrPermanent, Op: op,
+			Message: fmt.Sprintf("expected JSON but received %q (wrong base path or an authentication proxy?)", ct)}
+	}
+	var out struct {
+		ID *int64 `json:"id"`
+	}
+	if err := json.Unmarshal(resp.Body, &out); err != nil {
+		return 0, httpx.Malformed(op, err)
+	}
+	if out.ID == nil || *out.ID <= 0 {
+		return 0, httpx.Malformed(op, fmt.Errorf("command response missing positive id"))
+	}
+	return *out.ID, nil
 }
 
 // Content is the live state of one managed episode or movie.
