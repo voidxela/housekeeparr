@@ -376,6 +376,9 @@ func (s *Service) previewPack(ctx context.Context, f *domain.Finding, origin act
 		if c.ID == f.Subject.ManagerID {
 			in.ManagerKind, in.ManagerProbe = adapter.Kind(c.Kind), c.Probe
 		}
+		if f.Subject.ClientID != "" && c.ID == f.Subject.ClientID {
+			in.ClientKind, in.ClientProbe = adapter.Kind(c.Kind), c.Probe
+		}
 	}
 	pauses, err := s.st.WorkflowPauses(ctx)
 	if err != nil {

@@ -53,13 +53,18 @@ type PackEvidence struct {
 
 // PackPlanInput is everything PlanPack needs, read from local state.
 type PackPlanInput struct {
-	Finding        domain.Finding
-	Rows           []store.QueueRecord // present rows of the download
-	Policy         policy.Effective
-	Scope          policy.Subject
-	Origin         Origin
-	ManagerKind    adapter.Kind
-	ManagerProbe   *adapter.Probe
+	Finding      domain.Finding
+	Rows         []store.QueueRecord // present rows of the download
+	Policy       policy.Effective
+	Scope        policy.Subject
+	Origin       Origin
+	ManagerKind  adapter.Kind
+	ManagerProbe *adapter.Probe
+	// ClientKind/ClientProbe: the download client holding the pack; how a
+	// manager imports from it differs by client, so registration is per
+	// exact manager and client versions.
+	ClientKind     adapter.Kind
+	ClientProbe    *adapter.Probe
 	Locks          map[string]int64
 	Cooldowns      map[string]store.CooldownRecord
 	Paused         *store.WorkflowPause
@@ -88,12 +93,13 @@ func PlanPack(in PackPlanInput) *Proposal {
 	add := func(name string, ok bool, detail string) {
 		p.Prerequisites = append(p.Prerequisites, Check{Name: name, Satisfied: ok, Hard: true, Detail: detail})
 	}
-	mv := probeVersion(in.ManagerProbe)
+	mv, cv := probeVersion(in.ManagerProbe), probeVersion(in.ClientProbe)
 	tested := false
 	for _, tw := range in.Tested {
-		tested = tested || tw.Workflow == wf && tw.Manager == in.ManagerKind && tw.ManagerVersion == mv
+		tested = tested || tw.Workflow == wf && tw.Manager == in.ManagerKind && tw.ManagerVersion == mv && tw.Client == in.ClientKind && tw.ClientVersion == cv
 	}
-	combo := nonEmpty(string(in.ManagerKind), "an unknown manager") + " " + nonEmpty(mv, "(version unknown)")
+	combo := fmt.Sprintf("%s %s with %s %s", nonEmpty(string(in.ManagerKind), "an unknown manager"), nonEmpty(mv, "(version unknown)"),
+		nonEmpty(string(in.ClientKind), "an unknown client"), nonEmpty(cv, "(version unknown)"))
 	if tested {
 		add("tested write workflow", true, "partial-pack clearance passed disposable-instance tests for "+combo)
 	} else {

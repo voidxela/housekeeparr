@@ -56,6 +56,9 @@ var Tested = []TestedWorkflow{
 	// (docs/compatibility.md, "Preserved-data failure runs").
 	{Workflow: policy.WorkflowPreservedDataFailure, Manager: adapter.KindSonarr, ManagerVersion: "4.0.20.3014", Client: adapter.KindQBittorrent, ClientVersion: "5.3.0"},
 	{Workflow: policy.WorkflowPreservedDataFailure, Manager: adapter.KindRadarr, ManagerVersion: "6.4.4.10685", Client: adapter.KindQBittorrent, ClientVersion: "5.3.0"},
+	// Partial-pack clearance (docs/compatibility.md, "Partial season-pack
+	// probe" and its workflow run).
+	{Workflow: policy.WorkflowPartialPack, Manager: adapter.KindSonarr, ManagerVersion: "4.0.20.3014", Client: adapter.KindQBittorrent, ClientVersion: "5.3.0"},
 	// Proactive missing searches involve no client (docs/compatibility.md,
 	// "Proactive search runs").
 	{Workflow: policy.WorkflowMissingSearch, Manager: adapter.KindSonarr, ManagerVersion: "4.0.20.3014"},

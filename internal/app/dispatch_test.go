@@ -1145,7 +1145,8 @@ const packRule = "\n[[rule]]\nname = \"packs\"\npriority = 1\n[rule.automation]\
 // E02 imported from it (history and files), E03 neither.
 func packWorld(t *testing.T, mutate func(w *world, rows []domain.QueueItem) []domain.QueueItem) *world {
 	w := newWorldWith(t, "automatic", 20, packRule)
-	action.Tested = append(action.Tested, action.TestedWorkflow{Workflow: policy.WorkflowPartialPack, Manager: adapter.KindSonarr, ManagerVersion: "0.0.0-fake"})
+	action.Tested = append(action.Tested, action.TestedWorkflow{Workflow: policy.WorkflowPartialPack, Manager: adapter.KindSonarr, ManagerVersion: "0.0.0-fake",
+		Client: adapter.KindQBittorrent, ClientVersion: "0.0.0-fake"})
 	w.client.SetTransfers(fake.Transfer(hashA, "Show.S02", domain.StateComplete, 4*gib, 4*gib, t0))
 	var rows []domain.QueueItem
 	for i, ep := range []int64{1, 2, 3} {

@@ -471,6 +471,17 @@ downloaded, as Matroska files ffprobe reads as 25-minute h264 + AC-3
   and complete, its payload byte-identical; the two library files and the
   episodes' files were unchanged.
 
+**Workflow run** (`TestSonarrPartialPackWorkflow`, 2026-11-17 at `429de60`,
+Sonarr 4.0.20.3014 + qBittorrent 5.3.0): the same setup, then Housekeeparr's
+production path in-process with `import_settle = "1m"`: the engine raised
+`import.partial_pack`, automatic dispatch planned it, the live check found
+E01/E02 imported (history and files) and E03 missing, and the ignore-path
+removal succeeded on the fourth cycle (every step verified). Independently:
+rows gone at once and after `RefreshMonitoredDownloads`, three
+`downloadIgnored` records, the torrent complete with its payload
+byte-identical, the two library files unchanged. **Passed**; registered for
+exactly this manager and client.
+
 Not established yet: other clients, Sonarr restart durability of the
 ignore, and the behaviour after E03 is later grabbed separately.
 
@@ -525,7 +536,7 @@ exercised.
 
 | Application | Floor | Source evidence | Transport | Observation | No-progress recovery | Metadata recovery | Preserved-data failure handling | Partial-pack handling |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Sonarr | 4.0 | `v4.0.20.3014` | HTTP API v3, API key header | **tested: 4.0.20.3014**; others contract-tested | **tested: 4.0.20.3014 with qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8** (manual and automatic dispatch) | **tested with qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8** (manual path; automatic fixture-tested) | **tested with all four clients** (qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8; tracker "unregistered" rejection only; manual path) | not implemented |
+| Sonarr | 4.0 | `v4.0.20.3014` | HTTP API v3, API key header | **tested: 4.0.20.3014**; others contract-tested | **tested: 4.0.20.3014 with qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8** (manual and automatic dispatch) | **tested with qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8** (manual path; automatic fixture-tested) | **tested with all four clients** (qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8; tracker "unregistered" rejection only; manual path) | **tested with qBittorrent 5.3.0** (clearance only; targeted searches not yet part of the workflow) |
 | Radarr | 5.0 | `v6.4.4.10685` | HTTP API v3, API key header | **tested: 6.4.4.10685**; others contract-tested | **tested: 6.4.4.10685 with qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8** (manual and automatic dispatch) | **tested with qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8** (manual path; automatic fixture-tested) | **tested with all four clients** (qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8; tracker "unregistered" rejection only; manual path) | n/a (Sonarr-specific in v1) |
 | qBittorrent | 4.1 (WebUI API v2) | `release-4.6.7`, `release-5.3.0` | WebUI API v2, session cookie | **tested: 5.3.0, 4.6.7**; others contract-tested | **tested: 5.3.0** with Sonarr/Radarr above; 4.x not registered (privacy unknown: would be treated as private; untested) | **tested: 5.3.0** with Sonarr/Radarr above | **tested: 5.3.0** with Sonarr/Radarr above (`torrents/trackers`, status 5 "tracker error"); 4.x not run | — |
 | Transmission | 2.80 (RPC 15) | `4.0.6`, `4.1.4` | legacy RPC (deprecated in 4.1, still supported throughout 4.x), session-id handshake, optional basic auth | **tested: 4.0.6, 4.1.4**; others contract-tested | **tested: 4.0.6, 4.1.4** with Sonarr/Radarr above (`torrent-stop`, legacy RPC) | **tested: 4.0.6, 4.1.4** with Sonarr/Radarr above | **tested: 4.0.6, 4.1.4** with Sonarr/Radarr above (`error = 2` tracker rejection) | — |

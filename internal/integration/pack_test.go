@@ -293,7 +293,14 @@ func clearPack(t *testing.T, sid int, e managedEntry) {
 				if c.ID == "sonarr" && c.Probe != nil {
 					mp = c.Probe
 					// What this test establishes, for exactly this version.
-					action.Tested = []action.TestedWorkflow{{Workflow: policy.WorkflowPartialPack, Manager: adapter.KindSonarr, ManagerVersion: strings.TrimPrefix(mp.Version, "v")}}
+					var cv string
+					for _, c2 := range recs {
+						if c2.Kind == managerClientKind() && c2.Probe != nil {
+							cv = strings.TrimPrefix(c2.Probe.Version, "v")
+						}
+					}
+					action.Tested = []action.TestedWorkflow{{Workflow: policy.WorkflowPartialPack, Manager: adapter.KindSonarr, ManagerVersion: strings.TrimPrefix(mp.Version, "v"),
+						Client: adapter.Kind(managerClientKind()), ClientVersion: cv}}
 				}
 			}
 		}
