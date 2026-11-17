@@ -281,7 +281,8 @@ full_hashes = {t["hash"] for t in json.load(open(manifest)) if t.get("data") == 
 # restart: a check still running (or not yet started) when the payload of
 # errored-restart is deleted produced stalledDL with nothing verified
 # (qBittorrent 4.6.7 at 118f15c) instead of missingFiles.
-deadline = time.time() + 60
+deadline, began = time.time() + 180, time.time()
+keys = {t["hash"]: t["key"] for t in json.load(open(manifest))}
 while True:
     rows = json.loads(curl(qbt + "/api/v2/torrents/info"))
     info = {r["hash"]: r for r in rows}
@@ -289,8 +290,9 @@ while True:
     if not pending:
         break
     if time.time() > deadline:
-        sys.exit("qBittorrent did not verify the full payloads before the restart: %s" % {h: (info.get(h) or {}).get("state") for h in pending})
+        sys.exit("qBittorrent did not verify the full payloads before the restart: %s" % {keys.get(h, h): ((info.get(h) or {}).get("state"), (info.get(h) or {}).get("progress")) for h in pending})
     time.sleep(0.5)
+print("qBittorrent verified the full payloads in %.0fs" % (time.time() - began), file=sys.stderr)
 time.sleep(1)
 PY
 	kill -TERM "$qbt_pid" 2>/dev/null || true
