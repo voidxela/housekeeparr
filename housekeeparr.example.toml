@@ -161,8 +161,10 @@ format = "text"  # text, json
 
 # Notifications (optional). Each target is a webhook; its URL is a secret
 # reference because webhook URLs usually embed tokens. Events: a finding
-# opened (several at once become one digest), and the resolution of one
-# whose opening was delivered. Delivery is rate-limited per target with a
+# opened (several at once become one digest), the resolution of one whose
+# opening was delivered, each automatic action's outcome (notice when it
+# succeeded, error when it needs review), exhausted replacement attempts,
+# and recovery stopped at the retained-data ceiling (once a day). Delivery is rate-limited per target with a
 # persisted hourly count; failed deliveries back off and are dropped after
 # 8 attempts or a day. `housekeeparr notifications` shows what was sent.
 # [[notify]]

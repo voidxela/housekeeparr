@@ -26,9 +26,11 @@ import (
 
 // Event kinds.
 const (
-	KindOpened   = "finding.opened"
-	KindResolved = "finding.resolved"
-	KindDigest   = "findings.digest"
+	KindOpened    = "finding.opened"
+	KindResolved  = "finding.resolved"
+	KindDigest    = "findings.digest"
+	KindAction    = "action.outcome"       // an automatic action finished or needs review
+	KindAttention = "automation.attention" // automation is stopped for a reason the user must resolve
 )
 
 // Bounds. These are implementation proposals, not validated defaults.
@@ -258,4 +260,35 @@ func headerSafe(s string) string {
 		return r
 	}, s)
 	return redact.Truncate(s, 200)
+}
+
+// Event is a notification not tied to a finding change: an automatic
+// action's outcome or an automation stop that needs the user.
+type Event struct {
+	DedupKey  string
+	Kind      string
+	Severity  domain.Severity
+	FindingID int64
+	Title     string
+	Body      string
+}
+
+// EnqueueEvent queues an event for every target whose severity threshold
+// it meets; a repeated dedup key is never queued twice.
+func EnqueueEvent(tx *store.Tx, targets []config.NotifyConfig, ev Event, now time.Time) error {
+	for _, tg := range targets {
+		if rank(string(ev.Severity)) > rank(tg.MinSeverity) {
+			continue
+		}
+		n := store.Notification{Target: tg.ID, DedupKey: ev.DedupKey, Kind: ev.Kind, Severity: string(ev.Severity), Title: ev.Title,
+			Body: redact.Truncate(redact.String(ev.Body), 1000), CreatedAt: now}
+		if ev.FindingID != 0 {
+			id := ev.FindingID
+			n.FindingID, n.Link = &id, link(tg.LinkBase, id)
+		}
+		if _, err := tx.EnqueueNotification(n); err != nil {
+			return err
+		}
+	}
+	return nil
 }

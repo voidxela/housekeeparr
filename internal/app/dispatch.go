@@ -11,6 +11,7 @@ import (
 
 	"github.com/voidxela/housekeeparr/internal/action"
 	"github.com/voidxela/housekeeparr/internal/domain"
+	"github.com/voidxela/housekeeparr/internal/notify"
 	"github.com/voidxela/housekeeparr/internal/policy"
 	"github.com/voidxela/housekeeparr/internal/store"
 )
@@ -93,6 +94,7 @@ func (s *Service) DispatchAutomatic(ctx context.Context, fresh map[string]bool) 
 			break
 		}
 		ev := store.AutomationEvaluation{FindingID: f.ID, EvaluatedAt: now}
+		var outcome store.IntentState
 		pv, err := s.Preview(ctx, f.ID, action.OriginAutomatic)
 		if err != nil {
 			return rep, err
@@ -119,14 +121,23 @@ func (s *Service) DispatchAutomatic(ctx context.Context, fresh map[string]bool) 
 				ev.Result, ev.Detail = store.EvalRefused, "nothing was sent: "+err.Error()
 			default:
 				dispatched++
-				ev.Result, ev.IntentID = store.EvalDispatched, res.IntentID
+				ev.Result, ev.IntentID, outcome = store.EvalDispatched, res.IntentID, res.State
 				ev.Detail = fmt.Sprintf("action #%d %s: %s", res.IntentID, res.State, res.Detail)
 				if err != nil {
 					ev.Detail += " (" + err.Error() + ")"
 				}
 			}
 		}
-		if err := s.st.Write(ctx, func(tx *store.Tx) error { return tx.SaveEvaluation(ev) }); err != nil {
+		note, notifyIt := automationNotice(f, ev, outcome, now)
+		if err := s.st.Write(ctx, func(tx *store.Tx) error {
+			if err := tx.SaveEvaluation(ev); err != nil {
+				return err
+			}
+			if notifyIt {
+				return notify.EnqueueEvent(tx, s.cfg.Notify, note, now)
+			}
+			return nil
+		}); err != nil {
 			return rep, err
 		}
 		rep.Evaluations = append(rep.Evaluations, ev)
@@ -388,4 +399,32 @@ func heldBy(breakers map[string]string, p *action.Proposal) string {
 // AutomationEvaluation returns a finding's latest automatic evaluation.
 func (s *Service) AutomationEvaluation(ctx context.Context, findingID int64) (*store.AutomationEvaluation, error) {
 	return s.st.Evaluation(ctx, findingID)
+}
+
+// automationNotice is the notification, if any, for an automatic
+// evaluation: an action taken (its outcome), or automation stopped for a
+// reason only the user can resolve. Pacing, waiting, and holds that clear
+// by themselves are not notified.
+func automationNotice(f domain.Finding, ev store.AutomationEvaluation, outcome store.IntentState, now time.Time) (notify.Event, bool) {
+	switch ev.Result {
+	case store.EvalDispatched:
+		sev, verb := domain.SeverityNotice, "Grab failed and replacement requested"
+		switch outcome {
+		case store.IntentSucceeded:
+		case store.IntentUncertain:
+			sev, verb = domain.SeverityError, "Action needs review"
+		default:
+			sev, verb = domain.SeverityWarning, "Action did not complete"
+		}
+		return notify.Event{DedupKey: fmt.Sprintf("action|%d", ev.IntentID), Kind: notify.KindAction, Severity: sev, FindingID: f.ID,
+			Title: verb + ": " + f.Title, Body: ev.Detail}, true
+	case store.EvalNeedsReview:
+		return notify.Event{DedupKey: fmt.Sprintf("needs_review|%d", f.ID), Kind: notify.KindAttention, Severity: domain.SeverityWarning, FindingID: f.ID,
+			Title: "Replacement attempts exhausted: " + f.Title, Body: ev.Detail + "\nReview the content, then reset its attempts (housekeeparr attempts reset) to allow recovery again."}, true
+	case store.EvalAtCeiling:
+		// One per day: every candidate is at the same ceiling.
+		return notify.Event{DedupKey: "at_ceiling|" + now.UTC().Format("2006-01-02"), Kind: notify.KindAttention, Severity: domain.SeverityWarning,
+			Title: "Recovery stopped at the retained-data ceiling", Body: ev.Detail + "\nClean up retained transfers in the client (housekeeparr retained) or raise the ceiling."}, true
+	}
+	return notify.Event{}, false
 }

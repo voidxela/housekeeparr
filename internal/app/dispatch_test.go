@@ -883,3 +883,26 @@ func TestCycleQueuesNotifications(t *testing.T) {
 		t.Fatalf("notifications %+v", ns)
 	}
 }
+
+// An automatic recovery notifies its outcome once; exhausted attempts
+// notify the user that review is needed.
+func TestAutomationOutcomesAreNotified(t *testing.T) {
+	w := newWorldWith(t, "automatic", 20, "\n[[notify]]\nid = \"hook\"\nurl = \"env:HK_TEST_HOOK\"\nmin_severity = \"notice\"\n")
+	w.stalled(hashA, 1, 1)
+	w.run(4 * time.Hour)
+	ns, _ := w.st.RecentNotifications(context.Background(), 20)
+	var kinds []string
+	actions := 0
+	for _, n := range ns {
+		kinds = append(kinds, n.Kind+":"+n.Title)
+		if n.Kind == "action.outcome" {
+			actions++
+			if n.Severity != "notice" || !strings.HasPrefix(n.Title, "Grab failed and replacement requested") {
+				t.Errorf("action notice %+v", n)
+			}
+		}
+	}
+	if actions != 1 {
+		t.Fatalf("want one action notification, got %v", kinds)
+	}
+}
