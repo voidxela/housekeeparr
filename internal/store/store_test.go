@@ -199,6 +199,48 @@ func TestPrunePreservesUnresolvedFindings(t *testing.T) {
 	}
 }
 
+func TestPruneKeepsGonePackTransferUntilItsFollowUpEnds(t *testing.T) {
+	s := openTest(t, t.TempDir())
+	in := testIntent("pack")
+	in.Workflow = "partial_pack"
+	in.Subject = []byte(`{"manager_id":"sonarr","client_id":"qbit","native_id":"gone"}`)
+	id := create(t, s, in)
+	if err := s.Write(ctx, func(tx *Tx) error {
+		if _, err := tx.SaveTransferSnapshot(domain.TransferSnapshot{ClientID: "qbit", CollectedAt: t0, Complete: true,
+			Transfers: []domain.Transfer{transfer("gone", domain.StateComplete, 1)}}, "r", 0, 10); err != nil {
+			return err
+		}
+		if _, err := tx.SaveTransferSnapshot(domain.TransferSnapshot{ClientID: "qbit", CollectedAt: t0.Add(time.Minute), Complete: true}, "r", 0, 10); err != nil {
+			return err
+		}
+		return tx.MarkPackFollowUp("sonarr", "episode:1", "pack follow-up", id, t0)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	prune := func() {
+		t.Helper()
+		if err := s.Write(ctx, func(tx *Tx) error {
+			_, err := tx.Prune(t0.Add(2*time.Hour), Retention{Observations: time.Hour, AuditEvents: time.Hour})
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	prune()
+	if tr, err := s.Transfer(ctx, "qbit", "gone"); err != nil || tr == nil || tr.Present {
+		t.Fatalf("pack follow-up lost the gone transfer's policy data: %+v, %v", tr, err)
+	}
+	if err := s.Write(ctx, func(tx *Tx) error {
+		return tx.SetMissingOrigin("sonarr", "episode:1", "missing")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	prune()
+	if tr, err := s.Transfer(ctx, "qbit", "gone"); err != nil || tr != nil {
+		t.Fatalf("expired transfer kept after its pack follow-up: %+v, %v", tr, err)
+	}
+}
+
 func TestUniqueActiveFindingPerKey(t *testing.T) {
 	s := openTest(t, t.TempDir())
 	now := time.Now()

@@ -44,11 +44,16 @@ func (t *Tx) Prune(now time.Time, r Retention) (PruneResult, error) {
 						AND COALESCE(json_extract(i.subject_json, '$.client_id'), '')='')`, ms(now.Add(-r.ResolvedFindings)))
 		},
 		func() error {
-			// Gone transfers are kept while any unresolved finding refers to them.
+			// A pending pack search still needs its original transfer's policy data.
 			return run(&out.Transfers, `DELETE FROM transfers WHERE present=0 AND gone_at < ? AND NOT EXISTS (
 				SELECT 1 FROM findings f WHERE f.state != 'resolved'
 				AND json_extract(f.subject_json, '$.client_id') = transfers.client_id
-				AND json_extract(f.subject_json, '$.native_id') = transfers.native_id)`, obsCut)
+				AND json_extract(f.subject_json, '$.native_id') = transfers.native_id)
+				AND NOT EXISTS (SELECT 1 FROM missing_content m JOIN action_intents i ON i.id=m.origin_intent
+					LEFT JOIN findings f ON f.id=i.finding_id
+					WHERE m.origin='pack'
+					AND COALESCE(NULLIF(json_extract(i.subject_json, '$.client_id'), ''), json_extract(f.subject_json, '$.client_id')) = transfers.client_id
+					AND COALESCE(NULLIF(json_extract(i.subject_json, '$.native_id'), ''), json_extract(f.subject_json, '$.native_id')) = transfers.native_id)`, obsCut)
 		},
 		func() error {
 			return run(&out.QueueItems, "DELETE FROM queue_items WHERE present=0 AND gone_at < ?", obsCut)

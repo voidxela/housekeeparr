@@ -470,8 +470,6 @@ func (s *Service) previewPack(ctx context.Context, f *domain.Finding, origin act
 	return out, nil
 }
 
-// packScope preserves the originating transfer restrictions for both clearance
-// and targeted follow-up.
 // packFollowUpScope uses the originating clearance's transfer permission.
 // Older clearances recorded the transfer identity in their finding.
 func (s *Service) packFollowUpScope(ctx context.Context, it *store.MissingRecord) (policy.Subject, bool, error) {
@@ -506,11 +504,16 @@ func (s *Service) packFollowUpScope(ctx context.Context, it *store.MissingRecord
 	if origin.ClientID == "" || origin.NativeID == "" {
 		return policy.Subject{}, false, nil
 	}
-	scope, err := s.packScope(ctx, it.ManagerID, origin.ClientID, origin.NativeID)
-	scope.ContentKey = it.ContentKey
-	return scope, err == nil, err
+	transfer, err := s.st.Transfer(ctx, origin.ClientID, origin.NativeID)
+	if err != nil || transfer == nil {
+		return policy.Subject{}, false, err
+	}
+	scope := policy.TransferSubject(origin.ClientID, origin.NativeID, &transfer.Latest, nil)
+	scope.ManagerID, scope.ContentKey = it.ManagerID, it.ContentKey
+	return scope, true, nil
 }
 
+// packScope resolves the transfer scope of a proposed pack clearance.
 func (s *Service) packScope(ctx context.Context, manager, client, native string) (policy.Subject, error) {
 	var transfer *domain.Transfer
 	if client != "" && native != "" {

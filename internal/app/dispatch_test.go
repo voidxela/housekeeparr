@@ -1597,6 +1597,40 @@ func TestPackSearchRequiresItsOriginatingPermission(t *testing.T) {
 	t.Fatal("a pack follow-up lost its originating permission without a blocker")
 }
 
+func TestPackSearchRequiresTransferScopeEvidence(t *testing.T) {
+	w := packWorld(t, nil)
+	ctx := context.Background()
+	if err := w.st.Write(ctx, func(tx *store.Tx) error {
+		id, err := tx.CreateIntent(store.Intent{
+			Key: "legacy-pack", Workflow: string(policy.WorkflowPartialPack), Origin: "automatic",
+			Subject: []byte(`{"manager_id":"sonarr","client_id":"qbit","native_id":"gone"}`),
+			Steps:   []store.Step{{Op: "manager.queue.remove"}},
+		}, t0)
+		if err != nil {
+			return err
+		}
+		if err := tx.SetIntentState(id, store.IntentExecuting, "", t0); err != nil {
+			return err
+		}
+		if err := tx.SetIntentState(id, store.IntentSucceeded, "", t0); err != nil {
+			return err
+		}
+		return tx.MarkPackFollowUp("sonarr", "episode:203", "missing pack episode", id, t0)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	p, err := w.svc.PreviewSearch(ctx, "sonarr", "episode:203", action.OriginAutomatic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, blocker := range p.Proposal.Blockers() {
+		if blocker.Name == "originating pack permission" {
+			return
+		}
+	}
+	t.Fatal("pack follow-up tried to resolve permission without the original transfer's category or privacy")
+}
+
 func TestMissingSearchWithoutRetainedReceiptBecomesUnverified(t *testing.T) {
 	w := searchWorld(t, "automatic")
 	ctx := context.Background()
