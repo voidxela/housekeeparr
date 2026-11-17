@@ -31,14 +31,20 @@ var (
 	// URL user info: scheme://user:pass@host
 	userInfo = regexp.MustCompile(`(?i)\b([a-z][a-z0-9+.-]*://)[^/\s:@]+:[^/\s@]+@`)
 	// Long hex/base32-ish path segments commonly used as tracker passkeys.
-	passkeySegment = regexp.MustCompile(`(?i)/([a-z0-9]{24,})(/|$)`)
+	passkeySegment = regexp.MustCompile(`(?i)^[a-z0-9]{24,}$`)
 	// Any URL: drop the query and redact passkey-like path segments.
 	anyURL = regexp.MustCompile(`(?i)\b(https?|udp|wss?)://[^\s"'<>]+`)
 )
 
 // Passkeys replaces long opaque path segments with a placeholder.
 func Passkeys(path string) string {
-	return passkeySegment.ReplaceAllString(path, "/[redacted]$2")
+	segments := strings.Split(path, "/")
+	for i, segment := range segments {
+		if passkeySegment.MatchString(segment) {
+			segments[i] = "[redacted]"
+		}
+	}
+	return strings.Join(segments, "/")
 }
 
 // String sanitizes free text such as upstream error messages.
@@ -47,8 +53,8 @@ func String(s string) string {
 	s = userInfo.ReplaceAllString(s, "$1[redacted]@")
 	s = anyURL.ReplaceAllStringFunc(s, func(m string) string {
 		q := ""
-		if i := strings.IndexByte(m, '?'); i >= 0 {
-			m, q = m[:i], "?[redacted]"
+		if i := strings.IndexAny(m, "?#"); i >= 0 {
+			m, q = m[:i], m[i:i+1]+"[redacted]"
 		}
 		// Keep scheme://host intact; only the path can carry passkeys.
 		if i := strings.Index(m, "://"); i >= 0 {

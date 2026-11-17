@@ -105,7 +105,7 @@ func Enqueue(tx *store.Tx, targets []config.NotifyConfig, res findings.Result, n
 			for _, f := range opened {
 				id := f.ID
 				if _, err := tx.EnqueueNotification(store.Notification{Target: tg.ID, DedupKey: fmt.Sprintf("opened|%d", f.ID), Kind: KindOpened,
-					FindingID: &id, Severity: string(f.Severity), Title: f.Title, Body: body(f), Link: link(tg.LinkBase, f.ID), CreatedAt: now}); err != nil {
+					FindingID: &id, Severity: string(f.Severity), Title: redact.String(f.Title), Body: body(f), Link: link(tg.LinkBase, f.ID), CreatedAt: now}); err != nil {
 					return err
 				}
 			}
@@ -120,7 +120,7 @@ func Enqueue(tx *store.Tx, targets []config.NotifyConfig, res findings.Result, n
 			}
 			id := f.ID
 			if _, err := tx.EnqueueNotification(store.Notification{Target: tg.ID, DedupKey: fmt.Sprintf("resolved|%d", f.ID), Kind: KindResolved,
-				FindingID: &id, Severity: string(domain.SeverityNotice), Title: "Resolved: " + f.Title,
+				FindingID: &id, Severity: string(domain.SeverityNotice), Title: "Resolved: " + redact.String(f.Title),
 				Body: redact.Truncate(redact.String(f.Resolution), 1000), Link: link(tg.LinkBase, f.ID), CreatedAt: now}); err != nil {
 				return err
 			}
@@ -213,6 +213,7 @@ type payload struct {
 }
 
 func send(ctx context.Context, client *http.Client, format, url string, n store.Notification) error {
+	n.Title = redact.String(n.Title)
 	var req *http.Request
 	var err error
 	if format == "text" {
@@ -282,7 +283,7 @@ func EnqueueEvent(tx *store.Tx, targets []config.NotifyConfig, ev Event, now tim
 		if rank(string(ev.Severity)) > rank(tg.MinSeverity) {
 			continue
 		}
-		n := store.Notification{Target: tg.ID, DedupKey: ev.DedupKey, Kind: ev.Kind, Severity: string(ev.Severity), Title: ev.Title,
+		n := store.Notification{Target: tg.ID, DedupKey: ev.DedupKey, Kind: ev.Kind, Severity: string(ev.Severity), Title: redact.String(ev.Title),
 			Body: redact.Truncate(redact.String(ev.Body), 1000), CreatedAt: now}
 		if ev.FindingID != 0 {
 			id := ev.FindingID

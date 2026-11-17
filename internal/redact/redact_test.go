@@ -39,3 +39,13 @@ func TestStringKeepsOrdinaryText(t *testing.T) {
 		t.Fatalf("ordinary text modified: %q", got)
 	}
 }
+
+func TestRedactAdjacentPasskeysAndURLFragment(t *testing.T) {
+	in := "https://tracker.example/SECRETVALUE000000000000000001/SECRETVALUE000000000000000002/announce#SECRETVALUE"
+	if got := String(in); strings.Contains(got, "SECRETVALUE") {
+		t.Fatalf("unredacted tracker URL: %s", got)
+	}
+	if got := URL(in); strings.Contains(got, "SECRETVALUE") {
+		t.Fatalf("unredacted display URL: %s", got)
+	}
+}

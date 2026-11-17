@@ -217,3 +217,19 @@ func TestDeliveryDoesNotFollowRedirect(t *testing.T) {
 		t.Fatalf("delivery escaped configured endpoint: report %+v, redirected requests %d, err %v", rep, len(receiver.got), err)
 	}
 }
+
+func TestNotificationOutboxRedactsTitles(t *testing.T) {
+	ctx := context.Background()
+	st := open(t, t.TempDir())
+	defer st.Close()
+	f := finding(1, domain.SeverityWarning)
+	f.Title = "Synthetic release title https://tracker.example/announce?passkey=SECRETVALUE"
+	enqueue(t, st, []config.NotifyConfig{target(1)}, findings.Result{Opened: []domain.Finding{f}}, t0)
+	pending, err := st.DueNotifications(ctx, "hook", t0, 1)
+	if err != nil || len(pending) != 1 {
+		t.Fatalf("outbox: %+v, %v", pending, err)
+	}
+	if strings.Contains(pending[0].Title, "SECRETVALUE") {
+		t.Fatalf("notification title retained a tracker credential: %s", pending[0].Title)
+	}
+}
