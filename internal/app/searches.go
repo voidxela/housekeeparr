@@ -197,6 +197,9 @@ func (s *Service) sendSearch(ctx context.Context, it store.MissingRecord, p *act
 		rep.Waiting = append(rep.Waiting, fmt.Sprintf("%s|%s refused before anything was sent: %v", it.ManagerID, it.ContentKey, err))
 		return rep, nil
 	}
+	if err != nil {
+		return rep, err
+	}
 	now := s.now()
 	rep.Sent, rep.IntentID, rep.Outcome = it.ManagerID+"|"+it.ContentKey, res.IntentID, string(res.State)
 	id := res.IntentID
@@ -211,14 +214,8 @@ func (s *Service) sendSearch(ctx context.Context, it store.MissingRecord, p *act
 		state, note, sev = store.MissingNotSearched, "the search was not accepted: "+res.Detail, domain.SeverityWarning
 	}
 	err = s.st.Write(ctx, func(tx *store.Tx) error {
-		count := res.State == store.IntentSucceeded || res.State == store.IntentUncertain
-		if err := tx.SetMissingSearch(it.ManagerID, it.ContentKey, state, note, &id, &now, &next, count); err != nil {
-			return err
-		}
-		// A pack follow-up gets one targeted search; afterwards the item is
-		// ordinary missing content.
-		if count && it.Origin == "pack" {
-			if err := tx.SetMissingOrigin(it.ManagerID, it.ContentKey, "missing"); err != nil {
+		if res.State == store.IntentFailed || res.State == store.IntentCancelled {
+			if err := tx.SetMissingSearch(it.ManagerID, it.ContentKey, state, note, &id, &now, &next, false); err != nil {
 				return err
 			}
 		}

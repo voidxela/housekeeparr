@@ -723,3 +723,45 @@ func TestBaselineIsJournaledAndRequired(t *testing.T) {
 		}
 	}
 }
+
+func TestInterruptedSearchPersistsBackoffDuringReconciliation(t *testing.T) {
+	c, f, _ := setup(t)
+	now := c.now()
+	target := SearchTarget{ManagerID: "sonarr", Kind: "episode", IDs: []int64{1}, Key: "episode:1"}
+	p := Proposal{
+		Workflow: "missing_search", Origin: OriginAutomatic, Subject: raw(target), Fingerprint: "search-1",
+		Operations: []Operation{{Op: OpSearch, Target: raw(target)}},
+		Planned:    Planned{ManagerID: "sonarr", ManagerVersion: "1", Content: []string{target.Key}},
+	}
+	available := domain.KnownValue(true)
+	if err := c.Store.Write(ctx, func(tx *store.Tx) error {
+		_, err := tx.SaveMissingSnapshot(domain.MissingSnapshot{ManagerID: target.ManagerID, Complete: true,
+			Items: []domain.MissingItem{{ContentKind: "episode", ContentID: 1, Available: available}}}, now)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	hasFile := false
+	f.live = func(Proposal) Live {
+		return Live{ManagerVersion: "1", Content: []ContentState{{Key: target.Key, Exists: true, Monitored: true, HasFile: &hasFile}}}
+	}
+	f.observe[OpSearch] = Observation{Verdict: Holds}
+	f.onDispatch = func(string) { c.Store.InjectWriteFault(errors.New("process killed")) }
+	res, err := c.Execute(ctx, p)
+	if !errors.Is(err, ErrJournal) || res.State != store.IntentExecuting {
+		t.Fatalf("execute: %+v %v", res, err)
+	}
+	c.Store.InjectWriteFault(nil)
+	c2 := &Coordinator{Store: c.Store, Executor: f, Now: c.Now}
+	if _, err := c2.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	it, err := c.Store.MissingRecord(ctx, target.ManagerID, target.Key)
+	if err != nil || it == nil || it.State != store.MissingSearched || it.Searches != 1 || it.LastIntentID == nil ||
+		*it.LastIntentID != res.IntentID || it.NextSearchAt == nil || !it.NextSearchAt.Equal(now.Add(24*time.Hour)) {
+		t.Fatalf("reconciliation lost search state or backoff: %+v, %v", it, err)
+	}
+	if f.count(OpSearch) != 1 {
+		t.Fatalf("reconciliation resent search: %v", f.sent)
+	}
+}

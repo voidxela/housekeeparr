@@ -472,6 +472,9 @@ func (c *Coordinator) run(ctx context.Context, id int64, p Proposal) (Result, er
 			if err := tx.FinishStep(id, st.Seq, state, outcome, detail, c.now()); err != nil {
 				return err
 			}
+			if err := trackMissingSearch(tx, st, state); err != nil {
+				return err
+			}
 			if state == store.StepSucceeded {
 				return recordRetained(tx, id, in.Subject, st, &p.Planned, c.now())
 			}
@@ -677,6 +680,9 @@ func (c *Coordinator) Reconcile(ctx context.Context) (ReconcileReport, error) {
 				ev, _ := json.Marshal(obs)
 				if err := c.Store.Write(ctx, func(tx *store.Tx) error {
 					if err := tx.FinishStep(in.ID, s.Seq, to, ev, note, c.now()); err != nil {
+						return err
+					}
+					if err := trackMissingSearch(tx, s, to); err != nil {
 						return err
 					}
 					if to == store.StepSucceeded {

@@ -168,6 +168,19 @@ func (s *Store) MissingRecord(ctx context.Context, managerID, key string) (*Miss
 	return &list[0], nil
 }
 
+// MissingRecord returns a missing item within the current transaction.
+func (t *Tx) MissingRecord(managerID, key string) (*MissingRecord, error) {
+	rows, err := t.tx.QueryContext(t.ctx, "SELECT "+missingCols+" FROM missing_content WHERE manager_id=? AND content_key=?", managerID, key)
+	if err != nil {
+		return nil, err
+	}
+	list, err := scanMissing(rows)
+	if err != nil || len(list) == 0 {
+		return nil, err
+	}
+	return &list[0], nil
+}
+
 // SetMissingSearch records Housekeeparr's search state for an item.
 func (t *Tx) SetMissingSearch(managerID, key, state, note string, intentID *int64, searchedAt, next *time.Time, countSearch bool) error {
 	inc := 0

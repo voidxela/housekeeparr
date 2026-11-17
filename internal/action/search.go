@@ -1,6 +1,7 @@
 package action
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -170,4 +171,38 @@ func ptrInt(p *int64) int64 {
 		return 0
 	}
 	return *p
+}
+
+// trackMissingSearch journals search pacing alongside the step result, so a
+// process exit between dispatch and the app's next cycle cannot lose it.
+func trackMissingSearch(tx *store.Tx, step store.Step, state store.StepState) error {
+	if step.Op != OpSearch || step.DispatchedAt == nil ||
+		(state != store.StepSucceeded && state != store.StepUncertain) {
+		return nil
+	}
+	var target SearchTarget
+	if err := json.Unmarshal(step.Target, &target); err != nil {
+		return err
+	}
+	it, err := tx.MissingRecord(target.ManagerID, target.Key)
+	if err != nil || it == nil {
+		return err
+	}
+	alreadyRecorded := it.LastIntentID != nil && *it.LastIntentID == step.IntentID
+	attempts := it.Searches
+	if !alreadyRecorded {
+		attempts++
+	}
+	next := step.DispatchedAt.Add(SearchBackoff(attempts))
+	status, note := store.MissingSearched, "the manager accepted the search; results are followed separately"
+	if state == store.StepUncertain {
+		status, note = store.MissingUncertain, "the search request's outcome could not be established; held for review"
+	}
+	if err := tx.SetMissingSearch(target.ManagerID, target.Key, status, note, &step.IntentID, step.DispatchedAt, &next, !alreadyRecorded); err != nil {
+		return err
+	}
+	if it.Origin == "pack" {
+		return tx.SetMissingOrigin(target.ManagerID, target.Key, "missing")
+	}
+	return nil
 }
