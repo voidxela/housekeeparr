@@ -434,7 +434,10 @@ func verifyRecovered(t *testing.T, a arrAPI, mgr recoveryManager, e entry, row d
 	if a.row(nil, e.Hash) != nil {
 		t.Errorf("queue row returned after refreshes %v", statuses)
 	}
-	blocked, err := mgr.Blocklisted(ctx, arr.BlocklistMatch{SourceTitle: row.Title, Since: start.Add(-time.Minute),
+	// By the release's own title: the manager blocklists under it, while the
+	// queue row of a magnet without metadata carries the client's placeholder
+	// name on rTorrent ("<HASH>.meta").
+	blocked, err := mgr.Blocklisted(ctx, arr.BlocklistMatch{SourceTitle: e.Name, Since: start.Add(-time.Minute),
 		SeriesID: row.SeriesID, EpisodeID: row.EpisodeID, MovieID: row.MovieID})
 	if err != nil || !blocked {
 		t.Errorf("release not blocklisted: %v %v", blocked, err)
