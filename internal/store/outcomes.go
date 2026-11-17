@@ -46,10 +46,13 @@ func OutcomeTerminal(state string) bool {
 
 // RecoveryOutcome is what was observed after a verified recovery.
 type RecoveryOutcome struct {
-	IntentID      int64      `json:"intent_id"`
-	ManagerID     string     `json:"manager_id"`
-	Content       []string   `json:"content"`
-	OldDownloadID string     `json:"old_download_id"`
+	IntentID      int64    `json:"intent_id"`
+	ManagerID     string   `json:"manager_id"`
+	Content       []string `json:"content"`
+	OldDownloadID string   `json:"old_download_id"`
+	// OldClientID is the client the failed grab's transfer was on; empty
+	// for outcomes recorded before schema 13 whose intent was pruned.
+	OldClientID   string     `json:"old_client_id,omitempty"`
 	StartedAt     time.Time  `json:"started_at"`
 	State         string     `json:"state"`
 	GrabbedAt     *time.Time `json:"grabbed_at,omitempty"`
@@ -93,9 +96,9 @@ func ptrTime(t *time.Time) sql.NullInt64 {
 // CreateOutcome starts tracking a recovery's replacement; it is a no-op if
 // the intent is already tracked.
 func (t *Tx) CreateOutcome(o RecoveryOutcome) error {
-	_, err := t.exec(`INSERT OR IGNORE INTO recovery_outcomes(intent_id, manager_id, content, old_download_id, started_at, state, checked_at,
-		search_state, search_since, search_after_id) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, o.IntentID, o.ManagerID, strings.Join(o.Content, ","),
-		o.OldDownloadID, ms(o.StartedAt), OutcomeAwaitingGrab, ms(o.StartedAt), SearchUnobserved, ptrTime(o.Search.Since), nullInt(o.Search.AfterID))
+	_, err := t.exec(`INSERT OR IGNORE INTO recovery_outcomes(intent_id, manager_id, content, old_download_id, old_client_id, started_at, state, checked_at,
+		search_state, search_since, search_after_id) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, o.IntentID, o.ManagerID, strings.Join(o.Content, ","),
+		o.OldDownloadID, o.OldClientID, ms(o.StartedAt), OutcomeAwaitingGrab, ms(o.StartedAt), SearchUnobserved, ptrTime(o.Search.Since), nullInt(o.Search.AfterID))
 	return err
 }
 
@@ -120,7 +123,7 @@ func (t *Tx) SaveSearchOutcome(intentID int64, so SearchOutcome) error {
 	return err
 }
 
-const outcomeCols = `intent_id, manager_id, content, old_download_id, started_at, state, grabbed_at, COALESCE(new_download_id, ''),
+const outcomeCols = `intent_id, manager_id, content, old_download_id, old_client_id, started_at, state, grabbed_at, COALESCE(new_download_id, ''),
 	COALESCE(new_client_id, ''), COALESCE(new_native_id, ''), grab_verified, progress_at, completed_at, checked_at, note,
 	search_state, search_since, search_command_id, search_name, search_queued_at, search_ended_at, search_checked_at, search_note, search_after_id`
 
@@ -132,7 +135,7 @@ func scanOutcomes(rows *sql.Rows) ([]RecoveryOutcome, error) {
 		var content string
 		var started, checked int64
 		var grabbed, gv, prog, done, sSince, sCmd, sQueued, sEnded, sChecked, sAfter sql.NullInt64
-		if err := rows.Scan(&o.IntentID, &o.ManagerID, &content, &o.OldDownloadID, &started, &o.State, &grabbed, &o.NewDownloadID,
+		if err := rows.Scan(&o.IntentID, &o.ManagerID, &content, &o.OldDownloadID, &o.OldClientID, &started, &o.State, &grabbed, &o.NewDownloadID,
 			&o.NewClientID, &o.NewNativeID, &gv, &prog, &done, &checked, &o.Note,
 			&o.Search.State, &sSince, &sCmd, &o.Search.Name, &sQueued, &sEnded, &sChecked, &o.Search.Note, &sAfter); err != nil {
 			return nil, err
@@ -189,22 +192,32 @@ func (s *Store) ManagersAwaitingSearch(ctx context.Context) (map[string]bool, er
 	return out, rows.Err()
 }
 
-// RecoveredDownloads maps the lower-cased download ID of every grab a
-// verified recovery already failed in its manager to that action's intent.
+// HandledKey identifies a physical transfer (SPEC §3.1) in the map
+// RecoveredDownloads returns: its client instance and lower-cased native ID.
+func HandledKey(clientID, nativeID string) string {
+	return clientID + "|" + strings.ToLower(nativeID)
+}
+
+// RecoveredDownloads maps every transfer whose grab a verified recovery
+// already failed in its manager, keyed by HandledKey, to the latest such
+// action. Outcomes whose client is unknown (recorded before schema 13,
+// with their intent since pruned) are left out: a hash alone does not
+// identify the transfer, so they never exempt one from a safeguard.
 func (s *Store) RecoveredDownloads(ctx context.Context) (map[string]int64, error) {
-	rows, err := s.r.QueryContext(ctx, `SELECT lower(old_download_id), max(intent_id) FROM recovery_outcomes WHERE old_download_id != '' GROUP BY 1`)
+	rows, err := s.r.QueryContext(ctx, `SELECT old_client_id, lower(old_download_id), max(intent_id) FROM recovery_outcomes
+		WHERE old_download_id != '' AND old_client_id != '' GROUP BY 1, 2`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	out := map[string]int64{}
 	for rows.Next() {
-		var id string
+		var client, id string
 		var intent int64
-		if err := rows.Scan(&id, &intent); err != nil {
+		if err := rows.Scan(&client, &id, &intent); err != nil {
 			return nil, err
 		}
-		out[id] = intent
+		out[HandledKey(client, id)] = intent
 	}
 	return out, rows.Err()
 }

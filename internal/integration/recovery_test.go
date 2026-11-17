@@ -394,12 +394,13 @@ func runRecoveryMode(t *testing.T, a arrAPI, mgr recoveryManager, me managedEntr
 		t.Fatalf("workflow did not succeed: %+v %v", res, err)
 	}
 
-	wantState := domain.StatePaused
+	wantState, wantDisp := domain.StatePaused, store.RetainedStopped
 	if private == policy.PrivateKeepRunning {
-		wantState = domain.StateDownloading // never stopped
-		if ret, _ := st.RetainedTransfers(ctx, false, 0); len(ret) != 0 {
-			t.Errorf("a torrent left running was recorded as retained: %+v", ret)
-		}
+		wantState, wantDisp = domain.StateDownloading, store.RetainedRunning // never stopped
+	}
+	// Stopped or left running, the torrent is counted as retained.
+	if ret, _ := st.RetainedTransfers(ctx, false, 0); len(ret) != 1 || ret[0].Disposition != wantDisp || ret[0].NativeID != tr.NativeID {
+		t.Errorf("retained %+v, want one %s record", ret, wantDisp)
 	}
 	after, hist, searches, replacement := verifyRecovered(t, a, mgr, e, *row, tr.Category, digest, hist0, start, searchName, wantState)
 	// Housekeeparr itself recorded exactly that replacement search as a

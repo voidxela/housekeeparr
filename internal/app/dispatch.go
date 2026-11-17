@@ -309,12 +309,25 @@ func (s *Service) breakers(ctx context.Context, now time.Time) (map[string]strin
 	if err != nil {
 		return nil, err
 	}
-	// A torrent whose grab an earlier recovery already failed (for example
+	// A transfer whose grab an earlier recovery already failed (for example
 	// a private one left running) is no longer a recovery candidate: it is
 	// left out of both counts, so it neither triggers nor dilutes the hold.
+	// Only that physical transfer (client plus native ID) is exempt, and
+	// only while no manager associates it again: a new grab of the same
+	// release makes it a candidate like any other.
 	recovered, err := s.st.RecoveredDownloads(ctx)
 	if err != nil {
 		return nil, err
+	}
+	qs, err := s.st.QueueItems(ctx, store.QueueFilter{PresentOnly: true})
+	if err != nil {
+		return nil, err
+	}
+	associated := map[string]bool{}
+	for _, q := range qs {
+		if q.MatchClientID != "" {
+			associated[store.HandledKey(q.MatchClientID, q.MatchNativeID)] = true
+		}
 	}
 	active, stalled := map[string]int{}, map[string]int{}
 	for _, t := range ts {
@@ -323,7 +336,7 @@ func (s *Service) breakers(ctx context.Context, now time.Time) (map[string]strin
 		if t.StateClass != domain.StateDownloading && t.StateClass != domain.StateMetadata {
 			continue
 		}
-		if _, done := recovered[strings.ToLower(t.NativeID)]; done {
+		if k := store.HandledKey(t.ClientID, t.NativeID); recovered[k] != 0 && !associated[k] {
 			continue
 		}
 		active[t.ClientID]++

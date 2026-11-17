@@ -112,7 +112,7 @@ func TestPlanRefusals(t *testing.T) {
 			in.Limits.RetainedBytes = 100
 			in.Transfer.Latest.WantedBytes = domain.KnownValue[int64](60)
 			in.Retained = store.RetainedUsage{Count: 1, KnownBytes: 50}
-		}, "retained-data ceiling"},
+		}, "room to retain this transfer"},
 		"retained size unknown with a byte ceiling": {func(in *PlanInput) {
 			in.Limits = policy.DefaultLimits()
 			in.Limits.RetainedBytes = 1 << 40

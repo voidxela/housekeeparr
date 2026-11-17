@@ -47,8 +47,8 @@ func TestPrivateNoProgressRecoveryModes(t *testing.T) {
 					t.Fatalf("mode %q ops %+v", p.PrivateMode, p.Operations)
 				}
 				if !tc.stop {
-					if find(p.Prerequisites, "retained-data ceiling") != nil {
-						t.Fatal("a torrent that is not stopped was counted as retained")
+					if c := find(p.Prerequisites, "room to retain this transfer"); c == nil || !c.Satisfied || !strings.Contains(c.Detail, "kept running") {
+						t.Fatalf("a torrent left running is not counted as retained: %+v", c)
 					}
 					if !slices.ContainsFunc(p.Effects, func(e string) bool { return strings.Contains(e, "not stopped") }) {
 						t.Fatalf("effects do not say the torrent keeps running: %v", p.Effects)

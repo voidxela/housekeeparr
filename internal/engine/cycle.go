@@ -280,6 +280,21 @@ func (e *Engine) persist(tx *store.Tx, results []*fetched, now time.Time) (map[s
 					return nil, nil, err
 				}
 			}
+			// Sizes of transfers still retained follow the listing: one
+			// left running, or resumed by the operator, may obtain metadata
+			// or download more (SPEC §7.1).
+			for _, t := range f.transfer.Transfers {
+				var wanted, verified *int64
+				if v, ok := t.WantedBytes.Get(); ok {
+					wanted = &v
+				}
+				if v, ok := t.VerifiedBytes.Get(); ok {
+					verified = &v
+				}
+				if err := tx.RefreshRetained(t.ClientID, t.NativeID, wanted, verified); err != nil {
+					return nil, nil, err
+				}
+			}
 		}
 		if f.queue != nil {
 			if _, err := tx.SaveQueueSnapshot(*f.queue); err != nil {

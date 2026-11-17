@@ -123,7 +123,7 @@ func (s *Service) Preview(ctx context.Context, findingID int64, origin action.Or
 		if err != nil {
 			return nil, err
 		}
-		in.RecoveredBy = rec[strings.ToLower(in.Transfer.NativeID)]
+		in.RecoveredBy = rec[store.HandledKey(in.Transfer.ClientID, in.Transfer.NativeID)]
 	}
 	if in.Retained, err = s.st.RetainedUsage(ctx); err != nil {
 		return nil, err

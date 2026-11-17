@@ -411,9 +411,16 @@ func cmdRetained(args []string, out, errOut io.Writer) int {
 	if o.json {
 		return writeJSON(out, map[string]any{"retained": list, "usage": u, "limits": l})
 	}
-	fmt.Fprintf(out, "%d of %d retained transfers; known logical size %.1f GiB", u.Count, l.RetainedTransfers, float64(u.KnownBytes)/(1<<30))
+	fmt.Fprintf(out, "%d of %d retained transfers", u.Count, l.RetainedTransfers)
+	if u.Running > 0 {
+		fmt.Fprintf(out, " (%d left running)", u.Running)
+	}
+	fmt.Fprintf(out, "; known logical size %.1f GiB", float64(u.KnownBytes)/(1<<30))
 	if u.UnknownSize > 0 {
 		fmt.Fprintf(out, " (%d of unknown size)", u.UnknownSize)
+	}
+	if u.NoPayload > 0 {
+		fmt.Fprintf(out, " (%d stopped before metadata, no payload)", u.NoPayload)
 	}
 	if l.RetainedBytes > 0 {
 		fmt.Fprintf(out, "; byte ceiling %.1f GiB", float64(l.RetainedBytes)/(1<<30))
@@ -424,7 +431,7 @@ func cmdRetained(args []string, out, errOut io.Writer) int {
 		return exitOK
 	}
 	w := tw(out)
-	fmt.Fprintln(w, "\nRETAINED\tCLIENT\tTRANSFER\tCONTENT\tSIZE\tACTION\tRELEASED")
+	fmt.Fprintln(w, "\nRETAINED\tCLIENT\tTRANSFER\tCONTENT\tLEFT\tSIZE\tACTION\tRELEASED")
 	for _, r := range list {
 		size := "unknown"
 		if r.WantedBytes != nil {
@@ -435,7 +442,7 @@ func cmdRetained(args []string, out, errOut io.Writer) int {
 			rel = ts(r.ReleasedAt) + " " + r.ReleasedReason
 		}
 		name := nonEmptyStr(r.Name, r.NativeID)
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t#%d\t%s\n", ts(&r.RetainedAt), r.ClientID, name, nonEmptyStr(r.ManagerID+"|"+r.Content, "-"), size, r.IntentID, rel)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t#%d\t%s\n", ts(&r.RetainedAt), r.ClientID, name, nonEmptyStr(r.ManagerID+"|"+r.Content, "-"), r.Disposition, size, r.IntentID, rel)
 	}
 	w.Flush()
 	return exitOK

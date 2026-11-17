@@ -48,10 +48,11 @@ missing_search = false
 # that never received its metadata always has unknown privacy: no supported
 # client can read the private flag before metadata arrives, and Sonarr and
 # Radarr do not report indexer privacy. Metadata recovery accepts that by
-# default, because such a torrent has downloaded no payload: stopping it
-# forfeits nothing and leaves no ratio, hit-and-run or seeding obligation on
-# a public or a private tracker, and the blocklist only stops the manager
-# grabbing that same dead release again. Set this to false (here, or in a
+# default, as a policy choice: such a torrent reports no payload, so there is
+# nothing to seed, and it is stopped but kept registered; the blocklist only
+# stops the manager grabbing that same release again. Housekeeparr cannot
+# read a tracker's rules: if yours forbid stopping a torrent that never
+# started, set this to false (here, or in a
 # [[rule]] / [[override]] under [rule.unknown_privacy]) to keep a scope
 # observation-only.
 # metadata_recovery = true

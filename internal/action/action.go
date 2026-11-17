@@ -469,7 +469,7 @@ func (c *Coordinator) run(ctx context.Context, id int64, p Proposal) (Result, er
 				return err
 			}
 			if state == store.StepSucceeded {
-				return recordRetained(tx, id, st, &p.Planned, c.now())
+				return recordRetained(tx, id, in.Subject, st, &p.Planned, c.now())
 			}
 			return nil
 		}); err != nil {
@@ -503,7 +503,7 @@ func (c *Coordinator) run(ctx context.Context, id int64, p Proposal) (Result, er
 		if err := tx.SetIntentState(id, store.IntentSucceeded, "every step verified", now); err != nil {
 			return err
 		}
-		if err := trackOutcome(tx, id, in.Steps, now); err != nil {
+		if err := trackOutcome(tx, id, in.Subject, in.Steps, now); err != nil {
 			return err
 		}
 		if p.Cooldown > 0 {
@@ -676,7 +676,7 @@ func (c *Coordinator) Reconcile(ctx context.Context) (ReconcileReport, error) {
 						return err
 					}
 					if to == store.StepSucceeded {
-						return recordRetained(tx, in.ID, s, nil, c.now())
+						return recordRetained(tx, in.ID, in.Subject, s, nil, c.now())
 					}
 					return nil
 				}); err != nil {
@@ -698,7 +698,7 @@ func (c *Coordinator) Reconcile(ctx context.Context) (ReconcileReport, error) {
 			if err := c.finish(ctx, in.ID, store.IntentSucceeded, "verified by reconciliation after interruption"); err != nil {
 				return rep, err
 			}
-			if err := c.Store.Write(ctx, func(tx *store.Tx) error { return trackOutcome(tx, in.ID, in.Steps, c.now()) }); err != nil {
+			if err := c.Store.Write(ctx, func(tx *store.Tx) error { return trackOutcome(tx, in.ID, in.Subject, in.Steps, c.now()) }); err != nil {
 				return rep, err
 			}
 			rep.Settled = append(rep.Settled, in.ID)
@@ -752,35 +752,47 @@ func (c *Coordinator) Review(ctx context.Context, id int64, to store.IntentState
 	})
 }
 
-// recordRetained records the transfer a verified, data-retaining stop
-// kept in the client (SPEC §7.1). Sizes come from the plan when known;
-// reconciliation after a crash has only the step target.
-func recordRetained(tx *store.Tx, id int64, st store.Step, pl *Planned, now time.Time) error {
-	if st.Op != "client.stop" {
-		return nil
-	}
+// recordRetained records the transfer a verified step left in the client
+// with its data (SPEC §7.1): once the manager has failed its grab the
+// transfer is retained, running; a verified data-retaining stop then marks
+// it stopped. A private torrent under keep_running, or one whose stop did
+// not take effect, therefore stays counted as running. Sizes come from the
+// plan when known; reconciliation after a crash has only the subject.
+func recordRetained(tx *store.Tx, id int64, subject json.RawMessage, st store.Step, pl *Planned, now time.Time) error {
 	var tg struct {
 		ClientID string `json:"client_id"`
 		NativeID string `json:"native_id"`
 	}
-	if err := json.Unmarshal(st.Target, &tg); err != nil || tg.ClientID == "" || tg.NativeID == "" {
+	disp := store.RetainedStopped
+	switch st.Op {
+	case "client.stop":
+		_ = json.Unmarshal(st.Target, &tg)
+	case "manager.queue.fail":
+		_ = json.Unmarshal(subject, &tg)
+		disp = store.RetainedRunning
+	default:
+		return nil
+	}
+	if tg.ClientID == "" || tg.NativeID == "" {
 		// The step outcome must be recorded regardless; executors always
 		// target a transfer, so this only drops metadata for a malformed step.
 		return nil
 	}
-	r := store.RetainedTransfer{ClientID: tg.ClientID, NativeID: tg.NativeID, IntentID: id, RetainedAt: now}
+	r := store.RetainedTransfer{ClientID: tg.ClientID, NativeID: tg.NativeID, IntentID: id, RetainedAt: now, Disposition: disp}
 	if pl != nil && pl.ClientID == tg.ClientID && pl.NativeID == tg.NativeID {
 		r.Name, r.ManagerID = pl.Name, pl.ManagerID
 		r.Content = strings.Join(pl.Content, ",")
+		// Unknown logical size stays unknown: a transfer planned before
+		// its metadata arrived has no payload (verified zero), not a
+		// known zero size.
 		if v, ok := pl.Wanted.Get(); ok {
 			r.WantedBytes = &v
-		} else if pl.StateClass == domain.StateMetadata {
-			// Stopped before metadata arrived: there is no payload.
-			zero := int64(0)
-			r.WantedBytes = &zero
 		}
 		if v, ok := pl.Verified.Get(); ok {
 			r.VerifiedBytes = &v
+		} else if pl.StateClass == domain.StateMetadata {
+			zero := int64(0)
+			r.VerifiedBytes = &zero
 		}
 	}
 	return tx.RecordRetained(r)
@@ -790,7 +802,11 @@ func recordRetained(tx *store.Tx, id int64, st store.Step, pl *Planned, now time
 // manager step failed a grab with the manager owning the redownload. The
 // engine then records a replacement grab, its progress, and completion as
 // separate outcomes.
-func trackOutcome(tx *store.Tx, id int64, steps []store.Step, now time.Time) error {
+func trackOutcome(tx *store.Tx, id int64, subject json.RawMessage, steps []store.Step, now time.Time) error {
+	var sub struct {
+		ClientID string `json:"client_id"`
+	}
+	_ = json.Unmarshal(subject, &sub)
 	for _, st := range steps {
 		if st.Op != "manager.queue.fail" {
 			continue
@@ -829,7 +845,7 @@ func trackOutcome(tx *store.Tx, id int64, steps []store.Step, now time.Time) err
 		}
 		_ = json.Unmarshal(base, &b)
 		return tx.CreateOutcome(store.RecoveryOutcome{IntentID: id, ManagerID: tg.ManagerID, Content: content, OldDownloadID: tg.DownloadID,
-			StartedAt: now, Search: store.SearchOutcome{Since: since, AfterID: b.MaxCommandID}})
+			OldClientID: sub.ClientID, StartedAt: now, Search: store.SearchOutcome{Since: since, AfterID: b.MaxCommandID}})
 	}
 	return nil
 }

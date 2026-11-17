@@ -299,9 +299,9 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 		add("public transfer", false, true, "private torrents are observation-only for recovery: stopping or replacing one may conflict with tracker obligations")
 	case optIn:
 		p.UnknownPrivacy = true
-		add("public transfer", true, true, "privacy cannot be known before metadata arrives ("+t.Latest.Private.String()+"). No payload has been "+
-			"downloaded, so stopping this torrent forfeits nothing and leaves no seeding or ratio obligation, whether its tracker is public or private; "+
-			"allowed by "+optFrom+" (set unknown_privacy."+string(wf)+" = false to refuse)")
+		add("public transfer", true, true, "privacy cannot be known before metadata arrives ("+t.Latest.Private.String()+"). The client reports "+
+			"no payload, so there is nothing to seed; this scope accepts stopping such a torrent (kept registered, with its category) by policy, "+
+			"allowed by "+optFrom+". Housekeeparr cannot read a tracker's rules: set unknown_privacy."+string(wf)+" = false if yours forbid it")
 	case policy.UnknownPrivacyDefined(wf):
 		add("public transfer", false, true, "privacy is unknown ("+t.Latest.Private.String()+") and this scope leaves such transfers alone for "+
 			string(wf)+" (unknown_privacy."+string(wf)+" = false, "+optFrom+")")
@@ -359,13 +359,15 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 		} else {
 			p.Effects = append(p.Effects, "the torrent is stopped and kept, with all downloaded data, in its current category")
 		}
-		add("retained-data ceiling", retainedOK(in, limits, t), true, retainedDetail(in, limits, t))
 	}
+	// Any replacement is gated on current retained capacity, whether or not
+	// this transfer is stopped; the transfer left behind must also fit.
+	p.Prerequisites = append(p.Prerequisites, capacityCheck(in, limits), roomCheck(in, limits, t, stop))
 	p.SideEffects = append(p.SideEffects,
-		"no file is deleted, moved, or renamed; the transfer and its data stay in the client "+
-			"(this build does not yet count retained transfers against capacity limits)",
-		"this build verifies the steps above and that the manager queued its search; whether the search finds and grabs a release, "+
-			"and how that download progresses, is not yet tracked here: check the manager's activity")
+		"no file is deleted, moved, or renamed; the transfer and its data stay in the client and are counted as retained "+
+			"(housekeeparr retained) until the client no longer lists it",
+		"after the steps above are verified, Housekeeparr follows the manager's replacement search, a replacement grab, and that "+
+			"download's progress as separate outcomes for a bounded time; a queued search does not mean a release will be found or grabbed")
 	if row != nil {
 		var keys []string
 		if key, ok := row.Latest.ContentKey(); ok {
@@ -483,50 +485,100 @@ func nonEmptyList(xs []string, def string) []string {
 	return xs
 }
 
-// retainedOK reports whether keeping one more stopped transfer stays
-// within the configured ceilings. With a byte ceiling, a retained transfer
-// of unknown size makes the total unknown, which is not treated as room.
-// retainedSize is the logical size a retained transfer adds. A transfer
-// stopped before its metadata arrived has no payload: it counts as zero.
-func retainedSize(t *store.TransferRecord) (int64, bool) {
-	if t.StateClass == domain.StateMetadata {
+// retainedAdds is what leaving this transfer behind adds to the retained
+// byte total: its logical wanted size when known. A transfer stopped
+// before its metadata arrived has no payload and, while stopped, cannot
+// obtain any, so it adds nothing (its logical size stays unknown and is
+// refreshed if it is resumed). Otherwise an unknown size is unknown, never
+// zero.
+func retainedAdds(t *store.TransferRecord, stop bool) (int64, bool) {
+	if v, ok := t.Latest.WantedBytes.Get(); ok {
+		return v, true
+	}
+	if stop && t.StateClass == domain.StateMetadata {
 		return 0, true
 	}
-	return t.Latest.WantedBytes.Get()
+	return 0, false
 }
 
-func retainedOK(in PlanInput, l policy.Limits, t *store.TransferRecord) bool {
-	if in.Retained.Count+1 > l.RetainedTransfers {
-		return false
+// capacityCheck is the gate on any replacement (SPEC §7.1): at or over a
+// configured retained ceiling, no new replacement is requested, whatever
+// this action itself would retain. With a byte ceiling, retained
+// transfers of unknown size make the total unknown, which is not room.
+func capacityCheck(in PlanInput, l policy.Limits) Check {
+	u := in.Retained
+	var over []string
+	if u.Count >= l.RetainedTransfers {
+		over = append(over, fmt.Sprintf("the retained-transfer ceiling is reached (%d of %d, from %s)", u.Count, l.RetainedTransfers, l.From("retained_transfers")))
 	}
 	if l.RetainedBytes > 0 {
-		size, known := retainedSize(t)
-		if !known || in.Retained.UnknownSize > 0 || in.Retained.KnownBytes+size > l.RetainedBytes {
-			return false
+		switch {
+		case u.UnknownSize > 0:
+			over = append(over, fmt.Sprintf("%d retained transfer(s) are of unknown size, so the byte ceiling %s (from %s) cannot be shown to have room",
+				u.UnknownSize, gib(l.RetainedBytes), l.From("retained_gib")))
+		case u.KnownBytes >= l.RetainedBytes:
+			over = append(over, fmt.Sprintf("the retained byte ceiling is reached (%s of %s, from %s)", gib(u.KnownBytes), gib(l.RetainedBytes), l.From("retained_gib")))
 		}
 	}
-	return true
+	d := usageDetail(u, l)
+	if len(over) > 0 {
+		d = strings.Join(over, "; ") + ". " + d + ". No replacement is requested in this scope until retained transfers are cleaned up " +
+			"outside Housekeeparr (see housekeeparr retained) or the ceiling is raised"
+	}
+	return Check{Name: "retained-data ceiling", Satisfied: len(over) == 0, Hard: true, Detail: d + capacityLimits}
 }
 
-func retainedDetail(in PlanInput, l policy.Limits, t *store.TransferRecord) string {
+// roomCheck is the incremental cost: the transfer this action leaves
+// behind, stopped or running, must itself fit.
+func roomCheck(in PlanInput, l policy.Limits, t *store.TransferRecord, stop bool) Check {
 	u := in.Retained
-	d := fmt.Sprintf("%d of %d retained transfers (limit from %s); known logical size %s", u.Count, l.RetainedTransfers,
-		l.From("retained_transfers"), gib(u.KnownBytes))
+	how := "kept running"
+	if stop {
+		how = "stopped and kept"
+	}
+	ok := u.Count+1 <= l.RetainedTransfers
+	d := fmt.Sprintf("this transfer is %s and counted as retained: %d of %d transfers afterwards", how, u.Count+1, l.RetainedTransfers)
+	if l.RetainedBytes > 0 {
+		size, known := retainedAdds(t, stop)
+		switch {
+		case !known:
+			ok = false
+			d += fmt.Sprintf("; its size is unknown, so the byte ceiling %s cannot be shown to hold", gib(l.RetainedBytes))
+		default:
+			ok = ok && u.KnownBytes+size <= l.RetainedBytes
+			d += fmt.Sprintf("; %s of %s afterwards", gib(u.KnownBytes+size), gib(l.RetainedBytes))
+			if size == 0 && t.StateClass == domain.StateMetadata {
+				d += " (it has no payload: metadata never arrived)"
+			}
+		}
+	}
+	if !stop {
+		d += "; a running transfer keeps downloading and seeding, so its use can grow up to its logical size"
+	}
+	return Check{Name: "room to retain this transfer", Satisfied: ok, Hard: true, Detail: d}
+}
+
+func usageDetail(u store.RetainedUsage, l policy.Limits) string {
+	d := fmt.Sprintf("%d of %d retained transfers (limit from %s)", u.Count, l.RetainedTransfers, l.From("retained_transfers"))
+	if u.Running > 0 {
+		d += fmt.Sprintf(", %d of them left running", u.Running)
+	}
+	d += "; known logical size " + gib(u.KnownBytes)
 	if u.UnknownSize > 0 {
 		d += fmt.Sprintf(", %d of unknown size", u.UnknownSize)
 	}
+	if u.NoPayload > 0 {
+		d += fmt.Sprintf(", %d stopped before metadata (no payload)", u.NoPayload)
+	}
 	if l.RetainedBytes > 0 {
 		d += fmt.Sprintf("; byte ceiling %s (from %s)", gib(l.RetainedBytes), l.From("retained_gib"))
-		if _, known := retainedSize(t); !known {
-			d += "; this transfer's size is unknown, so the ceiling cannot be shown to hold"
-		}
 	} else {
 		d += "; no byte ceiling is configured"
 	}
-	d += ". Shared files and hardlinks make logical size an estimate, not disk use; free space is not measured, so no free-space threshold is enforced." +
-		" At the ceiling, recovery stops until retained transfers are cleaned up outside Housekeeparr (see housekeeparr retained)"
 	return d
 }
+
+const capacityLimits = ". Shared files and hardlinks make logical size an estimate, not disk use; free space is not measured, so no free-space threshold is enforced"
 
 func gib(b int64) string { return fmt.Sprintf("%.1f GiB", float64(b)/(1<<30)) }
 

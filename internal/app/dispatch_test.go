@@ -582,8 +582,21 @@ func TestAutomaticMetadataRecoveryEndToEnd(t *testing.T) {
 				t.Fatalf("blocklist entries under the grabbed title: %v", ids)
 			}
 			ret, _ := w.st.RetainedTransfers(context.Background(), false, 0)
-			if len(ret) != 1 || ret[0].WantedBytes == nil || *ret[0].WantedBytes != 0 {
-				t.Fatalf("retained %+v (want zero payload bytes)", ret)
+			// No payload, but the logical size is not invented as zero.
+			if len(ret) != 1 || ret[0].WantedBytes != nil || ret[0].VerifiedBytes == nil || *ret[0].VerifiedBytes != 0 || ret[0].Disposition != store.RetainedStopped {
+				t.Fatalf("retained %+v (want unknown size, zero payload, stopped)", ret)
+			}
+			if u, _ := w.st.RetainedUsage(context.Background()); u.Count != 1 || u.NoPayload != 1 || u.UnknownSize != 0 || u.KnownBytes != 0 {
+				t.Fatalf("usage %+v", u)
+			}
+			// Resumed by the operator, it obtains metadata: its size is
+			// then accounted for from the client's listing.
+			w.client.Update(hashA, func(tr *domain.Transfer) {
+				tr.StateClass, tr.WantedBytes, tr.VerifiedBytes = domain.StateDownloading, domain.KnownValue(3*gib), domain.KnownValue(gib)
+			})
+			w.run(10 * time.Minute)
+			if u, _ := w.st.RetainedUsage(context.Background()); u.Count != 1 || u.NoPayload != 0 || u.KnownBytes != 3*gib {
+				t.Fatalf("usage after metadata arrived %+v", u)
 			}
 		})
 	}
@@ -622,8 +635,14 @@ func TestPrivateTorrentRecoveryEndToEnd(t *testing.T) {
 			if r := w.mgr.Removals()[0]; r != (arr.RemoveFlags{Blocklist: true}) {
 				t.Fatalf("flags %+v (removeFromClient must stay false)", r)
 			}
+			// Either way the torrent stays in the client with its data and
+			// counts as retained: stopped, or left running.
 			ret, _ := w.st.RetainedTransfers(context.Background(), false, 0)
-			if len(ret) != tc.stopped {
+			wantDisp := store.RetainedRunning
+			if tc.stopped == 1 {
+				wantDisp = store.RetainedStopped
+			}
+			if len(ret) != 1 || ret[0].Disposition != wantDisp {
 				t.Fatalf("retained %+v", ret)
 			}
 			ts, _ := w.client.ListTransfers(context.Background())
@@ -705,5 +724,53 @@ func TestUnknownPrivacyTorrentRecoveryEndToEnd(t *testing.T) {
 				t.Fatalf("removals %+v stops %v", r, s)
 			}
 		})
+	}
+}
+
+// R11: a recovery exempts only the physical transfer it handled (client
+// plus hash). The same hash on another client, in a shared outage there,
+// still counts: three simultaneous stalls on qbit2 hold recovery.
+func TestRecoveredHashDoesNotHideOtherClientOutage(t *testing.T) {
+	w := newWorld(t, "automatic", 20)
+	w.stalled(hashA, 1, 1)
+	w.run(4 * time.Hour)
+	if len(w.mgr.Removals()) != 1 {
+		t.Fatal("setup recovery failed")
+	}
+	w.client2.SetTransfers(
+		fake.Transfer(hashA, "Film.2020", domain.StateDownloading, 2*gib, 10*gib, t0),
+		fake.Transfer(hashB, "Manual.B", domain.StateDownloading, 2*gib, 10*gib, t0),
+		fake.Transfer(hashC, "Manual.C", domain.StateDownloading, 2*gib, 10*gib, t0))
+	w.radarr.SetQueue(fake.Movie(1, hashA, "Film.2020", "Film", 2020))
+	w.run(4 * time.Hour)
+	if n := len(w.radarr.Removals()); n != 0 {
+		t.Fatalf("shared outage on qbit2 should hold all 3 stalls; sent %d manager writes after the same hash was recovered on qbit", n)
+	}
+}
+
+// R11: a transfer a recovery left running is exempt only while no manager
+// associates it again. Once the same release is grabbed again it is a
+// candidate, so with two other stalls it is part of a 3-of-3 shared stall.
+func TestReassociatedRecoveredTransferCountsTowardHold(t *testing.T) {
+	w := newWorld(t, "automatic", 20)
+	w.stalled(hashA, 1, 1)
+	w.client.Update(hashA, func(tr *domain.Transfer) { tr.Private = domain.KnownValue(true) })
+	w.run(4 * time.Hour)
+	if r, s := w.mgr.Removals(), w.client.Stops(); len(r) != 1 || len(s) != 0 {
+		t.Fatalf("setup: removals %d stops %v", len(r), s)
+	}
+	ret, _ := w.st.RetainedTransfers(context.Background(), false, 0)
+	if len(ret) != 1 || ret[0].Disposition != store.RetainedRunning || ret[0].ClientID != "qbit" {
+		t.Fatalf("a torrent left running is not retained as running: %+v", ret)
+	}
+	// The manager grabs the same release again (same episode, so its
+	// content cooldown applies), and two other downloads stall with it.
+	snap, _ := w.mgr.Queue(context.Background())
+	w.mgr.SetQueue(append(snap.Items, fake.Episode(9, hashA, "Show.S01E01", "Show", 1, 1))...)
+	w.stalled(hashB, 2, 2)
+	w.stalled(hashC, 3, 3)
+	w.run(4 * time.Hour)
+	if r := w.mgr.Removals(); len(r) != 1 {
+		t.Fatalf("3 of 3 downloads stalled together on qbit, yet recovery dispatched: %+v", r)
 	}
 }

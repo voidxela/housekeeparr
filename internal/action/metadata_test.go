@@ -117,16 +117,19 @@ func TestMetadataRecoveryRefusals(t *testing.T) {
 	}
 }
 
-// A metadata-stage transfer has no payload, so it neither trips a byte
-// ceiling now nor (recorded as zero bytes) poisons it later.
+// A metadata-stage transfer has no payload, so stopping it does not trip a
+// byte ceiling; its logical size is still not invented (recorded unknown,
+// with zero verified payload, and refreshed if it is resumed).
 func TestMetadataRecoveryRetainsZeroBytes(t *testing.T) {
 	in := metadataInput()
 	optIn(&in)
 	in.Limits = policy.DefaultLimits()
 	in.Limits.RetainedBytes = 1 << 30
 	p, _ := Plan(in)
-	if c := find(p.Prerequisites, "retained-data ceiling"); c == nil || !c.Satisfied {
-		t.Fatalf("ceiling: %+v", c)
+	for _, name := range []string{"retained-data ceiling", "room to retain this transfer"} {
+		if c := find(p.Prerequisites, name); c == nil || !c.Satisfied {
+			t.Fatalf("%s: %+v", name, c)
+		}
 	}
 	if v, ok := p.Planned.Wanted.Get(); ok {
 		t.Fatalf("planned wanted size invented: %d", v)
