@@ -173,6 +173,7 @@ type layoutData struct {
 	Warnings  []string
 	Notice    string
 	CSRF      string
+	Authed    bool
 	Mode      string
 	Now       time.Time
 	Page      any
@@ -185,7 +186,7 @@ var errNotFound = errors.New("not found")
 func (s *Server) page(fn pageFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name, title, data, err := fn(r)
-		ld := layoutData{Title: title, Nav: name, Demo: s.svc.Origin() == store.OriginDemo, CSRF: s.csrfToken(),
+		ld := layoutData{Title: title, Nav: name, Demo: s.svc.Origin() == store.OriginDemo, CSRF: s.csrfToken(r), Authed: s.auth != nil,
 			Mode: string(s.svc.Config().Mode), Now: s.svc.Now(), Page: data, Notice: r.URL.Query().Get("notice")}
 		if c, cerr := s.svc.Overview(r.Context()); cerr == nil {
 			ld.Attention = c.Counts.Open + c.Counts.Acknowledged

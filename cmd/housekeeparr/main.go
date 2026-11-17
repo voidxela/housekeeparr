@@ -330,7 +330,12 @@ func cmdRun(args []string, out, errOut io.Writer) int {
 		"connections", len(conns.Meta), "interval", cfg.Polling.Interval.Duration)
 	var srv *web.Server
 	if cfg.Web.Enabled && !*headless {
-		srv, err = web.New(svc, web.Options{Listen: cfg.Web.Listen, Logger: log})
+		wo := web.Options{Listen: cfg.Web.Listen, Logger: log, AllowedHosts: cfg.Web.AllowedHosts, TLSCert: cfg.Web.TLSCert, TLSKey: cfg.Web.TLSKey,
+			TrustedProxy: cfg.Web.TrustedProxy}
+		if cfg.Web.Password != "" {
+			wo.Auth = &web.Auth{Username: cfg.Web.Username, Password: secrets["web.password"]}
+		}
+		srv, err = web.New(svc, wo)
 		if err != nil {
 			fmt.Fprintln(errOut, "web:", err)
 			stopRun("web interface failed to start")

@@ -28,6 +28,7 @@
     </nav>
     <div class="side-foot">
       <span class="mode mode-{{.Mode}}" title="Operating mode">{{if eq .Mode "paused"}}Paused{{else}}Observe-only{{end}}</span>
+      {{if .Authed}}<form method="post" action="/logout" class="logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button type="submit" class="secondary small">Sign out</button></form>{{end}}
       {{with .Worker}}
       <span class="worker worker-{{.State}}" title="{{.Explanation}}"><span class="dot" aria-hidden="true"></span>Worker {{.State}}{{if .HeartbeatAge}} · {{.HeartbeatAge}}{{end}}</span>
       {{end}}

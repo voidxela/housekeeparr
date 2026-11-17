@@ -381,6 +381,7 @@ test asserts the signal is `unsupported` and sends nothing.
 | 2026-11-17 | `7b4a32b`, `--only PreservedDataFailure` | Sonarr 4.0.20.3014 + Radarr 6.4.4.10685 with Transmission 4.1.4 | **passed** (both tests) |
 | 2026-11-17 | `7b4a32b`, `--only PreservedDataFailure` | same managers with Transmission 4.0.6 | **passed** (both tests) |
 | 2026-11-17 | `c423114`, `--only PreservedDataFailure` (Deluge `tracker_status` classification added at `fa5fbde`) | same managers with Deluge 2.2.0 | **passed** (both tests) |
+| 2026-11-17 | `30bc4b1`, `--only 'PreservedDataFailure\|PrivateRecoveryWorkflow'` (adds private unregistered fixtures; private and unknown-privacy rejections follow `private_recovery`) | same managers with Transmission 4.1.4; Transmission 4.0.6; Deluge 2.2.0 (one run each) | **all 6 tests passed on each**: public and private preserved-data handling, and the private no-progress recovery re-run with its changed assertion (a `running` retained record) |
 
 Observed: Transmission 4.0.6 and 4.1.4 reported `errorString` exactly as
 the tracker's failure reason (`Unregistered torrent`) while the torrent stayed
@@ -390,7 +391,12 @@ import-ambiguity check passed). The first `EpisodeSearch` completed without
 a grab within the harness's 30-second wait and the second grabbed; this is
 the harness's existing bounded retry, not a workflow effect.
 
-Registered in `action.Tested` for exactly these combinations. Not run:
+The private variants (`TestSonarrPrivatePreservedDataFailureWorkflow`,
+`TestRadarrPrivatePreservedDataFailureWorkflow`) grab a private release
+announcing to the same rejecting tracker and run under the default
+`private_recovery = "keep_running"`: only `manager.queue.fail` is sent, and
+the torrent stays downloading in the client, recorded as retained
+(`running`). Registered in `action.Tested` for exactly these combinations. Not run:
 qBittorrent and rTorrent (no tracker-result classification), automatic dispatch of this
 workflow on real instances (fixture-tested), and waiting out the real
 confirmation window.

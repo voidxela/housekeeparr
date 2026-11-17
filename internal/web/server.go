@@ -8,6 +8,7 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
 	"embed"
 	"encoding/hex"
 	"encoding/json"
@@ -36,6 +37,16 @@ var assets embed.FS
 type Options struct {
 	Listen string
 	Logger *slog.Logger
+	// Auth, when set, requires a session for everything but the login,
+	// health and static assets (SPEC §12).
+	Auth *Auth
+	// AllowedHosts extends the loopback Host allowlist.
+	AllowedHosts []string
+	// TLSCert/TLSKey serve HTTPS; TrustedProxy declares TLS terminated by
+	// a reverse proxy. A non-loopback listener needs Auth, AllowedHosts,
+	// and one of them.
+	TLSCert, TLSKey string
+	TrustedProxy    bool
 }
 
 // Server serves the interface.
@@ -46,19 +57,33 @@ type Server struct {
 	pages   map[string]*template.Template
 	csrfKey []byte
 	hosts   map[string]bool
+	auth    *authState
+	tlsCert string
+	tlsKey  string
 	http    *http.Server
 	static  http.Handler
 }
 
-// New builds a server. It refuses non-loopback listen addresses: remote
-// exposure requires authentication, which this release does not provide.
+// New builds a server. A non-loopback listen address requires
+// authentication, an explicit host allowlist, and TLS here or at a
+// declared reverse proxy.
 func New(svc *app.Service, o Options) (*Server, error) {
 	host, _, err := net.SplitHostPort(o.Listen)
 	if err != nil {
 		return nil, fmt.Errorf("listen address: %w", err)
 	}
 	if !isLoopback(host) {
-		return nil, fmt.Errorf("refusing to listen on %q: only loopback addresses are allowed without authentication", host)
+		switch {
+		case o.Auth == nil || o.Auth.Password == "":
+			return nil, fmt.Errorf("refusing to listen on %q: only loopback addresses are allowed without authentication", host)
+		case len(o.AllowedHosts) == 0:
+			return nil, fmt.Errorf("refusing to listen on %q without allowed host names", host)
+		case o.TLSCert == "" && !o.TrustedProxy:
+			return nil, fmt.Errorf("refusing to listen on %q without TLS or a declared TLS-terminating proxy", host)
+		}
+	}
+	if o.Auth != nil && o.Auth.Password == "" {
+		return nil, fmt.Errorf("authentication needs a password")
 	}
 	if o.Logger == nil {
 		o.Logger = slog.Default()
@@ -67,8 +92,17 @@ func New(svc *app.Service, o Options) (*Server, error) {
 	if _, err := rand.Read(key); err != nil {
 		return nil, err
 	}
-	s := &Server{svc: svc, log: o.Logger, listen: o.Listen, csrfKey: key,
-		hosts: map[string]bool{"localhost": true, "127.0.0.1": true, "::1": true, strings.Trim(host, "[]"): true}}
+	s := &Server{svc: svc, log: o.Logger, listen: o.Listen, csrfKey: key, tlsCert: o.TLSCert, tlsKey: o.TLSKey,
+		hosts: map[string]bool{"localhost": true, "127.0.0.1": true, "::1": true}}
+	if isLoopback(host) {
+		s.hosts[strings.Trim(host, "[]")] = true
+	}
+	for _, h := range o.AllowedHosts {
+		s.hosts[strings.ToLower(h)] = true
+	}
+	if s.auth, err = newAuthState(o.Auth, o.TLSCert != "" || o.TrustedProxy); err != nil {
+		return nil, err
+	}
 	if err := s.parseTemplates(); err != nil {
 		return nil, err
 	}
@@ -94,7 +128,12 @@ func (s *Server) ListenAndServe() error {
 	if err != nil {
 		return err
 	}
-	err = s.http.Serve(ln)
+	if s.tlsCert != "" {
+		s.http.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+		err = s.http.ServeTLS(ln, s.tlsCert, s.tlsKey)
+	} else {
+		err = s.http.Serve(ln)
+	}
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}
@@ -119,6 +158,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /connections", s.page(s.connections))
 	mux.Handle("GET /static/", s.static)
 	mux.HandleFunc("GET /healthz", s.healthz)
+	mux.HandleFunc("GET /login", s.login)
+	mux.HandleFunc("POST /login", s.login)
+	mux.HandleFunc("POST /logout", s.logout)
 	mux.HandleFunc("GET /api/v1/{resource}", s.api)
 	mux.HandleFunc("GET /api/v1/findings/{id}", s.apiFinding)
 	mux.HandleFunc("GET /api/v1/findings/{id}/preview", s.apiPreview)
@@ -137,8 +179,11 @@ func (s *Server) guard(next http.Handler) http.Handler {
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("Cross-Origin-Opener-Policy", "same-origin")
 		h.Set("Cross-Origin-Resource-Policy", "same-origin")
+		if s.tlsCert != "" {
+			h.Set("Strict-Transport-Security", "max-age=31536000")
+		}
 		if !s.hostAllowed(r.Host) {
-			http.Error(w, "Host not allowed. Housekeeparr only answers to loopback host names.", http.StatusMisdirectedRequest)
+			http.Error(w, "Host not allowed. Housekeeparr only answers to loopback host names and web.allowed_hosts.", http.StatusMisdirectedRequest)
 			return
 		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -146,6 +191,12 @@ func (s *Server) guard(next http.Handler) http.Handler {
 				http.Error(w, "Cross-origin request refused.", http.StatusForbidden)
 				return
 			}
+		}
+		if s.auth != nil {
+			h.Set("Cache-Control", "no-store")
+		}
+		if !s.authorize(w, r) {
+			return
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -176,15 +227,21 @@ func (s *Server) sameOrigin(r *http.Request) bool {
 	return err == nil && strings.EqualFold(u.Host, r.Host)
 }
 
-func (s *Server) csrfToken() string {
+// csrfToken is bound to the session when authentication is on, so a
+// token from one session is useless in another.
+func (s *Server) csrfToken(r *http.Request) string {
 	m := hmac.New(sha256.New, s.csrfKey)
 	m.Write([]byte("housekeeparr-form"))
+	if s.auth != nil {
+		nonce, _ := s.auth.session(r, time.Now())
+		m.Write([]byte("|" + nonce))
+	}
 	return hex.EncodeToString(m.Sum(nil))
 }
 
 func (s *Server) csrfValid(r *http.Request) bool {
 	got := r.PostFormValue("csrf")
-	return got != "" && hmac.Equal([]byte(got), []byte(s.csrfToken()))
+	return got != "" && hmac.Equal([]byte(got), []byte(s.csrfToken(r)))
 }
 
 func (s *Server) findingAction(w http.ResponseWriter, r *http.Request) {

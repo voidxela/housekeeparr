@@ -44,3 +44,36 @@ func TestNotifyTargets(t *testing.T) {
 		}
 	}
 }
+
+func TestWebRemoteExposureRequirements(t *testing.T) {
+	ok := "[web]\nenabled = true\nlisten = \"0.0.0.0:8484\"\npassword = \"env:HK_WEB\"\nallowed_hosts = [\"hk.example.org\"]\ntrusted_proxy = true\n"
+	cfg, probs, err := Parse([]byte(notifyBase+ok), "/x/h.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range probs {
+		if p.Severity == "error" {
+			t.Fatalf("valid remote web rejected: %v", p)
+		}
+	}
+	if cfg.Web.Username != "admin" {
+		t.Fatalf("username default %q", cfg.Web.Username)
+	}
+	for name, src := range map[string]string{
+		"no password":      "[web]\nenabled = true\nlisten = \"0.0.0.0:8484\"\nallowed_hosts = [\"h\"]\ntrusted_proxy = true\n",
+		"no hosts":         "[web]\nenabled = true\nlisten = \"0.0.0.0:8484\"\npassword = \"env:HK_WEB\"\ntrusted_proxy = true\n",
+		"no TLS or proxy":  "[web]\nenabled = true\nlisten = \"0.0.0.0:8484\"\npassword = \"env:HK_WEB\"\nallowed_hosts = [\"h\"]\n",
+		"literal password": "[web]\nenabled = true\nlisten = \"127.0.0.1:8484\"\npassword = \"hunter2\"\n",
+		"half TLS":         "[web]\nenabled = true\nlisten = \"127.0.0.1:8484\"\ntls_cert = \"/c.pem\"\n",
+		"relative TLS":     "[web]\nenabled = true\nlisten = \"127.0.0.1:8484\"\ntls_cert = \"c.pem\"\ntls_key = \"k.pem\"\n",
+	} {
+		_, probs, _ := Parse([]byte(notifyBase+src), "/x/h.toml")
+		bad := false
+		for _, p := range probs {
+			bad = bad || p.Severity == "error" && strings.HasPrefix(p.Field, "web")
+		}
+		if !bad {
+			t.Errorf("%s accepted", name)
+		}
+	}
+}

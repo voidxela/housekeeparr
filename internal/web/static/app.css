@@ -243,3 +243,9 @@ progress.bar::-moz-progress-bar { background: var(--accent); }
 .check-mark { display: inline-block; min-width: 3.5rem; font-weight: 600; font-size: .8rem; letter-spacing: .03em; }
 .check-ok .check-mark { color: var(--ok, #1f7a3a); }
 .check-fail .check-mark { color: var(--bad, #a8261b); }
+
+/* Sign-in page and sign-out control */
+main.login { max-width: 24rem; margin: 10vh auto; padding: 0 1rem; }
+main.login h1 { display: flex; align-items: center; gap: .5rem; font-size: 1.25rem; }
+main.login input { width: 100%; box-sizing: border-box; }
+form.logout { display: inline; }

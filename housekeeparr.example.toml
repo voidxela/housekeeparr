@@ -117,10 +117,23 @@ missing_search = false
 dir = "state"
 
 [web]
-# The interface is optional. It binds to loopback only in this milestone;
-# use an SSH tunnel or a local reverse proxy for remote viewing.
+# The interface is optional and binds to loopback by default.
 enabled = true
 listen = "127.0.0.1:8484"
+# Authentication: a password (secret reference) requires signing in
+# (username default "admin"); the read-only /api/v1 also accepts HTTP Basic.
+# Sessions last 12 hours and end when Housekeeparr restarts; five failed
+# sign-ins within 15 minutes pause sign-in.
+# password = "file:/home/me/.config/housekeeparr/web-password"
+#
+# Remote access (a non-loopback listen address) additionally requires the
+# host names it is reached by, and TLS here (tls_cert/tls_key, absolute
+# paths) or trusted_proxy = true when a reverse proxy terminates TLS.
+# listen = "0.0.0.0:8484"
+# allowed_hosts = ["housekeeparr.example.lan"]
+# tls_cert = "/etc/housekeeparr/cert.pem"
+# tls_key = "/etc/housekeeparr/key.pem"
+# trusted_proxy = false
 
 [polling]
 interval = "10m"         # transfer sampling interval (proposed default)

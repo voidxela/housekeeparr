@@ -244,6 +244,20 @@ type StateConfig struct {
 type WebConfig struct {
 	Enabled bool   `toml:"enabled"`
 	Listen  string `toml:"listen"`
+	// Password (a secret reference) turns on authentication: a login with
+	// Username (default "admin") and signed session cookies; the read-only
+	// API also accepts HTTP Basic with the same credentials.
+	Username string    `toml:"username"`
+	Password SecretRef `toml:"password"`
+	// AllowedHosts are the host names the interface answers to besides
+	// loopback names (DNS-rebinding protection); required off loopback.
+	AllowedHosts []string `toml:"allowed_hosts"`
+	// TLSCert and TLSKey serve HTTPS directly. TrustedProxy instead
+	// declares that a reverse proxy terminates TLS in front of a private
+	// listener. A non-loopback listener requires one of them.
+	TLSCert      string `toml:"tls_cert"`
+	TLSKey       string `toml:"tls_key"`
+	TrustedProxy bool   `toml:"trusted_proxy"`
 }
 
 // NotifyConfig is one webhook notification target (SPEC §11.2). The URL is
@@ -476,9 +490,30 @@ func validate(cfg *Config, md toml.MetaData) []Problem {
 		errf("state.dir", "required")
 	}
 
-	// Web interface: loopback only until authentication exists.
+	// Web interface: loopback unless authentication, an explicit host
+	// allowlist, and TLS (or a declared TLS-terminating proxy) are set.
 	if cfg.Web.Enabled || md.IsDefined("web", "listen") {
-		host, port, err := net.SplitHostPort(cfg.Web.Listen)
+		w := cfg.Web
+		if err := w.Password.validateSyntax(); err != nil {
+			errf("web.password", "%v", err)
+		}
+		if (w.TLSCert == "") != (w.TLSKey == "") {
+			errf("web.tls_cert", "tls_cert and tls_key must be set together")
+		}
+		for _, p := range []string{w.TLSCert, w.TLSKey} {
+			if p != "" && !filepath.IsAbs(p) {
+				errf("web.tls_cert", "TLS file paths must be absolute")
+			}
+		}
+		if w.TLSCert != "" && w.TrustedProxy {
+			errf("web.trusted_proxy", "choose either TLS files or a trusted proxy, not both")
+		}
+		for _, h := range w.AllowedHosts {
+			if h == "" || strings.ContainsAny(h, ":/ ") {
+				errf("web.allowed_hosts", "%q must be a bare host name", h)
+			}
+		}
+		host, port, err := net.SplitHostPort(w.Listen)
 		if err != nil {
 			errf("web.listen", "must be host:port, e.g. 127.0.0.1:8484")
 		} else {
@@ -486,8 +521,18 @@ func validate(cfg *Config, md toml.MetaData) []Problem {
 				errf("web.listen", "invalid port %q", port)
 			}
 			if !isLoopbackHost(host) {
-				errf("web.listen", "%q is not a loopback address; remote exposure requires authentication and TLS or a trusted reverse proxy, which this milestone does not implement. Bind to 127.0.0.1 and use an SSH tunnel or local reverse proxy", host)
+				switch {
+				case w.Password == "":
+					errf("web.listen", "%q is not a loopback address; remote exposure requires authentication: set web.password (a secret reference)", host)
+				case len(w.AllowedHosts) == 0:
+					errf("web.allowed_hosts", "required when listening on %q: the host names the interface is reached by", host)
+				case w.TLSCert == "" && !w.TrustedProxy:
+					errf("web.listen", "%q is not a loopback address; set tls_cert/tls_key, or trusted_proxy = true when a reverse proxy terminates TLS", host)
+				}
 			}
+		}
+		if cfg.Web.Username == "" {
+			cfg.Web.Username = "admin"
 		}
 	}
 
@@ -1442,6 +1487,7 @@ func (c *Config) ResolvedSecrets(lookupEnv func(string) (string, bool)) (map[str
 	for _, n := range c.Notify {
 		resolve("notify."+n.ID+".url", n.URL)
 	}
+	resolve("web.password", c.Web.Password)
 	return out, probs
 }
 
