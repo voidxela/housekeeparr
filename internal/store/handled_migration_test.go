@@ -255,3 +255,52 @@ func TestForwardMigrationV14MissingContent(t *testing.T) {
 		t.Fatalf("missing content %v %v", list, err)
 	}
 }
+
+// A database at schema 15 (with missing content) opens at schema 16, and
+// a source's streak of good reads carries across reads.
+func TestForwardMigrationV15Sources(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(dir, dbFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, _ := migrationFS.ReadDir("migrations")
+	for _, e := range entries {
+		if e.Name() >= "0016" {
+			break
+		}
+		body, _ := migrationFS.ReadFile("migrations/" + e.Name())
+		if _, err := db.Exec(string(body)); err != nil {
+			t.Fatalf("%s: %v", e.Name(), err)
+		}
+	}
+	for _, q := range []string{
+		"INSERT INTO meta(key, value) VALUES('schema_version','15'),('data_origin','live'),('instance_id','v15inst'),('created_at','0')",
+		"INSERT INTO missing_content(manager_id, content_key, title, first_seen, last_seen) VALUES('sonarr','episode:1','t',1,1)",
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+	s, err := Open(ctx, dir, Options{})
+	if err != nil {
+		t.Fatalf("open v15 database: %v", err)
+	}
+	defer s.Close()
+	if r, _ := s.MissingRecord(ctx, "sonarr", "episode:1"); r == nil {
+		t.Fatal("missing content lost")
+	}
+	at := time.Unix(1000, 0)
+	for i := 0; i < 2; i++ {
+		if err := s.Write(ctx, func(tx *Tx) error {
+			return tx.SaveSources(domain.SourceSnapshot{ManagerID: "sonarr", CollectedAt: at, Sources: []domain.Source{{ID: 1, Name: "T", Protocol: "torrent", AutomaticSearch: true}}})
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if list, _ := s.Sources(ctx, "sonarr"); len(list) != 1 || list[0].OKStreak != 2 {
+		t.Fatalf("sources %+v", list)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/voidxela/housekeeparr/internal/action"
@@ -264,6 +265,11 @@ func (s *Service) followSearches(ctx context.Context, now time.Time) error {
 					if m[1] == "0" {
 						state, note = store.MissingNoResult, "the search completed and the manager reported no release downloaded ("+c.Message+"); "+
 							"that is not evidence that no release exists or that every source was searched"
+						if cov, err := s.coverageNote(ctx, it.ManagerID, *it.LastSearchAt); err != nil {
+							return err
+						} else if cov != "" {
+							note += "; " + cov
+						}
 					} else {
 						state, note = store.MissingGrabbed, "the search completed and the manager reported "+m[1]+" release(s) downloaded"
 					}
@@ -309,4 +315,32 @@ func (s *Service) searchCommandID(ctx context.Context, intentID int64) (int64, e
 		return ev.Response.CommandID, nil
 	}
 	return 0, nil
+}
+
+// coverageNote describes sources the manager had disabled when a search
+// ran: contemporaneous evidence of incomplete coverage (possible impact),
+// not proof that the search missed something. "" when none is known.
+func (s *Service) coverageNote(ctx context.Context, managerID string, at time.Time) (string, error) {
+	srcs, err := s.st.Sources(ctx, managerID)
+	if err != nil || len(srcs) == 0 {
+		return "", err
+	}
+	var down []string
+	usable := 0
+	for _, src := range srcs {
+		if !src.AutomaticSearch || src.Protocol != "torrent" {
+			continue
+		}
+		usable++
+		if src.Unavailable(at) {
+			down = append(down, src.Name)
+		}
+	}
+	switch {
+	case usable == 0:
+		return "coverage: no indexer was enabled for automatic torrent searches", nil
+	case len(down) > 0:
+		return fmt.Sprintf("coverage incomplete: %d of %d torrent indexers were disabled by the manager after failures (%s)", len(down), usable, strings.Join(down, ", ")), nil
+	}
+	return "", nil
 }

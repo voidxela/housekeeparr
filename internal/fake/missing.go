@@ -11,12 +11,14 @@ import (
 
 // missingState is a fake manager's simulated missing list and searches.
 type missingState struct {
-	items     []domain.MissingItem
-	err       error
-	partial   bool
-	searches  [][]int64
-	searchErr error
-	reads     int
+	items      []domain.MissingItem
+	err        error
+	partial    bool
+	searches   [][]int64
+	searchErr  error
+	reads      int
+	sources    []domain.Source
+	sourcesSet bool
 }
 
 // SetMissing sets the simulated missing list.
@@ -109,4 +111,22 @@ func MissingEpisode(id, seriesID int64, title string, aired time.Time) domain.Mi
 // MissingMovie builds a monitored, available, missing Radarr movie.
 func MissingMovie(id int64, title string) domain.MissingItem {
 	return domain.MissingItem{ContentKind: "movie", ContentID: id, Title: title, Monitored: true, Available: domain.KnownValue(true)}
+}
+
+// SetSources sets the simulated search sources; until set, reads report
+// the capability as unsupported.
+func (m *Manager) SetSources(srcs ...domain.Source) {
+	m.mu.Lock()
+	m.ms.sources, m.ms.sourcesSet = srcs, true
+	m.mu.Unlock()
+}
+
+// Sources returns the simulated search sources.
+func (m *Manager) Sources(context.Context) (domain.SourceSnapshot, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.ms.sourcesSet {
+		return domain.SourceSnapshot{}, &adapter.Error{Class: adapter.ErrUnsupported, Op: "fake.sources", Message: "not simulated"}
+	}
+	return domain.SourceSnapshot{ManagerID: m.id, CollectedAt: m.now(), Sources: append([]domain.Source(nil), m.ms.sources...)}, nil
 }

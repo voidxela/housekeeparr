@@ -1060,3 +1060,59 @@ func TestProactiveSearchRefusals(t *testing.T) {
 		}
 	})
 }
+
+// SPEC §9.2: a torrent indexer the manager disabled after failures is a
+// finding (incomplete coverage) that resolves only after two consecutive
+// reads without it disabled; no automatic torrent indexer at all is a
+// configuration finding.
+func TestSourceFindings(t *testing.T) {
+	w := newWorld(t, "observe", 20)
+	until := t0.Add(6 * time.Hour)
+	fail := t0
+	w.mgr.SetSources(domain.Source{ID: 1, Name: "Tracker One", Protocol: "torrent", AutomaticSearch: true, DisabledUntil: &until, LastFailure: &fail},
+		domain.Source{ID: 2, Name: "News", Protocol: "usenet", AutomaticSearch: true})
+	w.run(10 * time.Minute)
+	open := func(typ string) []domain.Finding {
+		fs, _ := w.st.Findings(context.Background(), store.FindingFilter{Type: typ})
+		var out []domain.Finding
+		for _, f := range fs {
+			if f.State != domain.FindingResolved {
+				out = append(out, f)
+			}
+		}
+		return out
+	}
+	if fs := open("source.unavailable"); len(fs) != 1 || !strings.Contains(fs[0].Title, "Tracker One") {
+		t.Fatalf("unavailable findings %+v", fs)
+	}
+	w.mgr.SetSources(domain.Source{ID: 1, Name: "Tracker One", Protocol: "torrent", AutomaticSearch: true},
+		domain.Source{ID: 2, Name: "News", Protocol: "usenet", AutomaticSearch: true})
+	w.run(10 * time.Minute)
+	if fs := open("source.unavailable"); len(fs) != 1 {
+		t.Fatalf("resolved after one good read: %+v", fs)
+	}
+	w.run(10 * time.Minute)
+	if fs := open("source.unavailable"); len(fs) != 0 {
+		t.Fatalf("not resolved after two good reads: %+v", fs)
+	}
+	w.mgr.SetSources(domain.Source{ID: 2, Name: "News", Protocol: "usenet", AutomaticSearch: true})
+	w.run(10 * time.Minute)
+	if fs := open("source.none"); len(fs) != 1 {
+		t.Fatalf("no torrent indexer: %+v", fs)
+	}
+}
+
+// A search that found nothing while a torrent indexer was disabled says
+// that coverage was incomplete, as possible impact rather than proof.
+func TestSearchOutcomeNotesIncompleteCoverage(t *testing.T) {
+	w := searchWorld(t, "automatic")
+	until := t0.Add(48 * time.Hour)
+	w.mgr.SetSources(domain.Source{ID: 1, Name: "Tracker One", Protocol: "torrent", AutomaticSearch: true, DisabledUntil: &until},
+		domain.Source{ID: 3, Name: "Tracker Two", Protocol: "torrent", AutomaticSearch: true})
+	w.mgr.SetMissing(fake.MissingEpisode(102, 3, "Show S01E02", t0.Add(-48*time.Hour)))
+	w.runSearches(time.Hour)
+	it, _ := w.st.MissingRecord(context.Background(), "sonarr", "episode:102")
+	if it.State != store.MissingNoResult || !strings.Contains(it.Note, "coverage incomplete: 1 of 2 torrent indexers") || !strings.Contains(it.Note, "Tracker One") {
+		t.Fatalf("%s: %s", it.State, it.Note)
+	}
+}
