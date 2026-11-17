@@ -1502,3 +1502,14 @@ max_backoff = "3h"
 		t.Fatalf("second search failed to run when spacing elapsed: %v", got)
 	}
 }
+
+func TestUnsentSearchDoesNotConsumeInstallationSpacing(t *testing.T) {
+	w := searchWorld(t, "automatic")
+	w.mgr.SetMissing(fake.MissingEpisode(102, 1, "Already searched", t0.Add(-time.Hour)),
+		fake.MissingEpisode(103, 1, "Other missing episode", t0.Add(-2*time.Hour)))
+	w.mgr.AddCommand(arr.Command{ID: 90, Name: "EpisodeSearch", Status: "started", EpisodeIDs: []int64{102}, Queued: t0})
+	w.runSearches(10 * time.Minute)
+	if s := w.mgr.Searches(); len(s) != 1 || s[0][0] != 103 {
+		t.Fatalf("a provably unsent search delayed unrelated eligible work: %v", s)
+	}
+}

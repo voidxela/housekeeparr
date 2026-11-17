@@ -211,6 +211,9 @@ func (s *Service) sendSearch(ctx context.Context, it store.MissingRecord, p *act
 	c := &action.Coordinator{Store: s.st, Executor: s.executor, Gate: gate{s}, Now: s.now, Actor: "automation"}
 	res, err := c.Execute(ctx, *p)
 	var ref *action.RefusedError
+	if errors.Is(err, action.ErrJournal) {
+		return rep, err
+	}
 	if errors.As(err, &ref) || (err != nil && res.IntentID == 0) {
 		rep.Waiting = append(rep.Waiting, fmt.Sprintf("%s|%s refused before anything was sent: %v", it.ManagerID, it.ContentKey, err))
 		return rep, nil
@@ -219,6 +222,14 @@ func (s *Service) sendSearch(ctx context.Context, it store.MissingRecord, p *act
 		return rep, err
 	}
 	now := s.now()
+	if res.State == store.IntentCancelled {
+		next := now.Add(s.cfg.Polling.Interval.Duration)
+		note := "the search was not sent: " + res.Detail
+		rep.Waiting = append(rep.Waiting, it.ManagerID+"|"+it.ContentKey+": "+note)
+		return rep, s.st.Write(ctx, func(tx *store.Tx) error {
+			return tx.SetMissingSearch(it.ManagerID, it.ContentKey, store.MissingNotSearched, note, &res.IntentID, nil, &next, false)
+		})
+	}
 	rep.Sent, rep.IntentID, rep.Outcome = it.ManagerID+"|"+it.ContentKey, res.IntentID, string(res.State)
 	id := res.IntentID
 	state, note := store.MissingSearched, "the manager accepted the search; whether it finds or grabs a release is observed in the manager's queue"
@@ -228,20 +239,14 @@ func (s *Service) sendSearch(ctx context.Context, it store.MissingRecord, p *act
 	case store.IntentSucceeded:
 	case store.IntentUncertain:
 		state, note, sev = store.MissingUncertain, "the search request's outcome could not be established; held for review (not re-sent)", domain.SeverityError
-	case store.IntentCancelled:
-		state, note, sev = store.MissingNotSearched, "the search was not sent: "+res.Detail, domain.SeverityNotice
-		next = now.Add(s.cfg.Polling.Interval.Duration)
 	default:
 		state, note, sev = store.MissingNotSearched, "the search was not accepted: "+res.Detail, domain.SeverityWarning
 	}
 	err = s.st.Write(ctx, func(tx *store.Tx) error {
-		if res.State == store.IntentFailed || res.State == store.IntentCancelled {
+		if res.State == store.IntentFailed {
 			if err := tx.SetMissingSearch(it.ManagerID, it.ContentKey, state, note, &id, &now, &next, false); err != nil {
 				return err
 			}
-		}
-		if res.State == store.IntentCancelled {
-			return nil
 		}
 		return notify.EnqueueEvent(tx, s.cfg.Notify, notify.Event{DedupKey: fmt.Sprintf("search|%d", id), Kind: notify.KindAction, Severity: sev,
 			Title: "Search for missing " + it.Title + ": " + string(res.State), Body: note}, now)
