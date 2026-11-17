@@ -144,7 +144,7 @@ func TestSonarrPartialPackWorkflow(t *testing.T) {
 	// raises the partial-pack finding (import_settle shortened to 1m), and
 	// automatic dispatch plans, revalidates with live import evidence, and
 	// sends the ignore-path removal through the coordinator.
-	clearPack(t, sid, e)
+	clearPack(t, sid, e, eps[3].ID)
 	gone := len(packRows(a, e.Hash)) == 0
 	status := a.command("RefreshMonitoredDownloads")
 	time.Sleep(10 * time.Second)
@@ -254,7 +254,7 @@ func qbtPaths(t *testing.T, hash string) string {
 
 // clearPack runs the engine and automatic dispatch in-process until the
 // partial-pack action is journaled, and requires it to succeed.
-func clearPack(t *testing.T, sid int, e managedEntry) {
+func clearPack(t *testing.T, sid int, e managedEntry, missingEp int64) {
 	t.Helper()
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -300,7 +300,8 @@ func clearPack(t *testing.T, sid int, e managedEntry) {
 						}
 					}
 					action.Tested = []action.TestedWorkflow{{Workflow: policy.WorkflowPartialPack, Manager: adapter.KindSonarr, ManagerVersion: strings.TrimPrefix(mp.Version, "v"),
-						Client: adapter.Kind(managerClientKind()), ClientVersion: cv}}
+						Client: adapter.Kind(managerClientKind()), ClientVersion: cv},
+						{Workflow: policy.WorkflowMissingSearch, Manager: adapter.KindSonarr, ManagerVersion: strings.TrimPrefix(mp.Version, "v")}}
 				}
 			}
 		}
@@ -319,6 +320,21 @@ func clearPack(t *testing.T, sid int, e managedEntry) {
 				t.Fatalf("action %+v steps %s", acts[0], b)
 			}
 			t.Logf("partial-pack action #%d succeeded after %d cycle(s); %d finding(s)", acts[0].ID, i, len(fs))
+			// The follow-up: one targeted search for the episode the pack
+			// did not contain, under partial_pack alone (missing_search is
+			// not enabled here), never a season search.
+			key := fmt.Sprintf("episode:%d", missingEp)
+			if it, _ := st.MissingRecord(ctx, "sonarr", key); it == nil || it.Origin != "pack" {
+				t.Fatalf("follow-up not marked: %+v", it)
+			}
+			sr, err := svc.DispatchSearches(ctx, rep.Fresh())
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Logf("follow-up search: %+v", sr)
+			if sr.Sent != "sonarr|"+key || sr.Outcome != string(store.IntentSucceeded) {
+				t.Fatalf("targeted search not sent for %s: %+v", key, sr)
+			}
 			return
 		}
 		if time.Now().After(deadline) {
