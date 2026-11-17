@@ -300,11 +300,10 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 	from := nonEmpty(in.Policy.PrivateRecoveryFrom, "no policy stated")
 	// private_recovery covers torrents known to be private and, unless the
 	// scope turned that off, torrents of unknown privacy (user decisions).
-	// Preserved-data handling of a tracker rejection follows it for torrents
-	// known to be private (user decision 2026-11-17); unknown privacy stays
-	// observation-only there.
-	privateNP := (wf == policy.WorkflowNoProgressRecovery && ((known && priv) || (!known && optIn))) ||
-		(wf == policy.WorkflowPreservedDataFailure && known && priv)
+	// Preserved-data handling of a tracker rejection follows it the same way
+	// (user decision 2026-11-17).
+	privateNP := (wf == policy.WorkflowNoProgressRecovery || wf == policy.WorkflowPreservedDataFailure) &&
+		((known && priv) || (!known && optIn))
 	switch {
 	case known && !priv:
 		add("public transfer", true, true, "the client reports the torrent as public")

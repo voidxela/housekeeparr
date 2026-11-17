@@ -1,6 +1,7 @@
 package action
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -122,8 +123,8 @@ func TestPrivateModeScope(t *testing.T) {
 }
 
 // A private torrent its tracker rejects as not registered follows
-// private_recovery (user decision 2026-11-17); unknown privacy stays
-// observation-only for this workflow.
+// private_recovery (user decision 2026-11-17), and so does one of unknown
+// privacy unless the scope turned unknown_privacy.preserved_data_failure off.
 func TestPreservedDataFailureFollowsPrivateRecovery(t *testing.T) {
 	base := func() PlanInput {
 		in := planInput()
@@ -151,13 +152,17 @@ func TestPreservedDataFailureFollowsPrivateRecovery(t *testing.T) {
 			}
 		})
 	}
-	t.Run("unknown privacy", func(t *testing.T) {
-		in := base()
-		in.Transfer.Latest.Private = domain.UnknownValue[bool]("not reported")
-		in.Policy.PrivateRecovery = policy.PrivateKeepRunning
-		p, _ := Plan(in)
-		if c := find(p.Prerequisites, "public transfer"); c == nil || c.Satisfied || p.PrivateMode != "" {
-			t.Fatalf("unknown privacy acted on: %+v", c)
-		}
-	})
+	for _, allowed := range []bool{true, false} {
+		t.Run(fmt.Sprintf("unknown privacy, allowed=%v", allowed), func(t *testing.T) {
+			in := base()
+			in.Transfer.Latest.Private = domain.UnknownValue[bool]("not reported")
+			in.Policy.PrivateRecovery = policy.PrivateKeepRunning
+			in.Policy.UnknownPrivacy = []policy.WorkflowPermission{{Workflow: policy.WorkflowPreservedDataFailure, Enabled: allowed, From: "test"}}
+			p, _ := Plan(in)
+			c := find(p.Prerequisites, "public transfer")
+			if c == nil || c.Satisfied != allowed || (p.PrivateMode == policy.PrivateKeepRunning) != allowed || (allowed && hasOp(p, "client.stop")) {
+				t.Fatalf("privacy check %+v mode %q", c, p.PrivateMode)
+			}
+		})
+	}
 }

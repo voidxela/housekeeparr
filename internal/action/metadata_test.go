@@ -139,7 +139,7 @@ func TestMetadataRecoveryRetainsZeroBytes(t *testing.T) {
 // The setting exists only for the workflows that define it: a forged entry
 // for another workflow is ignored.
 func TestUnknownPrivacySettingIsLimitedToDefinedWorkflows(t *testing.T) {
-	e := policy.Effective{UnknownPrivacy: []policy.WorkflowPermission{{Workflow: policy.WorkflowPreservedDataFailure, Enabled: true, From: "forged"}}}
+	e := policy.Effective{UnknownPrivacy: []policy.WorkflowPermission{{Workflow: policy.WorkflowPartialPack, Enabled: true, From: "forged"}}}
 	if ok, _ := e.AllowsUnknownPrivacy(policy.WorkflowPreservedDataFailure); ok {
 		t.Fatal("unknown privacy accepted for a workflow that does not define it")
 	}

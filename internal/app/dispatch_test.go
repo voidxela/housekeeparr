@@ -800,9 +800,10 @@ func TestPreservedDataFailureEndToEnd(t *testing.T) {
 		{"private", func(tr *domain.Transfer) {
 			tr.SourceFailure, tr.Private = domain.KnownValue(domain.SourceUnregistered), domain.KnownValue(true)
 		}, 1, 0, domain.FindingSourceRejected},
+		// Unknown privacy is treated as private: blocklisted, never stopped.
 		{"unknown privacy", func(tr *domain.Transfer) {
 			tr.SourceFailure, tr.Private = domain.KnownValue(domain.SourceUnregistered), domain.UnknownValue[bool]("not reported")
-		}, 0, 0, domain.FindingSourceRejected},
+		}, 1, 0, domain.FindingSourceRejected},
 		{"local error", func(tr *domain.Transfer) {
 			tr.StateClass, tr.NativeState = domain.StateError, "local-error"
 			tr.SourceFailure = domain.UnknownValue[domain.SourceFailure]("a local error hides any tracker result")
@@ -850,10 +851,6 @@ func TestPreservedDataFailureEndToEnd(t *testing.T) {
 				t.Fatal(err)
 			}
 			switch tc.name {
-			case "unknown privacy":
-				if pv.Proposal == nil || !slicesContainsBlocker(pv.Proposal, "public transfer") {
-					t.Fatalf("unknown-privacy transfer not held: %+v", pv)
-				}
 			case "local error":
 				if pv.Proposal != nil || !strings.Contains(pv.NoAction, "diagnosis only") {
 					t.Fatalf("local error has an action: %+v", pv)

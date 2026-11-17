@@ -140,7 +140,7 @@ func ValidPrivateMode(m PrivateMode) bool {
 //   - No-progress recovery: unknown privacy (for example qBittorrent 4.x)
 //     is treated as private, so the transfer follows PrivateMode.
 func UnknownPrivacyDefined(w Workflow) bool {
-	return w == WorkflowMetadataRecovery || w == WorkflowNoProgressRecovery
+	return w == WorkflowMetadataRecovery || w == WorkflowNoProgressRecovery || w == WorkflowPreservedDataFailure
 }
 
 // AllowsUnknownPrivacy reports whether the workflow is opted in to acting

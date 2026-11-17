@@ -34,10 +34,9 @@ State at the end of the 2026-11-17 session (`dev`; see STATUS for commits):
   behaviour unchanged). Client errors are diagnosis only. Effects: fail +
   blocklist (manager-native redownload), then stop retaining data. Live
   check re-reads the rejection; "no import in progress" requires the
-  manager to track the grab as downloading. A torrent known to be private
-  follows `private_recovery` (user decision 2026-11-17; default
-  `keep_running`); unknown privacy stays observation-only for this workflow
-  (not decided by the user; ask before extending).
+  manager to track the grab as downloading. Private and unknown-privacy
+  torrents follow `private_recovery` exactly as in no-progress recovery
+  (user decisions 2026-11-17; default `keep_running`).
 - Real-instance: see compatibility.md "Preserved-data failure runs" for
   exactly which versions passed and what was registered.
 
