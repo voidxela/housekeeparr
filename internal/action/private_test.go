@@ -17,7 +17,7 @@ func hasOp(p *Proposal, op string) bool {
 // default the grab is failed and blocklisted and the torrent is left
 // running; stopping it too, or not acting at all, are scoped choices.
 func TestPrivateNoProgressRecoveryModes(t *testing.T) {
-	privacies := map[string]domain.Signal[bool]{"private": domain.KnownValue(true), "unknown": domain.UnknownValue[bool]("not reported by 4.x")}
+	privacies := map[string]domain.Signal[bool]{"private": domain.KnownValue(true)}
 	for pname, priv := range privacies {
 		for _, tc := range []struct {
 			mode           policy.PrivateMode
@@ -59,6 +59,20 @@ func TestPrivateNoProgressRecoveryModes(t *testing.T) {
 					t.Fatalf("live: %+v", lc)
 				}
 			})
+		}
+	}
+}
+
+// The decision covers torrents known to be private. Unknown privacy stays
+// observation-only for no-progress recovery under every mode.
+func TestUnknownPrivacyNoProgressStaysRefused(t *testing.T) {
+	for _, mode := range []policy.PrivateMode{policy.PrivateKeepRunning, policy.PrivateStop, policy.PrivateObserve} {
+		in := planInput()
+		in.Transfer.Latest.Private = domain.UnknownValue[bool]("not reported by 4.x")
+		in.Policy.PrivateRecovery = mode
+		p, _ := Plan(in)
+		if c := find(p.Prerequisites, "public transfer"); c == nil || c.Satisfied || p.PrivateMode != "" {
+			t.Fatalf("mode %q accepted unknown privacy: %+v", mode, c)
 		}
 	}
 }

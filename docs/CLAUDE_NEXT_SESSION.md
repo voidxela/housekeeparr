@@ -1,34 +1,36 @@
 # Prompt for the next Claude session
 
 Continue implementing Housekeeparr through the complete approved v1 scope in
-`docs/SPEC.md`. Read `AGENTS.md`, the entire SPEC, `docs/STATUS.md`,
-`docs/compatibility.md`, and **`docs/reviews/2026-11-16-latest.md`** before
-changing behavior. Earlier reviews `docs/reviews/2026-11-15.md` and
-`docs/reviews/2026-11-16.md` supply background; R1–R7 have fixes, but the
-latest review reproduces R8–R10 below. Implement and verify concrete
+`docs/SPEC.md`. Read `AGENTS.md`, the entire SPEC, `docs/STATUS.md` (start
+with "Session of 2026-11-16 (third)") and `docs/compatibility.md` before
+changing behavior. Reviews under `docs/reviews/` supply background; R1–R10
+all have fixes with regression tests. Implement and verify concrete
 increments, not just plans.
 
-Checkpoint reviewed: `f0f2ae3` on `dev`, code last changed at `c966439`
-(session of 2026-11-16, second; 7b0d1d0..HEAD, not pushed). This review adds
-documentation only. Validation: full Go suite, vet, gofmt and
-the static binary at `c966439`; real-instance matrix at `118f15c` from a
-pinned worktree (all five registered combinations passed, including both
-recovery workflows, the automatic test and exact search attribution;
-qBittorrent 4.6.7 failed only on the `errored-restart` observation fixture,
-undiagnosed); qBittorrent 5.3.0 + Sonarr + Radarr again at `c966439` (all
-passed). Commits after `118f15c` add operator controls (attempts
-view/reset, workflow pause), tests and wording. Not run: browser check, race
-detector (host limitation), Docker, the daemon loop with default windows on
-real instances.
+State after the third session of 2026-11-16 (`dev`, not pushed):
 
-No-progress recovery is now real-instance-tested and registered for Sonarr
-4.0.20.3014 and Radarr 6.4.4.10685 with **all four clients** (qBittorrent
-5.3.0, Transmission 4.0.6 and 4.1.4, Deluge 2.2.0, rTorrent 0.9.8), manual
-and automatic dispatch; search acceptance is tracked as its own outcome.
-Read STATUS ("Session of 2026-11-16 (second)") for exactly what changed,
-including a fixed diagnosis defect (scoped rules/overrides were ignored by
-diagnosis) and a new prerequisite (the manager must redownload failed
-grabs).
+- **R8–R10 fixed.** Plans require a diagnosis made under the current
+  diagnostic settings; outcome progress needs a fresh complete client
+  listing; searches are followed past terminal downloads.
+- **Metadata recovery** is real-instance-tested (planner → coordinator →
+  executor) and registered for Sonarr 4.0.20.3014 and Radarr 6.4.4.10685
+  with qBittorrent 5.3.0, Deluge 2.2.0, rTorrent 0.9.8 and Transmission
+  4.0.6/4.1.4. Its automatic dispatch is fixture-tested only.
+- **User decisions this session (recorded in SPEC §6):** metadata recovery
+  accepts privacy that is unknown only because metadata has not arrived (no
+  payload exists; `unknown_privacy.metadata_recovery = false` opts a scope
+  out). No-progress recovery of a torrent **known to be private** defaults
+  to `private_recovery = "keep_running"`: fail and blocklist the grab in the
+  manager, never stop the torrent; `"stop"` and `"observe"` are scoped
+  choices. Real-instance-tested (default mode) with all four clients.
+- **Open proposal, not implemented:** letting unknown-privacy torrents
+  (qBittorrent 4.x) follow `private_recovery` too. They stay refused for
+  no-progress recovery. Ask before changing this.
+- Blocklist evidence is matched by the grabbed release's title (the queue
+  title differs for a metadata-less rTorrent download).
+- `scripts/it/run.sh --only REGEX` selects registered tests; record such
+  runs as selected. See compatibility.md for exactly which commit each
+  result belongs to and what was not re-run.
 
 ## Existing user authorization and constraints
 
@@ -84,73 +86,51 @@ do not turn a choice of defaults into a prolonged blocker for other work.
 
 ## Immediate work, in priority order
 
-1. **R8 — policy/evidence consistency before manual writes.** The new
-   review proves that a fresh CLI service with a 24-hour no-progress policy
-   can execute a diagnosis made over three hours under the old policy.
-   `Plan` checks qualified status, not the assessment's settings revision.
-   Require a current assessment or recompute under current policy. Compare
-   `Assessment.PolicyRevision` to `Settings.Revision()`, not the broader
-   effective permission revision; a mode-only change should remain usable.
-   Add deterministic regression tests before extending recovery writes.
-2. **R9/R10 — outcome evidence and independent lifecycle.** A healthy
-   manager plus an offline client can produce "replacement completed" from
-   pre-recovery cached client facts. Require fresh suitable client evidence
-   for progress/completion. Separately, completed/untracked downloads are
-   excluded from search polling/expiry, leaving accepted/running search
-   states forever. Continue bounded search observation independently of the
-   download's terminal state. Three reproducible overlay tests are described
-   in the latest review and remain under `/tmp/housekeeparr-review-latest/`.
-   These are local logic fixes; no full real-instance matrix is needed just
-   to validate them.
-3. **Deliver metadata recovery next**, followed by preserved-data failure
-   handling (SPEC §§5, 7, 13.4 scenario 3). Use distinct evidence, timeouts,
-   workflow permission and capability gating. Prove one supported
-   manager/client slice before extending to all four. Preserved-data handling
-   must not rely on client state alone; retain the missing-data and rTorrent
-   hash-race limitations. Do not let an unrelated observation-fixture flake
-   block these increments.
-4. **Focused qBittorrent 4.6.7 harness diagnosis**, independently of new
-   workflow work: `errored-restart` failed at `118f15c` (`stalledDL`, verified
-   0, rather than `missingFiles`). The harness already polls for non-checking
-   full torrents but never requires their verified bytes and does not fail
-   when that deadline expires. Inspect saved artifacts, establish the actual
-   cause, fix readiness if supported by evidence, then use a client-only
-   observation run. Fastresume timing is still a hypothesis. Recovery stays
-   refused for unsupported privacy. The earlier slow automatic-test failure
-   did not recur; preserve both dated results. Failure log:
-   `~/.cache/hk-rtdiag/keep/qbt467-118f15c.log` (outside the repository).
+1. **Preserved-data failure handling** (SPEC §§5, 7; STATUS milestone 3).
+   Must not rely on client state alone: missing data is invisible on
+   qBittorrent/Deluge until restart, a forced recheck can look like a fresh
+   download, and rTorrent's `d.message` can be stale. Prove one
+   manager/client slice first, with its own permission and evidence.
+2. **Add a "require positive piece unavailability" policy setting** (SPEC
+   §13.4 scenario 2). It must be part of `Settings.Revision()` so R8's
+   check covers it.
+3. **Metadata recovery follow-ups:** real-instance automatic dispatch
+   (shortened `metadata_timeout` via overrides, like `TestAutomaticRecovery`);
+   observe what a manager does when a private torrent left running later
+   completes; decide the unknown-privacy proposal above with the user.
+4. **Focused qBittorrent 4.6.7 harness diagnosis** (client-only):
+   `errored-restart` failed at `118f15c` (`stalledDL`, verified 0, not
+   `missingFiles`). `run.sh` polls for non-checking full torrents but never
+   requires their verified bytes and proceeds when the deadline expires.
+   Establish the cause from artifacts before changing anything; failure log
+   `~/.cache/hk-rtdiag/keep/qbt467-118f15c.log`. Use `--managers none`.
 5. **Operator experience and remaining workflows:** notifications and
-   deferral status, then positive import/coverage evidence for partial packs,
-   targeted/proactive searches and source coverage, remote web/auth,
-   packaging/security/performance. Keep the complete v1 checklist below.
+   deferral status; partial packs with positive import/coverage evidence;
+   targeted/proactive searches and source coverage; remote web/auth;
+   packaging/security/performance. A kept-running private torrent keeps an
+   open stall finding with an explanation; consider a distinct state.
 
-Validation follow-ups to batch with relevant work: probe redownload-disabled
-and interactive-grab refusal against real managers (only the enabled,
-UserInvokedSearch path is real-instance-tested); add a shortened-window
-real daemon smoke for scheduler/lifecycle wiring. Default-window timing is
-already exercised deterministically through engine → dispatcher → coordinator;
-do not wait two hours per session to repeat it on real instances. A later
-unattended default-window soak remains an explicitly unperformed acceptance
-check, not a blocker for the next workflow.
+Validation follow-ups to batch with relevant work: redownload-disabled and
+interactive-grab refusal against real managers; a shortened-window real
+daemon smoke. A default-window real soak remains an unperformed acceptance
+check, not a blocker.
 
 Housekeeparr-owned replacement searches (when "Redownload Failed" is off)
-remain unimplemented and refused. SPEC §7 step 5 permits either owner; the
-current refusal is a visible limitation. Resolve supported coverage before
-release without starting a second replacement owner implicitly.
+remain unimplemented and refused; resolve before release without starting
+a second replacement owner implicitly.
 
 Proposals awaiting a product decision (implemented, not approved): a
 workflow pause also blocks manual actions; recovery is refused when the
-manager would not redownload; the replacement-search constants (30 s
-post-recovery poll, 1-minute clock tolerance without a baseline, 1-hour
-follow window); and the existing `[automation.limits]` values.
+manager would not redownload; the replacement-search constants; the
+`[automation.limits]` values; metadata stalls counting toward the
+correlated-stall hold; already-recovered transfers left out of it; a
+metadata-stage transfer retained as zero bytes.
 
-Process lesson: run the integration matrix from a git worktree pinned to the
-commit being recorded (`git worktree add --detach ~/.cache/hk-wt-run <sha>`):
-each probe is its own `go test` invocation and compiles the current tree.
-`/tmp` is RAM-backed on this host; keep large synthetic files on disk.
-
-Numeric limits remain proposals (`[automation.limits]`); see the budget
-concern section. Exhausted attempts need `housekeeparr attempts reset`.
+Process lessons: run recorded integration runs from a git worktree pinned
+to the commit (`git worktree add --detach ~/.cache/hk-wt-run <sha>`); chain
+checks with `&&` before committing (a `;` chain committed a red tree once
+this session and had to be amended); `/tmp` is RAM-backed, keep large files
+on disk.
 
 ## Review recommendations on Claude's five decisions
 
@@ -246,18 +226,12 @@ approvals or silent amendments to the authoritative spec.
 - Record exact commands, results, tested HEAD and limits in compatibility and
   STATUS at milestones. Don't repeat benchmarks without a performance change.
 
-Latest independent validation at `f0f2ae3`: full uncached Go suite passed
-(outside sandbox for loopback fixture sockets; slowest packages app 19.1 s,
-engine 17.7 s), build/vet/format/diff checks and a static binary passed.
-Three temporary Go-overlay tests deliberately fail (four assertions),
-confirming R8–R10. No expensive instance matrix was rerun. See the latest
-review for exact reproductions and commands. Passing existing tests does not
-close those defects. No repeat full-suite run is needed for this docs-only
-handoff refresh.
+Latest validation is recorded per commit in `docs/compatibility.md` and
+STATUS ("Session of 2026-11-16 (third)"); do not restate it from memory.
 
 ## Remaining v1 after this slice
 
-Finish no-progress, metadata and preserved-data workflows for both managers
+Finish the no-progress and metadata follow-ups and the preserved-data workflow for both managers
 and all four clients; durable retained-data/capacity controls; Sonarr partial
 packs with positive settled-import/coverage evidence and safe association
 clearance preserving imports/files/torrent/seeding; bounded targeted and

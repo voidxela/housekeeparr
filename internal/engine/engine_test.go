@@ -921,10 +921,15 @@ func TestOutcomeProgressRequiresFreshClient(t *testing.T) {
 	if o := state(); o.State != store.OutcomeGrabbed || o.CompletedAt != nil {
 		t.Fatalf("backed-off client: %+v", o)
 	}
-	// An incomplete listing is not fresh client evidence either.
+	// An incomplete listing is not fresh client evidence either (the
+	// client is read again once its backoff has passed).
 	h.client.Fail(nil)
 	h.client.Partial(true)
-	h.run(10, 10)
+	lists = h.client.Lists()
+	h.run(120, 10)
+	if h.client.Lists() == lists {
+		t.Fatal("setup: the client was never read with an incomplete listing")
+	}
 	if o := state(); o.State != store.OutcomeGrabbed || o.CompletedAt != nil {
 		t.Fatalf("incomplete listing: %+v", o)
 	}

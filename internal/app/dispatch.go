@@ -309,18 +309,12 @@ func (s *Service) breakers(ctx context.Context, now time.Time) (map[string]strin
 	if err != nil {
 		return nil, err
 	}
-	// Only stalls still tied to a manager queue row count: a torrent whose
-	// grab was already failed (for example a private one left running) is
-	// no longer a recovery candidate and says nothing about a shared cause.
-	rows, err := s.st.QueueItems(ctx, store.QueueFilter{PresentOnly: true})
+	// A torrent whose grab an earlier recovery already failed (for example
+	// a private one left running) is no longer a recovery candidate: it is
+	// left out of both counts, so it neither triggers nor dilutes the hold.
+	recovered, err := s.st.RecoveredDownloads(ctx)
 	if err != nil {
 		return nil, err
-	}
-	managed := map[string]bool{}
-	for _, r := range rows {
-		if r.MatchStatus == store.MatchMatched {
-			managed[r.MatchClientID+"|"+r.MatchNativeID] = true
-		}
 	}
 	active, stalled := map[string]int{}, map[string]int{}
 	for _, t := range ts {
@@ -329,8 +323,11 @@ func (s *Service) breakers(ctx context.Context, now time.Time) (map[string]strin
 		if t.StateClass != domain.StateDownloading && t.StateClass != domain.StateMetadata {
 			continue
 		}
+		if _, done := recovered[strings.ToLower(t.NativeID)]; done {
+			continue
+		}
 		active[t.ClientID]++
-		if t.Assessment != nil && t.Assessment.Status == policy.StatusQualified && managed[t.ClientID+"|"+t.NativeID] {
+		if t.Assessment != nil && t.Assessment.Status == policy.StatusQualified {
 			stalled[t.ClientID]++
 		}
 	}

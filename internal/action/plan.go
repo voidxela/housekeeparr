@@ -99,6 +99,9 @@ type PlanInput struct {
 	// Owners are the managers that could own the transfer (see
 	// Planned.Owners).
 	Owners []string
+	// RecoveredBy is the action that already failed this transfer's grab
+	// in its manager, if any (explanation only).
+	RecoveredBy int64
 	// Paused is the operator's pause of this workflow, if any.
 	Paused *store.WorkflowPause
 	// Retained is the current retained-transfer usage (SPEC §7.1).
@@ -172,6 +175,10 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 	case len(present) == 1 && present[0].MatchStatus == store.MatchMatched:
 		row = &present[0]
 		add("one manager association", true, true, fmt.Sprintf("%s queue item %q is correlated with this transfer", row.ManagerID, row.Latest.Title))
+	case len(present) == 0 && in.RecoveredBy != 0:
+		add("one manager association", false, true, fmt.Sprintf("action #%d already failed and blocklisted this grab in its manager, which searched for a "+
+			"replacement; the torrent itself was left in the client (a private torrent is left running under private_recovery = \"keep_running\"), "+
+			"so nothing more is done here: stop or remove it in the client when you no longer want it", in.RecoveredBy))
 	case len(present) == 0:
 		add("one manager association", false, true, "no manager queue item is correlated with this transfer, so there is no grab to fail")
 	case isPack(present):
@@ -266,23 +273,23 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 	optIn = optIn && policy.UnknownPrivacyDefined(wf)
 	stop := wf != policy.WorkflowPreservedDataFailure
 	what := "private"
-	if !known {
-		what = "of unknown privacy (" + t.Latest.Private.String() + "), so it may be private"
-	}
 	from := nonEmpty(in.Policy.PrivateRecoveryFrom, "no policy stated")
+	// private_recovery covers torrents known to be private (user decision);
+	// unknown privacy stays observation-only for no-progress recovery.
+	privateNP := wf == policy.WorkflowNoProgressRecovery && known && priv
 	switch {
 	case known && !priv:
 		add("public transfer", true, true, "the client reports the torrent as public")
-	case wf == policy.WorkflowNoProgressRecovery && in.Policy.PrivateRecovery == policy.PrivateKeepRunning:
+	case privateNP && in.Policy.PrivateRecovery == policy.PrivateKeepRunning:
 		p.PrivateMode, stop = policy.PrivateKeepRunning, false
 		add("public transfer", true, true, "the torrent is "+what+": the grab is failed and blocklisted in the manager so a replacement can be fetched, "+
 			"and the torrent is left running in the client, so nothing is stopped against tracker obligations (private_recovery = \"keep_running\", from "+
 			from+"). It keeps its active slot until you stop or remove it")
-	case wf == policy.WorkflowNoProgressRecovery && in.Policy.PrivateRecovery == policy.PrivateStop:
+	case privateNP && in.Policy.PrivateRecovery == policy.PrivateStop:
 		p.PrivateMode = policy.PrivateStop
 		add("public transfer", true, true, "the torrent is "+what+"; this scope chose to stop it as well (private_recovery = \"stop\", from "+from+
 			"): it will no longer seed its partial data, which you have judged compatible with your tracker's rules")
-	case wf == policy.WorkflowNoProgressRecovery:
+	case privateNP:
 		add("public transfer", false, true, "the torrent is "+what+", and this scope keeps such transfers observation-only (private_recovery = \"observe\", from "+
 			from+"); \"keep_running\" would blocklist the grab and leave the torrent running")
 	case known && priv:

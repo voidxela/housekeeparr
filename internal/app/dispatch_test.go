@@ -633,3 +633,52 @@ func TestPrivateTorrentRecoveryEndToEnd(t *testing.T) {
 		})
 	}
 }
+
+// Stalls an earlier recovery already handled (private torrents left
+// running) neither trigger nor dilute the correlated-stall hold, and their
+// findings explain what was done; stalls that were never managed still
+// count, so a shared outage holds recovery.
+func TestCorrelatedHoldIgnoresAlreadyRecoveredStalls(t *testing.T) {
+	w := newWorld(t, "automatic", 20)
+	for i, h := range []string{hashA, hashB} {
+		w.stalled(h, int64(i+1), int64(i+1))
+		w.client.Update(h, func(tr *domain.Transfer) { tr.Private = domain.KnownValue(true) })
+		w.run(4 * time.Hour) // one at a time, so they are not themselves correlated
+	}
+	if r, s := w.mgr.Removals(), w.client.Stops(); len(r) != 2 || len(s) != 0 {
+		t.Fatalf("setup: removals %d stops %v", len(r), s)
+	}
+	pv, err := w.svc.Preview(context.Background(), w.finding(hashA).ID, action.OriginManual)
+	if err != nil {
+		t.Fatal(err)
+	}
+	explained := false
+	for _, b := range pv.Proposal.Blockers() {
+		explained = explained || b.Name == "one manager association" && strings.Contains(b.Detail, "already failed and blocklisted") && strings.Contains(b.Detail, "keep_running")
+	}
+	if !explained {
+		t.Fatalf("a torrent left running is not explained: %+v", pv.Proposal.Blockers())
+	}
+	// A third, public stall: 1 of 1 candidates, not "3 of 3 stalled together".
+	w.stalled(hashC, 3, 3)
+	w.run(4 * time.Hour)
+	if s := w.client.Stops(); len(s) != 1 || s[0] != hashC {
+		t.Fatalf("recovery held by torrents that were already handled: stops %v", s)
+	}
+}
+
+func TestCorrelatedHoldCountsUnmanagedStalls(t *testing.T) {
+	w := newWorld(t, "automatic", 20)
+	w.stalled(hashA, 1, 1)
+	ts, _ := w.client.ListTransfers(context.Background())
+	// Three more stalled downloads no manager knows about: 4 of 4 stalled.
+	all := ts.Transfers
+	for _, h := range []string{hashB, hashC, hashD} {
+		all = append(all, fake.Transfer(h, "Manual."+h[:4], domain.StateDownloading, 2*gib, 10*gib, t0))
+	}
+	w.client.SetTransfers(all...)
+	w.run(4 * time.Hour)
+	if r := w.mgr.Removals(); len(r) != 0 {
+		t.Fatalf("a shared stall (managed and unmanaged together) did not hold recovery: %+v", r)
+	}
+}

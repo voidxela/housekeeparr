@@ -189,6 +189,26 @@ func (s *Store) ManagersAwaitingSearch(ctx context.Context) (map[string]bool, er
 	return out, rows.Err()
 }
 
+// RecoveredDownloads maps the lower-cased download ID of every grab a
+// verified recovery already failed in its manager to that action's intent.
+func (s *Store) RecoveredDownloads(ctx context.Context) (map[string]int64, error) {
+	rows, err := s.r.QueryContext(ctx, `SELECT lower(old_download_id), max(intent_id) FROM recovery_outcomes WHERE old_download_id != '' GROUP BY 1`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int64{}
+	for rows.Next() {
+		var id string
+		var intent int64
+		if err := rows.Scan(&id, &intent); err != nil {
+			return nil, err
+		}
+		out[id] = intent
+	}
+	return out, rows.Err()
+}
+
 // Outcomes returns the outcomes of the given intents.
 func (s *Store) Outcomes(ctx context.Context, ids []int64) (map[int64]RecoveryOutcome, error) {
 	out := map[int64]RecoveryOutcome{}
