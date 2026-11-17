@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/voidxela/housekeeparr/internal/domain"
+	"github.com/voidxela/housekeeparr/internal/policy"
 )
 
 // Planned is the external, decision-relevant state a proposal was planned
@@ -146,6 +147,11 @@ func Revalidate(p Proposal, i int, live Live) []Check {
 			add("public transfer", true, "privacy still unknown ("+t.Private.String()+"); still no metadata, so still no payload")
 		} else {
 			add("public transfer", known && !priv, "privacy now "+t.Private.String())
+		}
+		if p.Workflow == string(policy.WorkflowPreservedDataFailure) && !failedBefore {
+			v, ok := t.SourceFailure.Get()
+			add("tracker still rejects it", ok && v == domain.SourceUnregistered, "tracker result now "+t.SourceFailure.String()+
+				"; the grab is failed only while the tracker still reports the torrent as not registered")
 		}
 		add("category unchanged", sameSignal(pl.Category, t.Category),
 			fmt.Sprintf("category planned %s, now %s", pl.Category, t.Category))

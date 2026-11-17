@@ -56,8 +56,9 @@ var Tested = []TestedWorkflow{
 
 // diagnosesFor lists the qualified diagnoses each workflow addresses.
 var diagnosesFor = map[policy.Workflow][]policy.Diagnosis{
-	policy.WorkflowNoProgressRecovery: {policy.DiagnosisNoProgress, policy.DiagnosisNoProgressUnavailable},
-	policy.WorkflowMetadataRecovery:   {policy.DiagnosisMetadataTimeout},
+	policy.WorkflowNoProgressRecovery:   {policy.DiagnosisNoProgress, policy.DiagnosisNoProgressUnavailable},
+	policy.WorkflowMetadataRecovery:     {policy.DiagnosisMetadataTimeout},
+	policy.WorkflowPreservedDataFailure: {policy.DiagnosisSourceUnregistered},
 }
 
 // WorkflowFor maps a finding type to the workflow that would address it.
@@ -67,7 +68,7 @@ func WorkflowFor(findingType string) (policy.Workflow, bool) {
 		return policy.WorkflowNoProgressRecovery, true
 	case domain.FindingMetadataTimeout:
 		return policy.WorkflowMetadataRecovery, true
-	case domain.FindingTransferError:
+	case domain.FindingSourceRejected:
 		return policy.WorkflowPreservedDataFailure, true
 	}
 	return "", false
@@ -128,6 +129,10 @@ func raw(v any) json.RawMessage {
 // finding type has no workflow in v1.
 func Plan(in PlanInput) (*Proposal, *NoPlan) {
 	wf, ok := WorkflowFor(in.Finding.Type)
+	if in.Finding.Type == domain.FindingTransferError {
+		return nil, &NoPlan{Reason: "a client-reported error is diagnosis only: local storage, permission, and missing-data problems are never " +
+			"treated as a failed release, and the client's state alone does not establish what happened to the data (SPEC §7.2)"}
+	}
 	if !ok {
 		return nil, &NoPlan{Reason: "this kind of finding has no automated workflow; it is diagnosis only"}
 	}
@@ -187,6 +192,14 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 	default:
 		add("one manager association", false, true, fmt.Sprintf("%d queue items relate to this transfer or the correlation is not exact; ownership is ambiguous", len(present)))
 	}
+	if wf == policy.WorkflowPreservedDataFailure && row != nil {
+		// Import ambiguity refuses (SPEC §7.2): only a grab the manager
+		// still tracks as downloading is failed.
+		ts, known := row.Latest.TrackedState.Get()
+		add("no import in progress", known && strings.EqualFold(ts, "downloading"), true,
+			fmt.Sprintf("%s tracks this grab as %q; only a grab it still tracks as downloading is failed, so a pending, partial, or blocked import "+
+				"is never interrupted", row.ManagerID, nonEmpty(ts, "unknown ("+row.Latest.TrackedState.Note+")")))
+	}
 	if len(unknownContent) > 0 {
 		add("content identity known", false, true, strings.Join(unknownContent, ", ")+
 			" did not report an episode or movie ID, so attempts, locks, and exclusions cannot be tied to the content")
@@ -221,7 +234,7 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 	}
 	fresh := in.PollInterval > 0 && in.Now.Sub(t.LastSeen) <= 2*in.PollInterval && t.Present
 	add("fresh evidence", fresh, true, fmt.Sprintf("transfer last observed %s ago", policy.HumanDuration(in.Now.Sub(t.LastSeen))))
-	if wf != policy.WorkflowPreservedDataFailure {
+	{
 		q := t.Assessment != nil && t.Assessment.Status == policy.StatusQualified
 		detail := "no qualified diagnosis"
 		if t.Assessment != nil {
@@ -249,7 +262,7 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 	}
 	want := map[policy.Workflow]domain.StateClass{
 		policy.WorkflowNoProgressRecovery: domain.StateDownloading, policy.WorkflowMetadataRecovery: domain.StateMetadata,
-		policy.WorkflowPreservedDataFailure: domain.StateError,
+		policy.WorkflowPreservedDataFailure: domain.StateDownloading,
 	}[wf]
 	add("applicable transfer state", t.StateClass == want, true,
 		fmt.Sprintf("transfer is %s (native %q); this workflow applies only to %s transfers — paused, queued, and checking transfers are never acted on",
@@ -271,7 +284,7 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 	priv, known := t.Latest.Private.Get()
 	optIn, optFrom := in.Policy.AllowsUnknownPrivacy(wf)
 	optIn = optIn && policy.UnknownPrivacyDefined(wf)
-	stop := wf != policy.WorkflowPreservedDataFailure
+	stop := true
 	what := "private"
 	if !known {
 		what = "of unknown privacy (" + t.Latest.Private.String() + "), which is treated as private (unknown_privacy." + string(wf) + ", " + optFrom + ")"
@@ -343,7 +356,7 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 		p.Effects = append(p.Effects, fmt.Sprintf("%s blocklists this exact release (%q) and stops tracking it", row.ManagerID, row.Latest.Title),
 			fmt.Sprintf("%s starts its own replacement search (manager-native redownload); Housekeeparr does not search as well", row.ManagerID))
 	}
-	if !stop && wf != policy.WorkflowPreservedDataFailure {
+	if !stop {
 		p.Effects = append(p.Effects, "the torrent is not stopped: it stays active in the client with all its data and keeps seeding what it has")
 	}
 	if stop {

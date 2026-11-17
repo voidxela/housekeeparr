@@ -774,3 +774,92 @@ func TestReassociatedRecoveredTransferCountsTowardHold(t *testing.T) {
 		t.Fatalf("3 of 3 downloads stalled together on qbit, yet recovery dispatched: %+v", r)
 	}
 }
+
+const preservedRule = "\n[[rule]]\nname = \"preserved\"\npriority = 1\n[rule.automation]\npreserved_data_failure = true\n[rule.match]\nclient = \"qbit\"\n"
+
+// SPEC §7.2 end to end with simulated applications: a public download its
+// tracker rejects as not registered is diagnosed after the confirmation
+// window (before the no-progress window) and handled once: the grab is
+// failed and blocklisted with every flag explicit, and the torrent stopped
+// and kept. Other tracker errors, private torrents, and local errors are
+// never acted on.
+func TestPreservedDataFailureEndToEnd(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		mutate          func(*domain.Transfer)
+		removals, stops int
+		findingType     string
+	}{
+		{"unregistered", func(tr *domain.Transfer) {
+			tr.SourceFailure, tr.ClientMessage = domain.KnownValue(domain.SourceUnregistered), domain.KnownValue("Unregistered torrent")
+		}, 1, 1, domain.FindingSourceRejected},
+		{"other tracker error", func(tr *domain.Transfer) {
+			tr.SourceFailure, tr.ClientMessage = domain.KnownValue(domain.SourceTrackerError), domain.KnownValue("Passkey not found")
+		}, 0, 0, ""},
+		{"private", func(tr *domain.Transfer) {
+			tr.SourceFailure, tr.Private = domain.KnownValue(domain.SourceUnregistered), domain.KnownValue(true)
+		}, 0, 0, domain.FindingSourceRejected},
+		{"local error", func(tr *domain.Transfer) {
+			tr.StateClass, tr.NativeState = domain.StateError, "local-error"
+			tr.SourceFailure = domain.UnknownValue[domain.SourceFailure]("a local error hides any tracker result")
+		}, 0, 0, domain.FindingTransferError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newWorldWith(t, "automatic", 20, preservedRule)
+			action.Tested = append(action.Tested,
+				action.TestedWorkflow{Workflow: policy.WorkflowPreservedDataFailure, Manager: adapter.KindSonarr, ManagerVersion: "0.0.0-fake", Client: adapter.KindQBittorrent, ClientVersion: "0.0.0-fake"})
+			w.stalled(hashA, 1, 1)
+			w.client.Update(hashA, tc.mutate)
+			// Grace (30 min) plus confirmation (30 min), well before the
+			// 90-minute no-progress window ends; no_progress_recovery is
+			// enabled too, so only the source diagnosis can act this early.
+			w.run(70 * time.Minute)
+			if r, s := w.mgr.Removals(), w.client.Stops(); len(r) != tc.removals || len(s) != tc.stops {
+				t.Fatalf("removals %+v stops %v", r, s)
+			}
+			if tc.removals > 0 {
+				if r := w.mgr.Removals()[0]; r != (arr.RemoveFlags{Blocklist: true}) {
+					t.Fatalf("flags %+v (removeFromClient and skipRedownload must stay false)", r)
+				}
+				acts, _ := w.svc.Actions(context.Background(), 10)
+				if len(acts) != 1 || acts[0].Workflow != string(policy.WorkflowPreservedDataFailure) || acts[0].State != store.IntentSucceeded {
+					t.Fatalf("actions %+v", acts)
+				}
+				ret, _ := w.st.RetainedTransfers(context.Background(), false, 0)
+				if len(ret) != 1 || ret[0].Disposition != store.RetainedStopped {
+					t.Fatalf("retained %+v", ret)
+				}
+			}
+			if tc.findingType == "" {
+				return
+			}
+			fs, _ := w.st.Findings(context.Background(), store.FindingFilter{Type: tc.findingType, ClientID: "qbit", NativeID: hashA})
+			if len(fs) == 0 {
+				t.Fatalf("no %s finding", tc.findingType)
+			}
+			pv, err := w.svc.Preview(context.Background(), fs[0].ID, action.OriginManual)
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch tc.name {
+			case "private":
+				if pv.Proposal == nil || !slicesContainsBlocker(pv.Proposal, "public transfer") {
+					t.Fatalf("private transfer not held: %+v", pv)
+				}
+			case "local error":
+				if pv.Proposal != nil || !strings.Contains(pv.NoAction, "diagnosis only") {
+					t.Fatalf("local error has an action: %+v", pv)
+				}
+			}
+		})
+	}
+}
+
+func slicesContainsBlocker(p *action.Proposal, name string) bool {
+	for _, b := range p.Blockers() {
+		if b.Name == name {
+			return true
+		}
+	}
+	return false
+}
