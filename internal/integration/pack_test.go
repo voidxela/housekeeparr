@@ -28,6 +28,7 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -184,6 +185,63 @@ func TestSonarrPartialPackWorkflow(t *testing.T) {
 	if len(lib) != 2 {
 		t.Fatalf("library files %v", lib)
 	}
+
+	// Durability across a manager restart: Sonarr rebuilds tracked
+	// downloads from its database; the ignored pack must not return.
+	restartManager(t, a, "SONARR")
+	status = a.command("RefreshMonitoredDownloads")
+	time.Sleep(15 * time.Second)
+	if rows := packRows(a, e.Hash); len(rows) != 0 {
+		t.Fatalf("the cleared pack is tracked again after a restart: %s", jsonText(rows))
+	}
+	if tr, ok := clientState(t, e.Hash); !ok || tr.StateClass != domain.StateComplete {
+		t.Fatalf("torrent after restart: %v %s", ok, tr.StateClass)
+	}
+	t.Logf("after a Sonarr restart and RefreshMonitoredDownloads (%s): no rows for the pack", status)
+}
+
+// restartManager shuts the manager down through its API and starts it again
+// with the harness's command, data directory, and environment
+// (HK_IT_<APP>_START), then waits until it answers.
+func restartManager(t *testing.T, a arrAPI, app string) {
+	t.Helper()
+	parts := strings.SplitN(env(t, "HK_IT_"+app+"_START"), "|", 4)
+	if len(parts) != 4 {
+		t.Fatalf("HK_IT_%s_START malformed", app)
+	}
+	alive := func() bool {
+		code, _ := a.do(http.MethodGet, "/api/v3/system/status", nil, nil)
+		return code == 200
+	}
+	if code, body := a.do(http.MethodPost, "/api/v3/system/shutdown", nil, nil); code != 200 {
+		t.Fatalf("shutdown: HTTP %d %s", code, body)
+	}
+	for deadline := time.Now().Add(60 * time.Second); alive(); time.Sleep(time.Second) {
+		if time.Now().After(deadline) {
+			t.Fatal("the manager did not shut down")
+		}
+	}
+	time.Sleep(3 * time.Second) // let it release its database and port
+	cmd := exec.Command(parts[0], "-nobrowser", "-data="+parts[1])
+	cmd.Env = append(os.Environ(), "DOTNET_SYSTEM_GLOBALIZATION_INVARIANT="+parts[2])
+	if parts[3] != "" {
+		cmd.Env = append(cmd.Env, strings.Fields(parts[3])...)
+	}
+	logf, err := os.Create(filepath.Join(env(t, "HK_IT_WORK"), strings.ToLower(app)+"-restart.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd.Stdout, cmd.Stderr = logf, logf
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	_ = cmd.Process.Release() // the harness stops it at exit
+	for deadline := time.Now().Add(3 * time.Minute); !alive(); time.Sleep(2 * time.Second) {
+		if time.Now().After(deadline) {
+			t.Fatal("the manager did not come back after a restart")
+		}
+	}
+	t.Logf("%s restarted", strings.ToLower(app))
 }
 
 func packRows(a arrAPI, hash string) []packRow {

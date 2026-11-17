@@ -165,6 +165,8 @@ PIDS=()
 LOGS=()
 cleanup() {
 	for p in "${PIDS[@]:-}"; do [ -n "$p" ] && kill "$p" 2>/dev/null || true; done
+	# A manager a test restarted itself (HK_IT_<APP>_START) is not in PIDS.
+	pkill -f "$WORK/[a-z]*-app/" 2>/dev/null || true
 	wait 2>/dev/null || true
 	if [ "$KEEP" = 1 ]; then echo "kept $WORK"; else rm -rf "$WORK"; fi
 }
@@ -505,6 +507,9 @@ EOF
 	local tls=()
 	[ "$STANDIN" = 1 ] && tls=(SSL_CERT_FILE="$WORK/standin-ca.pem")
 	env "${tls[@]}" DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=$invariant "$WORK/$app-app/$title/$title" -nobrowser -data="$WORK/$app-data" > "$WORK/$app.log" 2>&1 &
+	# How a test can start the manager again after shutting it down
+	# (restart-durability probes): binary, data directory, environment.
+	export "HK_IT_${title^^}_START=$WORK/$app-app/$title/$title|$WORK/$app-data|$invariant|${tls[*]:-}"
 	PIDS+=($!); LOGS+=("$WORK/$app.log")
 	local url="http://127.0.0.1:$port"
 	waitfor "$url/api/v3/system/status?apikey=$key" 180
