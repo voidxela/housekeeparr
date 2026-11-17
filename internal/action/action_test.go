@@ -142,7 +142,7 @@ func proposal(subject string) Proposal {
 		Locks: []string{"transfer:" + subject}, Fingerprint: "fp1", PolicyRevision: "p", ConfigRevision: "c",
 		Operations: []Operation{
 			{Op: "manager.queue.fail", Target: json.RawMessage(`{"manager_id":"sonarr","queue_id":7,"download_id":"aa","episode_id":1}`),
-				Request: json.RawMessage(`{"removeFromClient":false,"blocklist":true,"skipRedownload":true,"changeCategory":false}`)},
+				Request: json.RawMessage(`{"removeFromClient":false,"blocklist":true,"skipRedownload":false,"changeCategory":false}`)},
 			{Op: "client.stop", Target: json.RawMessage(`{"client_id":"qbit","native_id":"aa"}`), Request: json.RawMessage(`{}`)},
 		},
 		Prerequisites: []Check{{Name: "eligible", Satisfied: true}},
@@ -316,6 +316,11 @@ func TestAcceptedButNotEffectiveIsHeld(t *testing.T) {
 	if u, _ := c.Store.BudgetUsage(ctx, attemptClaim(2).Budget(), 1, t0); u.Used != 1 {
 		t.Fatalf("reviewed attempt refunded: %+v", u)
 	}
+	auto := p
+	auto.Origin = OriginAutomatic
+	if _, err := c.Execute(ctx, auto); !errors.Is(err, ErrConflict) || f.count("manager.queue.fail") != 1 {
+		t.Fatalf("automatic replay after review: %v sent %v", err, f.sent)
+	}
 	rowGone = false
 	res2, err := c.Execute(ctx, p)
 	if err != nil || res2.State != store.IntentSucceeded || f.count("manager.queue.fail") != 2 {
@@ -402,13 +407,19 @@ func TestPartialFailureIsHeldForReview(t *testing.T) {
 	f.dispatch["client.stop"] = func() (json.RawMessage, error) {
 		return nil, &adapter.Error{Class: adapter.ErrUnauthorized, Op: "qbittorrent.stop", HTTPStatus: 403}
 	}
-	res, err := c.Execute(ctx, proposal("qbit|aa"))
+	p := proposal("qbit|aa")
+	p.Operations[0].Request = json.RawMessage(`{"removeFromClient":false,"blocklist":true,"skipRedownload":false,"changeCategory":false}`)
+	res, err := c.Execute(ctx, p)
 	if err != nil || res.State != store.IntentUncertain {
 		t.Fatalf("execute: %+v %v", res, err)
 	}
 	in, _ := c.Store.Intent(ctx, res.IntentID)
 	if in.Steps[0].State != store.StepSucceeded || in.Steps[1].State != store.StepFailed || len(in.Locks) != 1 {
 		t.Fatalf("intent %+v", in)
+	}
+	outcomes, err := c.Store.Outcomes(ctx, []int64{res.IntentID})
+	if err != nil || outcomes[res.IntentID].State != store.OutcomeAwaitingGrab {
+		t.Fatalf("lost manager-native replacement when client stop failed: %+v, %v", outcomes, err)
 	}
 }
 

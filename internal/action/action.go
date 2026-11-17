@@ -476,7 +476,7 @@ func (c *Coordinator) run(ctx context.Context, id int64, p Proposal) (Result, er
 				return err
 			}
 			if state == store.StepSucceeded {
-				return recordRetained(tx, id, in.Subject, st, &p.Planned, c.now())
+				return recordVerifiedStep(tx, id, in.Subject, st, &p.Planned, c.now())
 			}
 			return nil
 		}); err != nil {
@@ -508,9 +508,6 @@ func (c *Coordinator) run(ctx context.Context, id int64, p Proposal) (Result, er
 	now := c.now()
 	err = c.Store.Write(jctx, func(tx *store.Tx) error {
 		if err := tx.SetIntentState(id, store.IntentSucceeded, "every step verified", now); err != nil {
-			return err
-		}
-		if err := trackOutcome(tx, id, in.Subject, in.Steps, now); err != nil {
 			return err
 		}
 		if p.Cooldown > 0 {
@@ -686,7 +683,7 @@ func (c *Coordinator) Reconcile(ctx context.Context) (ReconcileReport, error) {
 						return err
 					}
 					if to == store.StepSucceeded {
-						return recordRetained(tx, in.ID, in.Subject, s, nil, c.now())
+						return recordVerifiedStep(tx, in.ID, in.Subject, s, nil, c.now())
 					}
 					return nil
 				}); err != nil {
@@ -762,6 +759,15 @@ func (c *Coordinator) Review(ctx context.Context, id int64, to store.IntentState
 	})
 }
 
+// recordVerifiedStep commits effects of a verified operation even when a
+// later step will be held or refused.
+func recordVerifiedStep(tx *store.Tx, id int64, subject json.RawMessage, step store.Step, planned *Planned, now time.Time) error {
+	if err := recordRetained(tx, id, subject, step, planned, now); err != nil {
+		return err
+	}
+	return trackOutcome(tx, id, subject, []store.Step{step}, now)
+}
+
 // recordRetained records the transfer a verified step left in the client
 // with its data (SPEC §7.1): once the manager has failed its grab the
 // transfer is retained, running; a verified data-retaining stop then marks
@@ -819,6 +825,12 @@ func trackOutcome(tx *store.Tx, id int64, subject json.RawMessage, steps []store
 	_ = json.Unmarshal(subject, &sub)
 	for _, st := range steps {
 		if st.Op != "manager.queue.fail" {
+			continue
+		}
+		var request struct {
+			SkipRedownload *bool `json:"skipRedownload"`
+		}
+		if json.Unmarshal(st.Request, &request) != nil || request.SkipRedownload == nil || *request.SkipRedownload {
 			continue
 		}
 		var tg struct {

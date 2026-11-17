@@ -123,9 +123,21 @@ func (t *Tx) CreateIntent(in Intent, now time.Time) (int64, error) {
 	err := t.queryRow("SELECT id, state FROM action_intents WHERE idem_key=?", in.Key).Scan(&prevID, &prevState)
 	switch {
 	case err == nil && (IntentState(prevState) == IntentFailed || IntentState(prevState) == IntentCancelled):
-		// Nothing of a failed or cancelled attempt took effect, so it does
-		// not block a new one (cooldowns and budgets govern repetition).
-		// Keep its history under a retired key.
+		// An operator can close a partially executed or ambiguous intent
+		// without proving that its dispatch had no effect. Do not let an
+		// automatic pass re-send the same plan because review released it.
+		if in.Origin == "automatic" {
+			var possibleEffect bool
+			if err := t.queryRow(`SELECT EXISTS (SELECT 1 FROM action_steps
+				WHERE intent_id=? AND state IN ('dispatching','succeeded','uncertain'))`, prevID).Scan(&possibleEffect); err != nil {
+				return 0, err
+			}
+			if possibleEffect {
+				return 0, ErrDuplicateIntent
+			}
+		}
+		// Retire the prior key for provably unsent requests or deliberate
+		// manual action after review, while keeping the durable history.
 		if _, err := t.exec("UPDATE action_intents SET idem_key=? WHERE id=?", fmt.Sprintf("%s~%d", in.Key, prevID), prevID); err != nil {
 			return 0, err
 		}
