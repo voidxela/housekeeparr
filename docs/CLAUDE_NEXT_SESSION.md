@@ -212,8 +212,10 @@ approvals or silent amendments to the authoritative spec.
   replacement grab or successful download. qBittorrent 4.6.7 refusal for
   unknown privacy was tested at the recorded commits; the user has since
   decided unknown privacy is treated as private (see the top of this file).
-- Restart exposes missing data on qBittorrent/Deluge; forced recheck can make
-  the same loss look like a fresh download at zero. Complete/seeding alone
+- Restart exposes missing data as an error on Deluge; on qBittorrent (5.3.0
+  and 4.6.7) data lost while stopped resumes as a fresh download at zero
+  (corrected 2026-11-17: the earlier missingFiles came from a harness race),
+  and a forced recheck does the same on both. Complete/seeding alone
   doesn't prove data exists. rTorrent local d.message can remain stale after
   user stop/start. Preserve these limitations in diagnosis and explanations.
 - Native race detector is blocked by this host's 39-bit VMA layout. Use a
