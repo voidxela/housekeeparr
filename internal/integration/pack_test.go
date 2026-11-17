@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -93,7 +94,11 @@ func TestSonarrPartialPackProbe(t *testing.T) {
 			t.Fatalf("E01/E02 not imported: episodes %+v; queue rows %s", eps, jsonText(rows))
 		}
 		if tr, ok := clientState(t, e.Hash); ok {
-			t.Logf("waiting for import: client %s/%s; episodes E01=%v E02=%v", tr.NativeState, tr.StateClass, eps[1].HasFile, eps[2].HasFile)
+			t.Logf("waiting for import: client %s/%s verified %v of %v; episodes E01=%v E02=%v", tr.NativeState, tr.StateClass, tr.VerifiedBytes, tr.WantedBytes,
+				eps[1].HasFile, eps[2].HasFile)
+			if managerClientKind() == "qbittorrent" && tr.StateClass != domain.StateComplete {
+				t.Logf("qBittorrent paths: %s (expected payload under %s)", qbtPaths(t, e.Hash), env(t, "HK_IT_QBT_SAVE"))
+			}
 		}
 	}
 	if eps[3].HasFile {
@@ -209,4 +214,30 @@ func packHistory(a arrAPI, hash string) []packHist {
 func jsonText(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
+}
+
+// qbtPaths returns a torrent's save and content paths (harness diagnostics).
+func qbtPaths(t *testing.T, hash string) string {
+	t.Helper()
+	jar, _ := cookiejar.New(nil)
+	hc := &http.Client{Jar: jar, Timeout: 10 * time.Second}
+	base := env(t, "HK_IT_QBT_URL")
+	resp, err := hc.PostForm(base+"/api/v2/auth/login", url.Values{"username": {env(t, "HK_IT_QBT_USER")}, "password": {env(t, "HK_IT_QBT_PASS")}})
+	if err != nil {
+		return err.Error()
+	}
+	resp.Body.Close()
+	resp, err = hc.Get(base + "/api/v2/torrents/info?hashes=" + hash)
+	if err != nil {
+		return err.Error()
+	}
+	defer resp.Body.Close()
+	var rows []struct {
+		SavePath    string  `json:"save_path"`
+		ContentPath string  `json:"content_path"`
+		Progress    float64 `json:"progress"`
+		State       string  `json:"state"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&rows)
+	return jsonText(rows)
 }
