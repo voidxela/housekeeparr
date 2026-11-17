@@ -527,7 +527,10 @@ type Activity struct {
 	Journal       JournalStatus            `json:"journal"`
 	// Attempts are per-content recovery attempts since their latest reset.
 	Attempts []AttemptSummary `json:"attempts,omitempty"`
-	Note     string           `json:"note"`
+	// Notifications are the latest notification events and their delivery.
+	Notifications []store.Notification `json:"notifications,omitempty"`
+	NotifyTargets int                  `json:"notify_targets"`
+	Note          string               `json:"note"`
 }
 
 // Outcomes returns the replacement outcomes of the given actions.
@@ -556,6 +559,10 @@ func (s *Service) Activity(ctx context.Context, limit int) (*Activity, error) {
 	if a.Attempts, err = s.AttemptSummaries(ctx); err != nil {
 		return nil, err
 	}
+	if a.Notifications, err = s.st.RecentNotifications(ctx, 20); err != nil {
+		return nil, err
+	}
+	a.NotifyTargets = len(s.cfg.Notify)
 	if a.Journal, err = s.Journal(ctx); err != nil {
 		return nil, err
 	}

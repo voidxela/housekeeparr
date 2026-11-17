@@ -382,3 +382,37 @@ func TestWorkflowPauseControls(t *testing.T) {
 		t.Fatalf("still paused: %v", ps)
 	}
 }
+
+// The Activity page shows notification events in every delivery state.
+func TestActivityShowsNotifications(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	now := e.d.Clock.Now()
+	if err := e.d.Store.Write(ctx, func(tx *store.Tx) error {
+		for i, title := range []string{"Sent one", "Dropped one", "Pending one"} {
+			if _, err := tx.EnqueueNotification(store.Notification{Target: "hook", DedupKey: title, Kind: "finding.opened", Severity: "warning",
+				Title: title, Body: "b", CreatedAt: now}); err != nil {
+				return err
+			}
+			switch i {
+			case 0:
+				if err := tx.MarkNotificationSent(int64(i+1), now); err != nil {
+					return err
+				}
+			case 1:
+				if err := tx.DropNotification(int64(i+1), now, "gave up after 8 attempts: delivery refused: HTTP 500"); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	w := e.get(t, "/activity")
+	page := w.Body.String()
+	if w.Code != 200 || !strings.Contains(page, "Sent one") || !strings.Contains(page, "sent ") || !strings.Contains(page, "dropped: gave up") ||
+		!strings.Contains(page, "pending (0 attempts)") {
+		t.Fatalf("status %d; page lacks notification states", w.Code)
+	}
+}
