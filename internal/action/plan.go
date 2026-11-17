@@ -204,6 +204,16 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 			detail = "assessment: " + string(t.Assessment.Status) + " — " + t.Assessment.Headline
 		}
 		add("diagnosis qualified", q, true, detail)
+		if t.Assessment != nil {
+			cur := in.Policy.Settings.Revision()
+			same := t.Assessment.PolicyRevision == cur
+			d := "the diagnosis was made under the current diagnostic settings (revision " + cur + ")"
+			if !same {
+				d = "the diagnosis was made under different diagnostic settings (revision " + nonEmpty(t.Assessment.PolicyRevision, "unrecorded") +
+					", now " + cur + "); it must be re-evaluated under the current policy by the next observation cycle before any action"
+			}
+			add("diagnosis under current policy", same, true, d)
+		}
 	}
 	want := map[policy.Workflow]domain.StateClass{
 		policy.WorkflowNoProgressRecovery: domain.StateDownloading, policy.WorkflowMetadataRecovery: domain.StateMetadata,

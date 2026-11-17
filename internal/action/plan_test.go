@@ -16,8 +16,9 @@ func planInput() PlanInput {
 	now := t0
 	tr := &store.TransferRecord{ClientID: "qbit", NativeID: "aa", Name: "Show.S01E01", StateClass: domain.StateDownloading,
 		LastSeen: now.Add(-time.Minute), Present: true,
-		Latest:     domain.Transfer{NativeState: "stalledDL", Private: domain.KnownValue(false), VerifiedBytes: domain.KnownValue[int64](10)},
-		Assessment: &policy.Assessment{Status: policy.StatusQualified, Diagnosis: policy.DiagnosisNoProgress, Headline: "no verified progress for 2h"}}
+		Latest: domain.Transfer{NativeState: "stalledDL", Private: domain.KnownValue(false), VerifiedBytes: domain.KnownValue[int64](10)},
+		Assessment: &policy.Assessment{Status: policy.StatusQualified, Diagnosis: policy.DiagnosisNoProgress, Headline: "no verified progress for 2h",
+			PolicyRevision: policy.Settings{}.Revision()}}
 	q := store.QueueRecord{ManagerID: "sonarr", ItemKey: "aa|episode:1", QueueID: 7, DownloadID: "aa", Present: true, MatchStatus: store.MatchMatched,
 		Latest: domain.QueueItem{ManagerID: "sonarr", Title: "Show.S01E01", DownloadID: "aa", ContentKind: "episode", SeriesID: 3, EpisodeID: 1}}
 	eff := policy.Effective{Mode: "automatic", Revision: "rev", Automation: []policy.WorkflowPermission{{Workflow: policy.WorkflowNoProgressRecovery, Enabled: true, From: "test"}}}
@@ -89,10 +90,15 @@ func TestPlanRefusals(t *testing.T) {
 		"queued":          {func(in *PlanInput) { in.Transfer.StateClass = domain.StateQueued }, "applicable transfer state"},
 		"stale evidence":  {func(in *PlanInput) { in.Transfer.LastSeen = t0.Add(-time.Hour) }, "fresh evidence"},
 		"not qualified":   {func(in *PlanInput) { in.Transfer.Assessment.Status = policy.StatusObserving }, "diagnosis qualified"},
-		"no association":  {func(in *PlanInput) { in.Queue = nil }, "one manager association"},
-		"ambiguous":       {func(in *PlanInput) { in.Queue = append(in.Queue, in.Queue[0]) }, "one manager association"},
-		"transfer locked": {func(in *PlanInput) { in.Locks = map[string]int64{"transfer:qbit|aa": 4} }, "no conflicting action"},
-		"content locked":  {func(in *PlanInput) { in.Locks = map[string]int64{"content:sonarr|episode:1": 4} }, "no conflicting action"},
+		"diagnosed under older settings": {func(in *PlanInput) {
+			in.Policy.Settings.NoProgressWindow = 24 * time.Hour
+		}, "diagnosis under current policy"},
+		"diagnosis revision unrecorded": {func(in *PlanInput) { in.Transfer.Assessment.PolicyRevision = "" }, "diagnosis under current policy"},
+		"more observations required":    {func(in *PlanInput) { in.Policy.Settings.MinObservations = 12 }, "diagnosis under current policy"},
+		"no association":                {func(in *PlanInput) { in.Queue = nil }, "one manager association"},
+		"ambiguous":                     {func(in *PlanInput) { in.Queue = append(in.Queue, in.Queue[0]) }, "one manager association"},
+		"transfer locked":               {func(in *PlanInput) { in.Locks = map[string]int64{"transfer:qbit|aa": 4} }, "no conflicting action"},
+		"content locked":                {func(in *PlanInput) { in.Locks = map[string]int64{"content:sonarr|episode:1": 4} }, "no conflicting action"},
 		"cooldown": {func(in *PlanInput) {
 			in.Cooldowns = map[string]store.CooldownRecord{"transfer:qbit|aa": {Until: t0.Add(time.Hour)}}
 		}, "not in cooldown"},
@@ -267,6 +273,19 @@ func TestPolicyCheckMatrix(t *testing.T) {
 					}
 				}
 			}
+		}
+	}
+}
+
+// A change of mode or permissions alone (the effective revision) keeps the
+// diagnosis usable; only diagnostic settings require re-evaluation.
+func TestPlanModeOnlyChangeKeepsDiagnosis(t *testing.T) {
+	in := planInput()
+	in.Policy.Mode, in.Policy.Revision = "manual", "another-effective-revision"
+	p, _ := Plan(in)
+	for _, b := range blockerNames(p) {
+		if b == "diagnosis under current policy" {
+			t.Fatal("a mode-only change forced requalification")
 		}
 	}
 }

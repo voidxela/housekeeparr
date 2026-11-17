@@ -423,3 +423,44 @@ func TestWorkflowPauseStopsAutomaticAndManualActions(t *testing.T) {
 		t.Fatalf("after resume: %v %v", w.mgr.Removals(), w.client.Stops())
 	}
 }
+
+// R8: a manual action must not execute a diagnosis made under older, less
+// restrictive diagnostic settings. A new process (headless CLI after a
+// configuration edit) loads the stricter policy without an engine cycle.
+func TestManualActionRequiresDiagnosisUnderCurrentSettings(t *testing.T) {
+	w := newWorld(t, "paused", 20)
+	w.stalled(hashA, 1, 1)
+	w.run(3 * time.Hour)
+	f := w.finding(hashA)
+	src := strings.NewReplacer("%MODE%", "paused", "%ACQ%", "20", "%CORR%", "3").Replace(autoConfig)
+	cfg, _, err := config.Parse([]byte(src+"\n[policy]\nno_progress_window = \"24h\"\n"), "/x/housekeeparr.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := app.New(w.st, cfg, w.clock.Now, nil)
+	ex := &okExec{}
+	svc.SetExecutor(ex)
+	pv, err := svc.Preview(context.Background(), f.ID, action.OriginManual)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pv.Proposal.Eligible() {
+		t.Fatalf("a 24h policy accepted a diagnosis accumulated over 3h")
+	}
+	found := false
+	for _, b := range pv.Proposal.Blockers() {
+		if b.Name == "diagnosis under current policy" && strings.Contains(b.Detail, "re-evaluated") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("blockers do not explain re-evaluation: %+v", pv.Proposal.Blockers())
+	}
+	_, res, _ := svc.Act(context.Background(), f.ID, app.ActorCLI)
+	if res != nil && res.State == store.IntentSucceeded || len(ex.sent) > 0 {
+		t.Fatalf("manual action executed under changed timing: sent=%v", ex.sent)
+	}
+	if got := w.finding(hashA); got.State != domain.FindingOpen {
+		t.Fatalf("finding changed to %s; it must stay open pending re-evaluation", got.State)
+	}
+}
