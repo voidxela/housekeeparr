@@ -911,6 +911,16 @@ func TestOutcomeProgressRequiresFreshClient(t *testing.T) {
 	if o := state(); o.State != store.OutcomeGrabbed || o.CompletedAt != nil || o.GrabVerified != nil {
 		t.Fatalf("offline client: want a grab only, got %+v", o)
 	}
+	// Repeated failures put the client in backoff (it is skipped, not
+	// read) while the manager stays healthy: still only a grab.
+	lists := h.client.Lists()
+	h.run(120, 10)
+	if h.client.Lists()-lists >= 12 {
+		t.Fatalf("setup: client never backed off (%d reads in 12 cycles)", h.client.Lists()-lists)
+	}
+	if o := state(); o.State != store.OutcomeGrabbed || o.CompletedAt != nil {
+		t.Fatalf("backed-off client: %+v", o)
+	}
 	// An incomplete listing is not fresh client evidence either.
 	h.client.Fail(nil)
 	h.client.Partial(true)

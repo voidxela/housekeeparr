@@ -83,13 +83,19 @@ type world struct {
 
 func newWorld(t *testing.T, mode string, acquisitions int) *world {
 	t.Helper()
+	return newWorldWith(t, mode, acquisitions, "")
+}
+
+// newWorldWith appends extra TOML (rules, overrides) to the configuration.
+func newWorldWith(t *testing.T, mode string, acquisitions int, extra string) *world {
+	t.Helper()
 	corr := "3"
 	if acquisitions < 0 {
 		// Negative: many acquisitions and no correlated-stall hold, for
 		// tests with many simultaneous stalls.
 		acquisitions, corr = 100, "1000"
 	}
-	src := strings.NewReplacer("%MODE%", mode, "%ACQ%", itoa(acquisitions), "%CORR%", corr).Replace(autoConfig)
+	src := strings.NewReplacer("%MODE%", mode, "%ACQ%", itoa(acquisitions), "%CORR%", corr).Replace(autoConfig) + extra
 	cfg, _, err := config.Parse([]byte(src), "/x/housekeeparr.toml")
 	if err != nil {
 		t.Fatal(err)
@@ -462,5 +468,52 @@ func TestManualActionRequiresDiagnosisUnderCurrentSettings(t *testing.T) {
 	}
 	if got := w.finding(hashA); got.State != domain.FindingOpen {
 		t.Fatalf("finding changed to %s; it must stay open pending re-evaluation", got.State)
+	}
+}
+
+// R8 with scoped policy: the planner resolves the same transfer-scoped
+// diagnostic settings as the engine, so a diagnosis under an override is
+// current for dispatch; editing that override requires re-evaluation.
+func TestScopedSettingsDiagnosisIsCurrentUntilEdited(t *testing.T) {
+	override := func(window string) string {
+		return "\n[[override]]\ntransfer = \"qbit|" + hashA + "\"\nreason = \"test\"\n[override.policy]\nnew_download_grace = \"0s\"\nno_progress_window = \"" + window + "\"\n"
+	}
+	w := newWorldWith(t, "automatic", 20, override("30m"))
+	w.stalled(hashA, 1, 1)
+	w.stalled(hashB, 2, 2)
+	w.run(time.Hour)
+	if s := w.client.Stops(); len(s) != 1 || s[0] != hashA {
+		t.Fatalf("scoped diagnosis was not dispatched: stops %v", s)
+	}
+
+	p := newWorldWith(t, "paused", 20, override("30m"))
+	p.stalled(hashA, 1, 1)
+	p.run(time.Hour)
+	f := p.finding(hashA)
+	reload := func(extra string) *app.Service {
+		src := strings.NewReplacer("%MODE%", "paused", "%ACQ%", "20", "%CORR%", "3").Replace(autoConfig) + extra
+		cfg, _, err := config.Parse([]byte(src), "/x/housekeeparr.toml")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return app.New(p.st, cfg, p.clock.Now, nil)
+	}
+	blocked := func(svc *app.Service) bool {
+		pv, err := svc.Preview(context.Background(), f.ID, action.OriginManual)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, b := range pv.Proposal.Blockers() {
+			if b.Name == "diagnosis under current policy" {
+				return true
+			}
+		}
+		return false
+	}
+	if blocked(reload(override("30m") + "\n[[override]]\ntransfer = \"qbit|" + hashC + "\"\nreason = \"other\"\n[override.policy]\nno_progress_window = \"24h\"\n")) {
+		t.Fatal("an override for another transfer invalidated this diagnosis")
+	}
+	if !blocked(reload(override("24h"))) {
+		t.Fatal("editing the transfer's override kept the older diagnosis usable")
 	}
 }

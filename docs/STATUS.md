@@ -95,28 +95,36 @@ compatibility.md):
 ### Latest-progress review — 2026-11-16 (`f0f2ae3`)
 
 [Review, reproductions and validation cadence](reviews/2026-11-16-latest.md)
-confirm the four-client progress below but identify three **open** defects:
+confirmed the four-client progress and identified three defects, now fixed
+with regression tests that fail on the reviewed code (local logic only; no
+real-instance run was needed or performed for them):
 
-- **R8 (high):** manual planning accepts a qualified assessment made under
-  an older, less restrictive policy. A new service loading a 24-hour window
-  can act on a three-hour diagnosis without another engine evaluation.
-- **R9 (medium):** a fresh manager queue can establish replacement completion
-  from cached pre-recovery client facts while that client is offline.
-- **R10 (medium):** terminal download outcomes stop independent search
-  polling/expiry, leaving an accepted/running search permanently unsettled.
-
-Three temporary deterministic overlay tests reproduce these (four failing
-assertions); they are not committed failing tests. Existing full uncached Go
-tests, build, vet, formatting and static build passed. No real-instance
-matrix was repeated. Earlier R5–R7 fixes remain, but R8 is a remaining
-policy/evidence safety gap; fix it before extending writes. R9/R10 need
-focused outcome regressions. No workflow is newly marked complete.
-
-The refreshed [handoff](CLAUDE_NEXT_SESSION.md) retains Gemini Hydrogen/agy
-authorization, puts these fixes before the next metadata-recovery slice,
-and replaces final-HEAD matrix rituals with change-based validation. Keep
-the undiagnosed qBittorrent 4.6.7 fixture failure visible; use a focused
-client-only investigation rather than blocking unrelated implementation.
+- **R8 (high) — fixed:** the planner adds the hard prerequisite "diagnosis
+  under current policy": the assessment's `PolicyRevision` must equal the
+  current effective diagnostic `Settings.Revision()` for the transfer's
+  scope. Missing/legacy revisions fail closed; the explanation asks for
+  re-evaluation by the next observation cycle and the finding stays open.
+  A mode/permission-only change (the broader effective revision) keeps the
+  diagnosis usable. Tests: `TestManualActionRequiresDiagnosisUnderCurrentSettings`
+  (fresh service with a 24 h window refuses a 3 h diagnosis, sends nothing),
+  `TestScopedSettingsDiagnosisIsCurrentUntilEdited` (a transfer override's
+  diagnosis dispatches automatically; another transfer's override does not
+  invalidate it; editing its own override does), and planner cases for
+  window, observation-count, unrecorded revision and mode-only changes.
+  Gap: there is no "require positive piece unavailability" policy setting
+  yet (SPEC §13.4 scenario 2); when added it must be part of
+  `Settings.Revision()`.
+- **R9 (medium) — fixed:** outcome progress/completion requires a complete
+  listing of the replacement's client in the same cycle; a fresh manager
+  grab alone records only the grab, and the last known state is kept.
+  `TestOutcomeProgressRequiresFreshClient` covers failed, backed-off and
+  incomplete client reads with a healthy manager.
+- **R10 (medium) — fixed:** outcomes stay open while either the download or
+  the search is unsettled; terminal downloads are no longer advanced, but
+  their search is followed or expired within its bounded window, and the
+  command list stops being read once both settle.
+  `TestSearchSettlesIndependentlyOfDownload` covers completed and
+  tracking-expired downloads, restart and command-list outage.
 
 ### Implementation proposals still hard-coded (not approved defaults)
 
