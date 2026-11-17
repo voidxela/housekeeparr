@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/voidxela/housekeeparr/internal/adapter"
+	"github.com/voidxela/housekeeparr/internal/config"
 	"github.com/voidxela/housekeeparr/internal/policy"
 	"github.com/voidxela/housekeeparr/internal/store"
 )
@@ -20,24 +21,6 @@ import (
 
 // OpSearch is the manager search operation.
 const OpSearch = "manager.search"
-
-// MissingFreshness bounds how old a missing-list read may be for planning
-// (twice the engine's hourly read; an implementation proposal).
-const MissingFreshness = 2 * time.Hour
-
-// SearchBackoff is how long after its n-th search (n ≥ 1) an item that is
-// still missing waits before it is searched again: one day, doubling, at
-// most 30 days. An implementation proposal, not a validated default.
-func SearchBackoff(n int) time.Duration {
-	d := 24 * time.Hour
-	for i := 1; i < n && d < 30*24*time.Hour; i++ {
-		d *= 2
-	}
-	if d > 30*24*time.Hour {
-		d = 30 * 24 * time.Hour
-	}
-	return d
-}
 
 // SearchPlanInput is everything PlanSearch needs, read from local state.
 type SearchPlanInput struct {
@@ -60,19 +43,25 @@ type SearchPlanInput struct {
 	ConfigRevision string
 	Now            time.Time
 	PreviewTTL     time.Duration
+	Timing         config.SearchConfig
 }
 
 // SearchTarget is the manager.search operation's target.
 type SearchTarget struct {
-	ManagerID string  `json:"manager_id"`
-	Kind      string  `json:"content_kind"`
-	IDs       []int64 `json:"ids"`
-	Key       string  `json:"content_key"`
+	ManagerID      string        `json:"manager_id"`
+	Kind           string        `json:"content_kind"`
+	IDs            []int64       `json:"ids"`
+	Key            string        `json:"content_key"`
+	InitialBackoff time.Duration `json:"initial_backoff,omitempty"`
+	MaxBackoff     time.Duration `json:"max_backoff,omitempty"`
 }
 
 // PlanSearch builds the proposal for searching one missing item.
 func PlanSearch(in SearchPlanInput) *Proposal {
 	it := in.Item
+	if in.Timing.MissingFreshness.Duration <= 0 {
+		in.Timing = config.Defaults().Search
+	}
 	wf := policy.WorkflowMissingSearch
 	limits := in.Limits
 	if limits.Acquisitions == 0 {
@@ -107,7 +96,7 @@ func PlanSearch(in SearchPlanInput) *Proposal {
 	}
 	add("content identity known", id > 0 && (kind == "episode" || kind == "movie"), "content "+it.ContentKey)
 	age := in.Now.Sub(it.LastSeen)
-	fresh := it.Present && age >= 0 && age <= MissingFreshness
+	fresh := it.Present && age >= 0 && age <= in.Timing.MissingFreshness.Duration
 	add("still missing (fresh)", fresh, fmt.Sprintf("listed as missing by %s %s ago", it.ManagerID, policy.HumanDuration(age)))
 	avail := it.Available != nil && *it.Available
 	add("released and available", avail, map[bool]string{true: "the manager reports it available (aired or released per its availability settings)",
@@ -149,8 +138,9 @@ func PlanSearch(in SearchPlanInput) *Proposal {
 	p.Budgets = acquisitionClaims(limits, it.ManagerID, nil)
 	name := map[string]string{"episode": "EpisodeSearch", "movie": "MoviesSearch"}[kind]
 	p.Operations = []Operation{{
-		Op:          OpSearch,
-		Target:      raw(SearchTarget{ManagerID: it.ManagerID, Kind: kind, IDs: []int64{id}, Key: it.ContentKey}),
+		Op: OpSearch,
+		Target: raw(SearchTarget{ManagerID: it.ManagerID, Kind: kind, IDs: []int64{id}, Key: it.ContentKey,
+			InitialBackoff: in.Timing.InitialBackoff.Duration, MaxBackoff: in.Timing.MaxBackoff.Duration}),
 		Request:     raw(map[string]any{"name": name, "ids": []int64{id}}),
 		Expect:      raw(map[string]any{"command_listed": true}),
 		Description: fmt.Sprintf("Ask %s to search for %s (%s)", it.ManagerID, it.Title, name),
@@ -158,8 +148,8 @@ func PlanSearch(in SearchPlanInput) *Proposal {
 	p.Effects = append([]string{fmt.Sprintf("%s searches its enabled indexers for %s alone (never a season or a broad search) and may grab a release under its own profiles", it.ManagerID, it.Title)}, p.Effects...)
 	p.SideEffects = []string{
 		"one manager search can query every enabled indexer and grab a release; Housekeeparr counts it as one acquisition but cannot bound the manager's own requests",
-		fmt.Sprintf("if it is still missing afterwards, it is not searched again for %s (then longer, up to 30 days); a completed search does not mean a release exists or was grabbed",
-			policy.HumanDuration(SearchBackoff(it.Searches+1))),
+		fmt.Sprintf("if it is still missing afterwards, it is not searched again for %s (up to %s); a completed search does not mean a release exists or was grabbed",
+			policy.HumanDuration(in.Timing.Backoff(it.Searches+1)), policy.HumanDuration(in.Timing.MaxBackoff.Duration)),
 	}
 	p.Planned = Planned{ManagerID: it.ManagerID, ManagerVersion: mv, Content: []string{it.ContentKey}}
 	p.Evidence = raw(map[string]any{"missing": it})
@@ -194,7 +184,11 @@ func trackMissingSearch(tx *store.Tx, step store.Step, state store.StepState) er
 	if !alreadyRecorded {
 		attempts++
 	}
-	next := step.DispatchedAt.Add(SearchBackoff(attempts))
+	timing := config.Defaults().Search
+	if target.InitialBackoff > 0 && target.MaxBackoff >= target.InitialBackoff {
+		timing.InitialBackoff.Duration, timing.MaxBackoff.Duration = target.InitialBackoff, target.MaxBackoff
+	}
+	next := step.DispatchedAt.Add(timing.Backoff(attempts))
 	status, note := store.MissingSearched, "the manager accepted the search; results are followed separately"
 	if state == store.StepUncertain {
 		status, note = store.MissingUncertain, "the search request's outcome could not be established; held for review"

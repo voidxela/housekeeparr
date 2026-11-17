@@ -480,12 +480,9 @@ type MissingReader interface {
 }
 
 // Missing-list reads (implementation proposals): at most once per
-// missingInterval per manager, bounded to missingMax items, and only while
+// configured interval per manager, bounded to missingMax items, and only while
 // some scope could enable proactive searches.
-const (
-	missingInterval = time.Hour
-	missingMax      = 500
-)
+const missingMax = 500
 
 // readMissing refreshes the missing lists of managers read successfully
 // this cycle. A failure is logged and leaves the stored list unchanged.
@@ -508,7 +505,7 @@ func (e *Engine) readMissing(ctx context.Context, results []*fetched) {
 		e.mu.Lock()
 		last, seen := e.missingRead[m.ID()]
 		e.mu.Unlock()
-		if age := now.Sub(last); seen && age >= 0 && age < missingInterval {
+		if age := now.Sub(last); seen && age >= 0 && age < e.cfg.Search.MissingInterval.Duration {
 			continue
 		}
 		snap, err := mr.Missing(ctx, missingMax)

@@ -1472,3 +1472,33 @@ partial_pack = true
 		t.Fatalf("targeted search lost the pack's scoped permission: %v", s)
 	}
 }
+
+func TestSearchTimingOverridesControlSpacingAndBackoff(t *testing.T) {
+	w := newWorldWith(t, "automatic", 20, missingRule+`
+[search]
+spacing = "30m"
+missing_interval = "20m"
+missing_freshness = "40m"
+follow_window = "30m"
+initial_backoff = "2h"
+max_backoff = "3h"
+`)
+	action.Tested = append(action.Tested, action.TestedWorkflow{Workflow: policy.WorkflowMissingSearch, Manager: adapter.KindSonarr, ManagerVersion: "0.0.0-fake"})
+	ctx := context.Background()
+	w.mgr.SetMissing(fake.MissingEpisode(102, 1, "First", t0.Add(-time.Hour)), fake.MissingEpisode(103, 1, "Second", t0.Add(-2*time.Hour)))
+	w.runSearches(30 * time.Minute)
+	if got := w.mgr.Searches(); len(got) != 1 {
+		t.Fatalf("searches before spacing elapsed: %v", got)
+	}
+	if reads := w.mgr.MissingReads(); reads != 2 {
+		t.Fatalf("wanted two missing-list reads at the configured cadence, got %d", reads)
+	}
+	it, err := w.st.MissingRecord(ctx, "sonarr", "episode:102")
+	if err != nil || it == nil || it.NextSearchAt == nil || it.NextSearchAt.Sub(*it.LastSearchAt) != 2*time.Hour {
+		t.Fatalf("configured backoff not recorded: %+v, %v", it, err)
+	}
+	w.runSearches(10 * time.Minute)
+	if got := w.mgr.Searches(); len(got) != 2 {
+		t.Fatalf("second search failed to run when spacing elapsed: %v", got)
+	}
+}

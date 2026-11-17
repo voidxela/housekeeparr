@@ -20,14 +20,8 @@ import (
 	"github.com/voidxela/housekeeparr/internal/workflow"
 )
 
-// Proactive-search pacing (implementation proposals, not validated
-// defaults): one search at a time, at least SearchSpacing apart across the
-// installation, at most maxSearchCandidates evaluated per pass. The
-// acquisition budgets ([automation.limits]) bound them further.
-const (
-	SearchSpacing       = 15 * time.Minute
-	maxSearchCandidates = 20
-)
+// Maximum live search candidates evaluated in a dispatch pass.
+const maxSearchCandidates = 20
 
 // SearchPreview is the proposal for searching one missing item.
 type SearchPreview struct {
@@ -50,7 +44,7 @@ func (s *Service) PreviewSearch(ctx context.Context, managerID, key string, orig
 		return nil, err
 	}
 	now := s.now()
-	in := action.SearchPlanInput{Item: *it, Origin: origin, ConfigRevision: s.cfg.Revision, Tested: action.Tested, Now: now, Limits: s.cfg.Limits()}
+	in := action.SearchPlanInput{Item: *it, Origin: origin, ConfigRevision: s.cfg.Revision, Tested: action.Tested, Now: now, Limits: s.cfg.Limits(), Timing: s.cfg.Search}
 	in.Scope = policy.Subject{ManagerID: managerID, ContentKey: key}
 	if it.Origin == "pack" && it.OriginIntent != nil {
 		originIntent, err := s.st.Intent(ctx, *it.OriginIntent)
@@ -112,9 +106,9 @@ func (s *Service) PreviewSearch(ctx context.Context, managerID, key string, orig
 	}
 	if last, err := s.st.LastMissingSearch(ctx); err != nil {
 		return nil, err
-	} else if in.Searching == "" && last != nil && now.Sub(*last) < SearchSpacing {
+	} else if in.Searching == "" && last != nil && now.Sub(*last) < s.cfg.Search.Spacing.Duration {
 		in.Searching = fmt.Sprintf("the last search was sent %s ago; searches are at least %s apart (one at a time)",
-			policy.HumanDuration(now.Sub(*last)), policy.HumanDuration(SearchSpacing))
+			policy.HumanDuration(now.Sub(*last)), policy.HumanDuration(s.cfg.Search.Spacing.Duration))
 	}
 	p := action.PlanSearch(in)
 	usage := map[string]store.BudgetUsage{}
@@ -228,7 +222,7 @@ func (s *Service) sendSearch(ctx context.Context, it store.MissingRecord, p *act
 	rep.Sent, rep.IntentID, rep.Outcome = it.ManagerID+"|"+it.ContentKey, res.IntentID, string(res.State)
 	id := res.IntentID
 	state, note := store.MissingSearched, "the manager accepted the search; whether it finds or grabs a release is observed in the manager's queue"
-	next := now.Add(action.SearchBackoff(it.Searches + 1))
+	next := now.Add(s.cfg.Search.Backoff(it.Searches + 1))
 	sev := domain.SeverityNotice
 	switch res.State {
 	case store.IntentSucceeded:
@@ -264,9 +258,6 @@ func (s *Service) Missing(ctx context.Context, presentOnly bool) ([]store.Missin
 // Radarr 6.4.4 searches ("… 0 reports downloaded."); other wording leaves
 // the result unverified.
 var reportsRE = regexp.MustCompile(`(\d+) reports? downloaded`)
-
-// searchFollow bounds how long a search's end is looked for (a proposal).
-const searchFollow = time.Hour
 
 // followSearches settles the outcome of recent searches from the managers'
 // command lists: grabbed, nothing downloaded, failed, or not observed. It
@@ -325,8 +316,8 @@ func (s *Service) followSearches(ctx context.Context, now time.Time) error {
 				state, note = store.MissingSearchFail, "the manager's search command ended "+c.Status+": "+c.Message
 			}
 		}
-		if state == "" && !active && now.Sub(*it.LastSearchAt) > searchFollow {
-			state, note = store.MissingEndUnknown, "the search's end was not observed in the manager's command list within "+policy.HumanDuration(searchFollow)
+		if state == "" && !active && now.Sub(*it.LastSearchAt) > s.cfg.Search.FollowWindow.Duration {
+			state, note = store.MissingEndUnknown, "the search's end was not observed in the manager's command list within "+policy.HumanDuration(s.cfg.Search.FollowWindow.Duration)
 		}
 		if state == "" {
 			continue

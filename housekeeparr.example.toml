@@ -141,6 +141,14 @@ request_timeout = "30s"
 max_concurrency = 4      # connections polled in parallel
 jitter = "30s"           # random delay added to each cycle start
 
+[search]
+spacing = "15m"
+missing_interval = "1h"
+missing_freshness = "2h"
+follow_window = "1h"
+initial_backoff = "24h"
+max_backoff = "720h"
+
 [retention]
 observations = "168h"                 # detailed transfer observations
 max_observations_per_transfer = 1000

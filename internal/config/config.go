@@ -60,6 +60,7 @@ type Config struct {
 	State      StateConfig      `toml:"state"`
 	Web        WebConfig        `toml:"web"`
 	Polling    PollingConfig    `toml:"polling"`
+	Search     SearchConfig     `toml:"search"`
 	Retention  RetentionConfig  `toml:"retention"`
 	Log        LogConfig        `toml:"log"`
 	Policy     PolicyOverrides  `toml:"policy"`
@@ -81,6 +82,28 @@ type Config struct {
 	Path string `toml:"-"`
 	// Revision is a digest of the effective (non-secret) configuration.
 	Revision string `toml:"-"`
+}
+
+// SearchConfig controls pacing and observation of Housekeeparr searches.
+type SearchConfig struct {
+	Spacing          Duration `toml:"spacing"`
+	MissingInterval  Duration `toml:"missing_interval"`
+	MissingFreshness Duration `toml:"missing_freshness"`
+	FollowWindow     Duration `toml:"follow_window"`
+	InitialBackoff   Duration `toml:"initial_backoff"`
+	MaxBackoff       Duration `toml:"max_backoff"`
+}
+
+// Backoff doubles the wait after each search, up to MaxBackoff.
+func (s SearchConfig) Backoff(attempts int) time.Duration {
+	delay, ceiling := s.InitialBackoff.Duration, s.MaxBackoff.Duration
+	for i := 1; i < attempts && delay < ceiling; i++ {
+		if delay > ceiling/2 {
+			return ceiling
+		}
+		delay *= 2
+	}
+	return delay
 }
 
 // AutomationConfig holds global automation controls and per-workflow enablement.
@@ -410,6 +433,11 @@ func Defaults() Config {
 			MaxConcurrency: 4,
 			Jitter:         Duration{30 * time.Second},
 		},
+		Search: SearchConfig{
+			Spacing: Duration{15 * time.Minute}, MissingInterval: Duration{time.Hour},
+			MissingFreshness: Duration{2 * time.Hour}, FollowWindow: Duration{time.Hour},
+			InitialBackoff: Duration{24 * time.Hour}, MaxBackoff: Duration{30 * 24 * time.Hour},
+		},
 		Retention: RetentionConfig{
 			Observations:               Duration{7 * 24 * time.Hour},
 			MaxObservationsPerTransfer: 1000,
@@ -487,6 +515,24 @@ func validate(cfg *Config, md toml.MetaData) []Problem {
 	validateUnknownPrivacyMap(errf, "automation.unknown_privacy", cfg.Automation.UnknownPrivacy)
 	validatePrivateRecovery(errf, "automation.private_recovery", cfg.Automation.PrivateRecovery)
 	validateLimits(errf, cfg)
+	search := cfg.Search
+	for _, field := range []struct {
+		name  string
+		value Duration
+	}{
+		{"spacing", search.Spacing}, {"missing_interval", search.MissingInterval}, {"missing_freshness", search.MissingFreshness},
+		{"follow_window", search.FollowWindow}, {"initial_backoff", search.InitialBackoff}, {"max_backoff", search.MaxBackoff},
+	} {
+		if field.value.Duration <= 0 {
+			errf("search."+field.name, "must be positive")
+		}
+	}
+	if search.MissingFreshness.Duration < search.MissingInterval.Duration {
+		errf("search.missing_freshness", "must cover at least one missing-interval")
+	}
+	if search.MaxBackoff.Duration < search.InitialBackoff.Duration {
+		errf("search.max_backoff", "must be at least initial_backoff")
+	}
 	if strings.TrimSpace(cfg.State.Dir) == "" {
 		errf("state.dir", "required")
 	}
