@@ -100,8 +100,15 @@ freeport() { python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0
 secret() { python3 -c 'import secrets; print(secrets.token_urlsafe(18))'; }
 
 waitfor() { # url seconds
-	for _ in $(seq 1 "$2"); do curl -fs -o /dev/null "$1" 2>/dev/null && return 0; curl -s -o /dev/null -w '%{http_code}' "$1" 2>/dev/null | grep -qE '^(401|403|405|409)$' && return 0; sleep 1; done
-	echo "timed out waiting for $1" >&2; return 1
+	local deadline=$((SECONDS + $2)) status
+	while [ "$SECONDS" -lt "$deadline" ]; do
+		if status=$(curl -s --max-time 1 -o /dev/null -w '%{http_code}' "$1"); then
+			case "$status" in 2??|401|403|405|409) return 0 ;; esac
+		fi
+		sleep 1
+	done
+	echo "timed out waiting for the HTTP fixture on ${1%%\?*}" >&2
+	return 1
 }
 
 # Each client gets its own copy of the payload directory so no two clients
@@ -269,17 +276,21 @@ for t in json.load(open(manifest)):
         curl(*common, "-F", "urls=magnet:?xt=urn:btih:%s&dn=%s" % (t["hash"], t["name"]), qbt + "/api/v2/torrents/add")
     else:
         curl(*common, "-F", "torrents=@%s/%s.torrent" % (tdir, t["name"]), qbt + "/api/v2/torrents/add")
-time.sleep(3)
+fixtures = json.load(open(manifest))
+expected = {t["hash"] for t in fixtures}
 def idle(limit=60):
     # No torrent checking (or queued to check). qBittorrent 4.6.7 left a
     # torrent in checkingDL at 0% for good when a recheck was requested
     # while earlier checks were still queued, so rechecks go one at a time.
-    end = time.time() + limit
-    while time.time() < end:
-        if not any(r["state"].startswith("checking") for r in json.loads(curl(qbt + "/api/v2/torrents/info"))):
+    end = time.monotonic() + limit
+    while time.monotonic() < end:
+        rows = {r["hash"]: r for r in json.loads(curl(qbt + "/api/v2/torrents/info"))}
+        if expected <= rows.keys() and not any(r["state"].startswith("checking") for r in rows.values()):
             return
         time.sleep(0.5)
-for t in json.load(open(manifest)):
+    sys.exit("qBittorrent did not load every fixture and finish its queued checks")
+idle()
+for t in fixtures:
     if t.get("deselect"):
         idx = t["files"].index(t["deselect"])
         curl("--data", "hash=%s&id=%d&priority=0" % (t["hash"], idx), qbt + "/api/v2/torrents/filePrio")
@@ -293,7 +304,8 @@ full_hashes = {t["hash"] for t in json.load(open(manifest)) if t.get("data") == 
 # restart: a check still running (or not yet started) when the payload of
 # errored-restart is deleted produced stalledDL with nothing verified
 # (qBittorrent 4.6.7 at 118f15c) instead of missingFiles.
-deadline, began = time.time() + 180, time.time()
+began = time.monotonic()
+deadline = began + 180
 keys = {t["hash"]: t["key"] for t in json.load(open(manifest))}
 while True:
     rows = json.loads(curl(qbt + "/api/v2/torrents/info"))
@@ -301,11 +313,10 @@ while True:
     pending = [h for h in full_hashes if h not in info or info[h]["state"].startswith("checking") or info[h].get("progress", 0) < 1]
     if not pending:
         break
-    if time.time() > deadline:
+    if time.monotonic() > deadline:
         sys.exit("qBittorrent did not verify the full payloads before the restart: %s" % {keys.get(h, h): ((info.get(h) or {}).get("state"), (info.get(h) or {}).get("progress")) for h in pending})
     time.sleep(0.5)
-print("qBittorrent verified the full payloads in %.0fs" % (time.time() - began), file=sys.stderr)
-time.sleep(1)
+print("qBittorrent verified the full payloads in %.0fs" % (time.monotonic() - began), file=sys.stderr)
 PY
 	kill -TERM "$qbt_pid" 2>/dev/null || true
 	wait "$qbt_pid" 2>/dev/null || true
@@ -336,13 +347,20 @@ for t in json.load(open(manifest)):
             act(t["hash"], "start", "resume")
     elif t["key"] == "errored":
         act(t["hash"], "stop", "pause")
-        time.sleep(1)
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            rows = json.loads(curl(qbt + "/api/v2/torrents/info?hashes=" + t["hash"]))
+            if rows and rows[0]["state"] in ("stoppedUP", "pausedUP") and rows[0]["progress"] == 1:
+                print("qBittorrent verified the target was stopped with a complete payload before deletion", file=sys.stderr)
+                break
+            time.sleep(0.25)
+        else:
+            sys.exit("qBittorrent did not stop the complete errored fixture before deletion")
         os.remove(os.path.join(save, t["name"]))
         act(t["hash"], "start", "resume")
     elif t["key"] == "errored-recheck":
         os.remove(os.path.join(save, t["name"]))
         curl("--data", "hashes=" + t["hash"], qbt + "/api/v2/torrents/recheck")
-time.sleep(5)
 PY
 	export HK_IT_QBT_URL="$QBT" HK_IT_QBT_USER=admin HK_IT_QBT_PASS="$QBT_PASS" HK_IT_QBT_VERSION="$QBT_VERSION" HK_IT_QBT_SAVE="$save"
 	TESTS+=(TestQBittorrentReleasedBehaviour)
@@ -429,7 +447,7 @@ scgi.server = ("/RPC2" => (("host" => "127.0.0.1", "port" => $scgi, "check-local
 EOF
 	LD_LIBRARY_PATH="$lib" "$root/usr/sbin/lighttpd" -D -f "$WORK/lighttpd.conf" -m "$root/usr/lib/lighttpd" > "$WORK/lighttpd.log" 2>&1 &
 	PIDS+=($!); LOGS+=("$WORK/lighttpd.log" "$WORK/lighttpd-error.log")
-	for _ in $(seq 1 30); do python3 -c "import socket; socket.create_connection(('127.0.0.1', $scgi), 1)" 2>/dev/null && break; sleep 1; done
+	wait_tcp "$scgi" 30
 	waitfor "http://127.0.0.1:$http/RPC2" 30
 	python3 -I "$HERE/setup_clients.py" rtorrent "$scgi" "$WORK/torrents/manifest.json" "$WORK/torrents" "$save"
 	kill -TERM "$rt_pid" 2>/dev/null || true
@@ -443,7 +461,7 @@ for t in json.load(open(manifest)):
 PY
 	HOME="$WORK/rt-home" LD_LIBRARY_PATH="$lib" "$root/usr/bin/rtorrent" -n -o "import=$WORK/rtorrent.rc" >> "$WORK/rtorrent.log" 2>&1 &
 	PIDS+=($!)
-	for _ in $(seq 1 30); do python3 -c "import socket; socket.create_connection(('127.0.0.1', $scgi), 1)" 2>/dev/null && break; sleep 1; done
+	wait_tcp "$scgi" 30
 	python3 -I "$HERE/setup_clients.py" rtorrent-post-restart "$scgi" "$WORK/torrents/manifest.json" "$save"
 	RT_HTTP_PORT="$http"; RT_PASS="$pass"
 	export HK_IT_RT_URL="http://127.0.0.1:$http" HK_IT_RT_USER=admin HK_IT_RT_PASS="$pass" HK_IT_RT_VERSION=0.9.8 HK_IT_RT_SAVE="$save"
@@ -474,7 +492,7 @@ start_deluge() {
 	env "${env[@]}" python3 "$root/usr/bin/deluged" -d -c "$cfg" -u 127.0.0.1 -p "$daemon" -i 127.0.0.1 -L info -l "$WORK/deluged.log" > "$WORK/deluged.out" 2>&1 &
 	local deluged_pid=$!
 	PIDS+=("$deluged_pid"); LOGS+=("$WORK/deluged.log" "$WORK/deluged.out")
-	for _ in $(seq 1 60); do python3 -c "import socket; socket.create_connection(('127.0.0.1', $daemon), 1)" 2>/dev/null && break; sleep 1; done
+	wait_tcp "$daemon" 60
 	env "${env[@]}" python3 "$root/usr/bin/deluge-web" -d -c "$cfg" -i 127.0.0.1 -p "$web" -L info -l "$WORK/deluge-web.log" > "$WORK/deluge-web.out" 2>&1 &
 	PIDS+=($!); LOGS+=("$WORK/deluge-web.log" "$WORK/deluge-web.out")
 	waitfor "http://127.0.0.1:$web/" 60
@@ -490,7 +508,7 @@ for t in json.load(open(manifest)):
 PY
 	env "${env[@]}" python3 "$root/usr/bin/deluged" -d -c "$cfg" -u 127.0.0.1 -p "$daemon" -i 127.0.0.1 -L info -l "$WORK/deluged.log" >> "$WORK/deluged.out" 2>&1 &
 	PIDS+=($!)
-	for _ in $(seq 1 60); do python3 -c "import socket; socket.create_connection(('127.0.0.1', $daemon), 1)" 2>/dev/null && break; sleep 1; done
+	wait_tcp "$daemon" 60
 	python3 -I "$HERE/setup_clients.py" deluge-post-restart "http://127.0.0.1:$web" "$wpass" "$daemon" admin "$dpass" "$WORK/torrents/manifest.json" "$save"
 	DELUGE_WEB_PORT="$web"; DELUGE_PASS="$wpass"
 	export HK_IT_DELUGE_URL="http://127.0.0.1:$web" HK_IT_DELUGE_PASS="$wpass" HK_IT_DELUGE_VERSION=2.2.0 HK_IT_DELUGE_SAVE="$save"

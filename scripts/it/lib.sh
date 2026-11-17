@@ -66,3 +66,22 @@ with socket.socket() as sock:
     fcntl.ioctl(sock, 0x8914, struct.pack("16sh", b"lo", flags | 1))
 PY
 }
+
+wait_tcp() { # loopback port, timeout seconds
+	python3 - "$@" <<'PY'
+import socket
+import sys
+import time
+
+port, limit = map(int, sys.argv[1:])
+deadline = time.monotonic() + limit
+while time.monotonic() < deadline:
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=1):
+            break
+    except OSError:
+        time.sleep(0.25)
+else:
+    raise SystemExit(f"timed out waiting for TCP fixture on 127.0.0.1:{port}")
+PY
+}
