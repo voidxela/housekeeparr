@@ -43,6 +43,15 @@ var Tested = []TestedWorkflow{
 	{Workflow: policy.WorkflowNoProgressRecovery, Manager: adapter.KindRadarr, ManagerVersion: "6.4.4.10685", Client: adapter.KindTransmission, ClientVersion: "4.0.6 (38c164933e)"},
 	{Workflow: policy.WorkflowNoProgressRecovery, Manager: adapter.KindSonarr, ManagerVersion: "4.0.20.3014", Client: adapter.KindTransmission, ClientVersion: "4.1.4 (a6d907d9ea)"},
 	{Workflow: policy.WorkflowNoProgressRecovery, Manager: adapter.KindRadarr, ManagerVersion: "6.4.4.10685", Client: adapter.KindTransmission, ClientVersion: "4.1.4 (a6d907d9ea)"},
+	// Metadata recovery (docs/compatibility.md, "Metadata recovery runs").
+	{Workflow: policy.WorkflowMetadataRecovery, Manager: adapter.KindSonarr, ManagerVersion: "4.0.20.3014", Client: adapter.KindDeluge, ClientVersion: "2.2.0"},
+	{Workflow: policy.WorkflowMetadataRecovery, Manager: adapter.KindRadarr, ManagerVersion: "6.4.4.10685", Client: adapter.KindDeluge, ClientVersion: "2.2.0"},
+	{Workflow: policy.WorkflowMetadataRecovery, Manager: adapter.KindSonarr, ManagerVersion: "4.0.20.3014", Client: adapter.KindRTorrent, ClientVersion: "0.9.8"},
+	{Workflow: policy.WorkflowMetadataRecovery, Manager: adapter.KindRadarr, ManagerVersion: "6.4.4.10685", Client: adapter.KindRTorrent, ClientVersion: "0.9.8"},
+	{Workflow: policy.WorkflowMetadataRecovery, Manager: adapter.KindSonarr, ManagerVersion: "4.0.20.3014", Client: adapter.KindTransmission, ClientVersion: "4.0.6 (38c164933e)"},
+	{Workflow: policy.WorkflowMetadataRecovery, Manager: adapter.KindRadarr, ManagerVersion: "6.4.4.10685", Client: adapter.KindTransmission, ClientVersion: "4.0.6 (38c164933e)"},
+	{Workflow: policy.WorkflowMetadataRecovery, Manager: adapter.KindSonarr, ManagerVersion: "4.0.20.3014", Client: adapter.KindTransmission, ClientVersion: "4.1.4 (a6d907d9ea)"},
+	{Workflow: policy.WorkflowMetadataRecovery, Manager: adapter.KindRadarr, ManagerVersion: "6.4.4.10685", Client: adapter.KindTransmission, ClientVersion: "4.1.4 (a6d907d9ea)"},
 }
 
 // diagnosesFor lists the qualified diagnoses each workflow addresses.
