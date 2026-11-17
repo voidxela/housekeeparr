@@ -19,7 +19,7 @@ type SourceRecord struct {
 
 // Unavailable reports whether the manager had the source disabled at t.
 func (r SourceRecord) Unavailable(t time.Time) bool {
-	return r.DisabledUntil != nil && r.DisabledUntil.After(t)
+	return r.StatusKnown && r.DisabledUntil != nil && r.DisabledUntil.After(t)
 }
 
 // SaveSources replaces a manager's stored sources with a fresh read,
@@ -34,7 +34,7 @@ func (t *Tx) SaveSources(s domain.SourceSnapshot) error {
 	}
 	for _, src := range s.Sources {
 		streak := 0
-		if src.DisabledUntil == nil || !src.DisabledUntil.After(s.CollectedAt) {
+		if src.StatusKnown && (src.DisabledUntil == nil || !src.DisabledUntil.After(s.CollectedAt)) {
 			streak = 1
 			if p, ok := prev[src.ID]; ok {
 				streak = p.OKStreak + 1
@@ -44,9 +44,13 @@ func (t *Tx) SaveSources(s domain.SourceSnapshot) error {
 		if src.AutomaticSearch {
 			auto = 1
 		}
-		if _, err := t.exec(`INSERT INTO source_status(manager_id, source_id, name, protocol, automatic, disabled_until, last_failure, ok_streak, collected_at)
-			VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`, s.ManagerID, src.ID, src.Name, src.Protocol, auto, ptrTime(src.DisabledUntil), ptrTime(src.LastFailure),
-			streak, ms(s.CollectedAt)); err != nil {
+		known := 0
+		if src.StatusKnown {
+			known = 1
+		}
+		if _, err := t.exec(`INSERT INTO source_status(manager_id, source_id, name, protocol, automatic, disabled_until, last_failure, ok_streak, collected_at, status_known)
+			VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, s.ManagerID, src.ID, src.Name, src.Protocol, auto, ptrTime(src.DisabledUntil), ptrTime(src.LastFailure),
+			streak, ms(s.CollectedAt), known); err != nil {
 			return err
 		}
 	}
@@ -58,19 +62,19 @@ func scanSources(rows *sql.Rows) ([]SourceRecord, error) {
 	var out []SourceRecord
 	for rows.Next() {
 		var r SourceRecord
-		var auto int
+		var auto, known int
 		var dis, fail sql.NullInt64
 		var at int64
-		if err := rows.Scan(&r.ManagerID, &r.ID, &r.Name, &r.Protocol, &auto, &dis, &fail, &r.OKStreak, &at); err != nil {
+		if err := rows.Scan(&r.ManagerID, &r.ID, &r.Name, &r.Protocol, &auto, &dis, &fail, &r.OKStreak, &at, &known); err != nil {
 			return nil, err
 		}
-		r.AutomaticSearch, r.DisabledUntil, r.LastFailure, r.CollectedAt = auto == 1, ptrMS(dis), ptrMS(fail), fromMS(at)
+		r.AutomaticSearch, r.DisabledUntil, r.LastFailure, r.CollectedAt, r.StatusKnown = auto == 1, ptrMS(dis), ptrMS(fail), fromMS(at), known == 1
 		out = append(out, r)
 	}
 	return out, rows.Err()
 }
 
-const sourceCols = `manager_id, source_id, name, protocol, automatic, disabled_until, last_failure, ok_streak, collected_at`
+const sourceCols = `manager_id, source_id, name, protocol, automatic, disabled_until, last_failure, ok_streak, collected_at, status_known`
 
 func (t *Tx) sources(managerID string) (map[int64]SourceRecord, error) {
 	rows, err := t.query("SELECT "+sourceCols+" FROM source_status WHERE manager_id=?", managerID)

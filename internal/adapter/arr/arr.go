@@ -743,9 +743,15 @@ func (c *Client) Sources(ctx context.Context, managerID string) (domain.SourceSn
 	if indexers == nil {
 		return domain.SourceSnapshot{}, httpx.Malformed(op, fmt.Errorf("indexer response is null, not a list"))
 	}
+	// Indexer status is optional: released Sonarr 4.0.20 answers 404
+	// (observed), so status is then unknown rather than healthy.
 	var statuses *[]indexerStatusRecord
+	statusKnown := true
 	if err := c.Get(ctx, "indexerstatus", "/api/v3/indexerstatus", nil, &statuses); err != nil {
-		return domain.SourceSnapshot{}, err
+		if adapter.ClassOf(err) != adapter.ErrUnsupported {
+			return domain.SourceSnapshot{}, err
+		}
+		statusKnown, statuses = false, &[]indexerStatusRecord{}
 	}
 	if statuses == nil {
 		return domain.SourceSnapshot{}, httpx.Malformed(op, fmt.Errorf("indexerstatus response is null, not a list"))
@@ -770,6 +776,7 @@ func (c *Client) Sources(ctx context.Context, managerID string) (domain.SourceSn
 			Name:            redact.Truncate(redact.String(r.Name), 100),
 			Protocol:        r.Protocol,
 			AutomaticSearch: *r.EnableAutomaticSearch,
+			StatusKnown:     statusKnown,
 		}
 		if st, ok := statusByID[*r.ID]; ok {
 			src.DisabledUntil = parseOptionalUTCTime(st.DisabledTill)

@@ -351,6 +351,10 @@ type Source struct {
 	// AutomaticSearch is whether the manager uses it for automatic
 	// (non-interactive) searches, which is what proactive searches are.
 	AutomaticSearch bool `json:"automatic_search"`
+	// StatusKnown is false when the manager does not report indexer status
+	// (released Sonarr 4.0.20 has no indexerstatus endpoint): DisabledUntil
+	// and LastFailure are then unknown, never "healthy".
+	StatusKnown bool `json:"status_known"`
 	// DisabledUntil is set while the manager has temporarily disabled the
 	// source after failures; LastFailure is its most recent failure.
 	DisabledUntil *time.Time `json:"disabled_until,omitempty"`

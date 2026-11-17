@@ -295,12 +295,50 @@ func TestForwardMigrationV15Sources(t *testing.T) {
 	at := time.Unix(1000, 0)
 	for i := 0; i < 2; i++ {
 		if err := s.Write(ctx, func(tx *Tx) error {
-			return tx.SaveSources(domain.SourceSnapshot{ManagerID: "sonarr", CollectedAt: at, Sources: []domain.Source{{ID: 1, Name: "T", Protocol: "torrent", AutomaticSearch: true}}})
+			return tx.SaveSources(domain.SourceSnapshot{ManagerID: "sonarr", CollectedAt: at, Sources: []domain.Source{{ID: 1, Name: "T", Protocol: "torrent", AutomaticSearch: true, StatusKnown: true}}})
 		}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if list, _ := s.Sources(ctx, "sonarr"); len(list) != 1 || list[0].OKStreak != 2 {
 		t.Fatalf("sources %+v", list)
+	}
+}
+
+// A database at schema 16 opens at 17; existing source rows were read with
+// status, so they keep counting as known.
+func TestForwardMigrationV16SourceStatusKnown(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(dir, dbFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, _ := migrationFS.ReadDir("migrations")
+	for _, e := range entries {
+		if e.Name() >= "0017" {
+			break
+		}
+		body, _ := migrationFS.ReadFile("migrations/" + e.Name())
+		if _, err := db.Exec(string(body)); err != nil {
+			t.Fatalf("%s: %v", e.Name(), err)
+		}
+	}
+	for _, q := range []string{
+		"INSERT INTO meta(key, value) VALUES('schema_version','16'),('data_origin','live'),('instance_id','v16inst'),('created_at','0')",
+		"INSERT INTO source_status(manager_id, source_id, name, protocol, automatic, ok_streak, collected_at) VALUES('radarr', 1, 'T', 'torrent', 1, 3, 1)",
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+	s, err := Open(ctx, dir, Options{})
+	if err != nil {
+		t.Fatalf("open v16 database: %v", err)
+	}
+	defer s.Close()
+	if list, _ := s.Sources(ctx, "radarr"); len(list) != 1 || !list[0].StatusKnown || list[0].OKStreak != 3 {
+		t.Fatalf("%+v", list)
 	}
 }

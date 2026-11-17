@@ -326,12 +326,15 @@ func (s *Service) coverageNote(ctx context.Context, managerID string, at time.Ti
 		return "", err
 	}
 	var down []string
-	usable := 0
+	usable, unknown := 0, 0
 	for _, src := range srcs {
 		if !src.AutomaticSearch || src.Protocol != "torrent" {
 			continue
 		}
 		usable++
+		if !src.StatusKnown {
+			unknown++
+		}
 		if src.Unavailable(at) {
 			down = append(down, src.Name)
 		}
@@ -339,6 +342,8 @@ func (s *Service) coverageNote(ctx context.Context, managerID string, at time.Ti
 	switch {
 	case usable == 0:
 		return "coverage: no indexer was enabled for automatic torrent searches", nil
+	case unknown > 0 && len(down) == 0:
+		return "coverage could not be verified: the manager does not report indexer status (see its health checks)", nil
 	case len(down) > 0:
 		return fmt.Sprintf("coverage incomplete: %d of %d torrent indexers were disabled by the manager after failures (%s)", len(down), usable, strings.Join(down, ", ")), nil
 	}

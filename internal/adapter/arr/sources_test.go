@@ -3,6 +3,8 @@ package arr
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -172,5 +174,28 @@ func TestSourcesMalformedResponses(t *testing.T) {
 				t.Fatalf("%s: expected malformed ErrPermanent, got %v", name, err)
 			}
 		})
+	}
+}
+
+// Released Sonarr 4.0.20 answers 404 for /api/v3/indexerstatus (observed):
+// indexers are still read, with status unknown.
+func TestSourcesWithoutIndexerStatusEndpoint(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v3/indexer":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[{"id":1,"name":"T","protocol":"torrent","enableAutomaticSearch":true}]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	c, err := New(Options{App: "sonarr", BaseURL: srv.URL, APIKey: "k", Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap, err := c.Sources(context.Background(), "sonarr")
+	if err != nil || len(snap.Sources) != 1 || snap.Sources[0].StatusKnown {
+		t.Fatalf("%+v %v", snap, err)
 	}
 }
