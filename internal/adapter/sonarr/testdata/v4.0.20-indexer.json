@@ -1,0 +1,78 @@
+[
+ {
+  "id": 1,
+  "name": "Example Torrent Failing",
+  "protocol": "torrent",
+  "enableRss": true,
+  "enableAutomaticSearch": true,
+  "enableInteractiveSearch": true,
+  "supportsRss": true,
+  "supportsSearch": true,
+  "priority": 25,
+  "fields": [
+   {
+    "name": "baseUrl",
+    "value": "https://tracker-a.example/torznab"
+   },
+   {
+    "name": "apiKey",
+    "value": "FAKEPASSKEY1234567890"
+   },
+   {
+    "name": "passkeyUrl",
+    "value": "https://tracker-a.example/announce?passkey=FAKEPASSKEY1234567890"
+   }
+  ]
+ },
+ {
+  "id": 2,
+  "name": "Example Torrent Healthy",
+  "protocol": "torrent",
+  "enableRss": true,
+  "enableAutomaticSearch": true,
+  "enableInteractiveSearch": true,
+  "supportsRss": true,
+  "supportsSearch": true,
+  "priority": 25,
+  "fields": [
+   {
+    "name": "baseUrl",
+    "value": "https://tracker-b.example/torznab"
+   }
+  ]
+ },
+ {
+  "id": 3,
+  "name": "Example Usenet Indexer",
+  "protocol": "usenet",
+  "enableRss": true,
+  "enableAutomaticSearch": true,
+  "enableInteractiveSearch": true,
+  "supportsRss": true,
+  "supportsSearch": true,
+  "priority": 25,
+  "fields": [
+   {
+    "name": "baseUrl",
+    "value": "https://usenet.example/api"
+   }
+  ]
+ },
+ {
+  "id": 4,
+  "name": "Example Interactive Only",
+  "protocol": "torrent",
+  "enableRss": false,
+  "enableAutomaticSearch": false,
+  "enableInteractiveSearch": true,
+  "supportsRss": true,
+  "supportsSearch": true,
+  "priority": 50,
+  "fields": [
+   {
+    "name": "baseUrl",
+    "value": "https://tracker-d.example/torznab"
+   }
+  ]
+ }
+]

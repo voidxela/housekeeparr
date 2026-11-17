@@ -89,6 +89,23 @@ func runProactiveSearch(t *testing.T, a arrAPI, section string, e managedEntry, 
 			t.Fatalf("cycle %s: %s", c.ID, c.Error)
 		}
 	}
+	// The manager's sources were read too (SPEC §9.2): the stand-in Torznab
+	// indexer is an automatic torrent source, not disabled, so no source
+	// finding is open.
+	srcs, _ := st.Sources(ctx, section)
+	torrent := 0
+	for _, s := range srcs {
+		t.Logf("source %d %q protocol=%q automatic=%v disabled_until=%v", s.ID, s.Name, s.Protocol, s.AutomaticSearch, s.DisabledUntil)
+		if s.Protocol == "torrent" && s.AutomaticSearch && !s.Unavailable(time.Now()) {
+			torrent++
+		}
+	}
+	if torrent == 0 {
+		t.Fatalf("no usable torrent source read from %s: %+v", section, srcs)
+	}
+	if fs, _ := st.Findings(ctx, store.FindingFilter{Type: engine.FindingSourceNone}); len(fs) != 0 {
+		t.Fatalf("source finding with a usable indexer: %+v", fs)
+	}
 	it, err := st.MissingRecord(ctx, section, key)
 	if err != nil || it == nil {
 		list, _ := st.MissingContent(ctx, store.MissingFilter{})

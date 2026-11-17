@@ -6,6 +6,8 @@
 | `v6.4.4-queue.json` | **Source-derived, not captured.** `PagingResource<QueueResource>` per `src/Radarr.Api.V3/Queue/QueueResource.cs` at tag `v6.4.4.10685`; camelCase enum values. |
 | `v6.4.4-health.json` | **Source-derived, not captured.** |
 | `v6.4.4-wanted_missing.json` | **Synthetic, not captured.** `PagingResource<MovieResource>` shape for `GET /api/v3/wanted/missing` at tag `v6.4.4.10685`; values synthetic. |
+| `v6.4.4-indexer.json` | **Synthetic, not captured.** `IndexerResource` array shape for `GET /api/v3/indexer`; includes a fake passkey URL in `fields` to assert credentials and URLs are never retained. |
+| `v6.4.4-indexerstatus.json` | **Synthetic, not captured.** `IndexerStatusResource` array shape for `GET /api/v3/indexerstatus`; values synthetic. |
 
 Observation is validated against a real Radarr 6.4.4.10685 instance; see
 `docs/compatibility.md`. These files remain source-derived.

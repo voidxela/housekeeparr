@@ -1,0 +1,74 @@
+[
+ {
+  "id": 10,
+  "name": "Radarr Torrent Failing",
+  "protocol": "torrent",
+  "enableRss": true,
+  "enableAutomaticSearch": true,
+  "enableInteractiveSearch": true,
+  "supportsRss": true,
+  "supportsSearch": true,
+  "priority": 25,
+  "fields": [
+   {
+    "name": "baseUrl",
+    "value": "https://tracker-a.example/torznab"
+   },
+   {
+    "name": "passkeyUrl",
+    "value": "https://tracker-a.example/announce?passkey=FAKEPASSKEY1234567890"
+   }
+  ]
+ },
+ {
+  "id": 20,
+  "name": "Radarr Torrent Healthy",
+  "protocol": "torrent",
+  "enableRss": true,
+  "enableAutomaticSearch": true,
+  "enableInteractiveSearch": true,
+  "supportsRss": true,
+  "supportsSearch": true,
+  "priority": 25,
+  "fields": [
+   {
+    "name": "baseUrl",
+    "value": "https://tracker-b.example/torznab"
+   }
+  ]
+ },
+ {
+  "id": 30,
+  "name": "Radarr Usenet Indexer",
+  "protocol": "usenet",
+  "enableRss": true,
+  "enableAutomaticSearch": true,
+  "enableInteractiveSearch": true,
+  "supportsRss": true,
+  "supportsSearch": true,
+  "priority": 25,
+  "fields": [
+   {
+    "name": "baseUrl",
+    "value": "https://usenet.example/api"
+   }
+  ]
+ },
+ {
+  "id": 40,
+  "name": "Radarr Interactive Only",
+  "protocol": "torrent",
+  "enableRss": false,
+  "enableAutomaticSearch": false,
+  "enableInteractiveSearch": true,
+  "supportsRss": true,
+  "supportsSearch": true,
+  "priority": 50,
+  "fields": [
+   {
+    "name": "baseUrl",
+    "value": "https://tracker-d.example/torznab"
+   }
+  ]
+ }
+]

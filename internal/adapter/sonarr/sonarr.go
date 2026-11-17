@@ -133,6 +133,11 @@ func (c *Client) Health(ctx context.Context) (domain.HealthSnapshot, error) {
 	return c.api.Health(ctx, c.id)
 }
 
+// Sources reads Sonarr's configured indexers and their failure status.
+func (c *Client) Sources(ctx context.Context) (domain.SourceSnapshot, error) {
+	return c.api.Sources(ctx, c.id)
+}
+
 // RemoveQueueItem removes a queue row with every flag explicit.
 func (c *Client) RemoveQueueItem(ctx context.Context, queueID int64, f arr.RemoveFlags) error {
 	return c.api.RemoveQueueItem(ctx, queueID, f)

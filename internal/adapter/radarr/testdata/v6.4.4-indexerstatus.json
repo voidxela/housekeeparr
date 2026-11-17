@@ -1,0 +1,16 @@
+[
+ {
+  "indexerId": 10,
+  "initialFailure": "2026-11-17T09:00:00Z",
+  "mostRecentFailure": "2026-11-17T10:00:00Z",
+  "escalationLevel": 2,
+  "disabledTill": "2099-01-01T12:00:00Z"
+ },
+ {
+  "indexerId": 999,
+  "initialFailure": "2026-11-17T08:00:00Z",
+  "mostRecentFailure": "2026-11-17T08:30:00Z",
+  "escalationLevel": 1,
+  "disabledTill": "2099-01-01T12:00:00Z"
+ }
+]

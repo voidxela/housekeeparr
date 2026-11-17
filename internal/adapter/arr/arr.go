@@ -704,3 +704,78 @@ func (c *Client) Monitored(ctx context.Context, op, path string) (found, monitor
 	}
 	return true, *mon, r, nil
 }
+
+type indexerRecord struct {
+	ID                    *int64 `json:"id"`
+	Name                  string `json:"name"`
+	Protocol              string `json:"protocol"`
+	EnableAutomaticSearch *bool  `json:"enableAutomaticSearch"`
+	// fields, baseUrl, and settings are deliberately not decoded.
+}
+
+type indexerStatusRecord struct {
+	IndexerID         int64   `json:"indexerId"`
+	DisabledTill      *string `json:"disabledTill"`
+	MostRecentFailure *string `json:"mostRecentFailure"`
+}
+
+func parseOptionalUTCTime(raw *string) *time.Time {
+	if raw == nil || *raw == "" {
+		return nil
+	}
+	t, err := time.Parse(time.RFC3339, *raw)
+	if err != nil {
+		return nil
+	}
+	utc := t.UTC()
+	return &utc
+}
+
+// Sources reads the manager's configured indexers (/api/v3/indexer) and
+// their failure status (/api/v3/indexerstatus). Indexer settings, URLs, and
+// credentials ("fields", "baseUrl") are never decoded or retained.
+func (c *Client) Sources(ctx context.Context, managerID string) (domain.SourceSnapshot, error) {
+	op := c.app + ".sources"
+	var indexers *[]indexerRecord
+	if err := c.Get(ctx, "indexer", "/api/v3/indexer", nil, &indexers); err != nil {
+		return domain.SourceSnapshot{}, err
+	}
+	if indexers == nil {
+		return domain.SourceSnapshot{}, httpx.Malformed(op, fmt.Errorf("indexer response is null, not a list"))
+	}
+	var statuses *[]indexerStatusRecord
+	if err := c.Get(ctx, "indexerstatus", "/api/v3/indexerstatus", nil, &statuses); err != nil {
+		return domain.SourceSnapshot{}, err
+	}
+	if statuses == nil {
+		return domain.SourceSnapshot{}, httpx.Malformed(op, fmt.Errorf("indexerstatus response is null, not a list"))
+	}
+	statusByID := make(map[int64]indexerStatusRecord, len(*statuses))
+	for _, st := range *statuses {
+		if st.IndexerID > 0 {
+			statusByID[st.IndexerID] = st
+		}
+	}
+	snap := domain.SourceSnapshot{
+		ManagerID:   managerID,
+		CollectedAt: time.Now().UTC(),
+		Sources:     make([]domain.Source, 0, len(*indexers)),
+	}
+	for _, r := range *indexers {
+		if r.ID == nil || *r.ID <= 0 || r.EnableAutomaticSearch == nil {
+			return domain.SourceSnapshot{}, httpx.Malformed(op, fmt.Errorf("indexer record without valid id or enableAutomaticSearch"))
+		}
+		src := domain.Source{
+			ID:              *r.ID,
+			Name:            redact.Truncate(redact.String(r.Name), 100),
+			Protocol:        r.Protocol,
+			AutomaticSearch: *r.EnableAutomaticSearch,
+		}
+		if st, ok := statusByID[*r.ID]; ok {
+			src.DisabledUntil = parseOptionalUTCTime(st.DisabledTill)
+			src.LastFailure = parseOptionalUTCTime(st.MostRecentFailure)
+		}
+		snap.Sources = append(snap.Sources, src)
+	}
+	return snap, nil
+}
