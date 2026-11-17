@@ -7,8 +7,8 @@ import (
 )
 
 func TestUnknownPrivacyOptInValidation(t *testing.T) {
-	expectProblem(t, minimal+"\n[automation.unknown_privacy]\nno_progress_recovery = true\n",
-		"automation.unknown_privacy.no_progress_recovery", "only for metadata_recovery")
+	expectProblem(t, minimal+"\n[automation.unknown_privacy]\npartial_pack = true\n",
+		"automation.unknown_privacy.partial_pack", "only for metadata_recovery")
 	expectProblem(t, minimal+"\n[automation.unknown_privacy]\nbogus = true\n", "automation.unknown_privacy.bogus", "unknown workflow")
 	expectProblem(t, minimal+`
 [[rule]]
@@ -39,7 +39,7 @@ func TestUnknownPrivacyOptInResolution(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ok, from := def.AllowsUnknownPrivacy(policy.WorkflowMetadataRecovery); !ok || from != "built-in default (no payload exists before metadata)" {
+	if ok, from := def.AllowsUnknownPrivacy(policy.WorkflowMetadataRecovery); !ok || from != "built-in default" {
 		t.Fatalf("default: %v %q", ok, from)
 	}
 	cfg := mustParse(t, minimal+`
@@ -60,8 +60,11 @@ metadata_recovery = false
 	if ok, from := in.AllowsUnknownPrivacy(policy.WorkflowMetadataRecovery); ok || from != `config rule "private trackers" (priority 5)` {
 		t.Fatalf("rule: %v %q", ok, from)
 	}
-	if ok, _ := in.AllowsUnknownPrivacy(policy.WorkflowNoProgressRecovery); ok {
-		t.Fatal("opt-in leaked to no-progress recovery")
+	if ok, _ := in.AllowsUnknownPrivacy(policy.WorkflowNoProgressRecovery); !ok {
+		t.Fatal("turning metadata recovery off also turned no-progress recovery off")
+	}
+	if ok, _ := in.AllowsUnknownPrivacy(policy.WorkflowPartialPack); ok {
+		t.Fatal("unknown privacy accepted for a workflow that does not define it")
 	}
 	out, err := cfg.Resolve(policy.Subject{ClientID: "qbit", Category: "movies", Privacy: "unknown"})
 	if err != nil {

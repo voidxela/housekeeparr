@@ -273,10 +273,13 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 	optIn = optIn && policy.UnknownPrivacyDefined(wf)
 	stop := wf != policy.WorkflowPreservedDataFailure
 	what := "private"
+	if !known {
+		what = "of unknown privacy (" + t.Latest.Private.String() + "), which is treated as private (unknown_privacy." + string(wf) + ", " + optFrom + ")"
+	}
 	from := nonEmpty(in.Policy.PrivateRecoveryFrom, "no policy stated")
-	// private_recovery covers torrents known to be private (user decision);
-	// unknown privacy stays observation-only for no-progress recovery.
-	privateNP := wf == policy.WorkflowNoProgressRecovery && known && priv
+	// private_recovery covers torrents known to be private and, unless the
+	// scope turned that off, torrents of unknown privacy (user decisions).
+	privateNP := wf == policy.WorkflowNoProgressRecovery && ((known && priv) || (!known && optIn))
 	switch {
 	case known && !priv:
 		add("public transfer", true, true, "the client reports the torrent as public")
@@ -300,8 +303,8 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 			"downloaded, so stopping this torrent forfeits nothing and leaves no seeding or ratio obligation, whether its tracker is public or private; "+
 			"allowed by "+optFrom+" (set unknown_privacy."+string(wf)+" = false to refuse)")
 	case policy.UnknownPrivacyDefined(wf):
-		add("public transfer", false, true, "privacy is unknown ("+t.Latest.Private.String()+") and this scope refuses unknown privacy for "+
-			string(wf)+" ("+optFrom+"); remove unknown_privacy."+string(wf)+" = false there to allow it")
+		add("public transfer", false, true, "privacy is unknown ("+t.Latest.Private.String()+") and this scope leaves such transfers alone for "+
+			string(wf)+" (unknown_privacy."+string(wf)+" = false, "+optFrom+")")
 	default:
 		add("public transfer", false, true, "privacy is unknown on this client, so recovery stays observation-only")
 	}

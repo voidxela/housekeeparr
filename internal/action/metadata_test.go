@@ -133,15 +133,12 @@ func TestMetadataRecoveryRetainsZeroBytes(t *testing.T) {
 	}
 }
 
-// The opt-in exists only for metadata recovery: a no-progress plan with
-// unknown privacy is refused whatever the policy says.
-func TestUnknownPrivacyOptInIsMetadataOnly(t *testing.T) {
-	in := planInput()
-	in.Transfer.Latest.Private = domain.UnknownValue[bool]("4.x")
-	in.Policy.UnknownPrivacy = []policy.WorkflowPermission{{Workflow: policy.WorkflowNoProgressRecovery, Enabled: true, From: "forged"}}
-	p, _ := Plan(in)
-	if c := find(p.Prerequisites, "public transfer"); c == nil || c.Satisfied || p.UnknownPrivacy {
-		t.Fatalf("no-progress recovery accepted unknown privacy: %+v", c)
+// The setting exists only for the workflows that define it: a forged entry
+// for another workflow is ignored.
+func TestUnknownPrivacySettingIsLimitedToDefinedWorkflows(t *testing.T) {
+	e := policy.Effective{UnknownPrivacy: []policy.WorkflowPermission{{Workflow: policy.WorkflowPreservedDataFailure, Enabled: true, From: "forged"}}}
+	if ok, _ := e.AllowsUnknownPrivacy(policy.WorkflowPreservedDataFailure); ok {
+		t.Fatal("unknown privacy accepted for a workflow that does not define it")
 	}
 }
 

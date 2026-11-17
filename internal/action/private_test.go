@@ -63,17 +63,42 @@ func TestPrivateNoProgressRecoveryModes(t *testing.T) {
 	}
 }
 
-// The decision covers torrents known to be private. Unknown privacy stays
-// observation-only for no-progress recovery under every mode.
-func TestUnknownPrivacyNoProgressStaysRefused(t *testing.T) {
-	for _, mode := range []policy.PrivateMode{policy.PrivateKeepRunning, policy.PrivateStop, policy.PrivateObserve} {
-		in := planInput()
-		in.Transfer.Latest.Private = domain.UnknownValue[bool]("not reported by 4.x")
-		in.Policy.PrivateRecovery = mode
-		p, _ := Plan(in)
-		if c := find(p.Prerequisites, "public transfer"); c == nil || c.Satisfied || p.PrivateMode != "" {
-			t.Fatalf("mode %q accepted unknown privacy: %+v", mode, c)
-		}
+// Unknown privacy is treated as private by default, so it follows the
+// private mode; a scope can turn that off, and a policy that does not state
+// it fails closed.
+func TestUnknownPrivacyNoProgressFollowsPrivateMode(t *testing.T) {
+	unknown := domain.UnknownValue[bool]("not reported by 4.x")
+	on := []policy.WorkflowPermission{{Workflow: policy.WorkflowNoProgressRecovery, Enabled: true, From: "built-in default"}}
+	off := []policy.WorkflowPermission{{Workflow: policy.WorkflowNoProgressRecovery, Enabled: false, From: "config rule \"cautious\""}}
+	for _, tc := range []struct {
+		name           string
+		perm           []policy.WorkflowPermission
+		mode           policy.PrivateMode
+		eligible, stop bool
+	}{
+		{"default", on, policy.PrivateKeepRunning, true, false},
+		{"stop", on, policy.PrivateStop, true, true},
+		{"observe", on, policy.PrivateObserve, false, false},
+		{"turned off", off, policy.PrivateKeepRunning, false, false},
+		{"not stated", nil, policy.PrivateKeepRunning, false, false},
+		{"mode not stated", on, "", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := planInput()
+			in.Transfer.Latest.Private = unknown
+			in.Policy.UnknownPrivacy, in.Policy.PrivateRecovery = tc.perm, tc.mode
+			p, _ := Plan(in)
+			c := find(p.Prerequisites, "public transfer")
+			if c == nil || c.Satisfied != tc.eligible || c.Detail == "" {
+				t.Fatalf("privacy check %+v", c)
+			}
+			if tc.eligible && (p.PrivateMode != tc.mode || hasOp(p, "client.stop") != tc.stop || !strings.Contains(c.Detail, "treated as private")) {
+				t.Fatalf("mode %q ops %+v detail %q", p.PrivateMode, p.Operations, c.Detail)
+			}
+			if !tc.eligible && p.PrivateMode != "" {
+				t.Fatal("refused plan records a private mode")
+			}
+		})
 	}
 }
 

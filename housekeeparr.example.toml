@@ -28,9 +28,10 @@ preserved_data_failure = false
 partial_pack = false
 missing_search = false
 
-# How no-progress recovery treats a torrent the client reports as private.
-# (A torrent whose privacy the client cannot report, as on qBittorrent 4.x,
-# is always left alone by no-progress recovery.) Tracker obligations
+# How no-progress recovery treats a torrent the client reports as private,
+# and one whose privacy it cannot report (as on qBittorrent 4.x), which is
+# treated as private unless unknown_privacy.no_progress_recovery = false
+# (below). Tracker obligations
 # attach to data already downloaded, and a stopped torrent no longer seeds.
 #   "keep_running" (default): fail and blocklist the dead grab in the manager
 #       so it fetches a replacement, and leave the torrent running in the
@@ -38,7 +39,7 @@ missing_search = false
 #       until you stop or remove it yourself.
 #   "stop": also stop the torrent (keeping it and its data), as for public
 #       torrents. Choose this only where your tracker's rules allow it.
-#   "observe": never act on private torrents.
+#   "observe": never act on such torrents.
 # Can also be set in a [[rule]] or [[override]] (private_recovery = "...").
 # private_recovery = "keep_running"
 
@@ -52,9 +53,16 @@ missing_search = false
 # a public or a private tracker, and the blocklist only stops the manager
 # grabbing that same dead release again. Set this to false (here, or in a
 # [[rule]] / [[override]] under [rule.unknown_privacy]) to keep a scope
-# observation-only. Only metadata_recovery has this setting; it does not
-# enable the workflow (see [automation.workflows]).
+# observation-only.
 # metadata_recovery = true
+#
+# No-progress recovery treats a torrent of unknown privacy as private, so it
+# follows private_recovery above (by default: blocklist the grab, leave the
+# torrent running). Set this to false to leave such torrents alone instead.
+# no_progress_recovery = true
+#
+# Only these two workflows have this setting; it does not enable a workflow
+# (see [automation.workflows]).
 
 [automation.limits]
 # Bounds on actions that start an acquisition (manual and automatic alike).

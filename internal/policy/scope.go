@@ -126,19 +126,22 @@ func ValidPrivateMode(m PrivateMode) bool {
 	return m == PrivateKeepRunning || m == PrivateStop || m == PrivateObserve
 }
 
-// UnknownPrivacyDefined reports whether a workflow may act on transfers
-// whose privacy is unknown. Only metadata recovery: before metadata
-// arrives no supported client can report the private flag, and released
-// Sonarr/Radarr expose no indexer privacy, so refusing unknown privacy
-// would disable the workflow entirely. Tracker obligations (ratio,
-// hit-and-run, seeding time) attach to payload that was downloaded; a
-// transfer still acquiring metadata has none, so stopping it forfeits
-// nothing and the blocklist only stops the manager re-grabbing that
-// release. It is therefore allowed by default (user direction,
-// 2026-11-16) and a scope can turn it off with
-// unknown_privacy.metadata_recovery = false. A transfer known to be
-// private is never acted on.
-func UnknownPrivacyDefined(w Workflow) bool { return w == WorkflowMetadataRecovery }
+// UnknownPrivacyDefined reports whether a workflow has a defined way of
+// acting on transfers whose privacy the client cannot report. Both are on
+// by default (user decisions, 2026-11-16) and a scope can turn either off
+// with unknown_privacy.<workflow> = false; a transfer known to be private
+// is never treated as public.
+//
+//   - Metadata recovery: before metadata arrives no supported client can
+//     report the private flag, and released Sonarr/Radarr expose no indexer
+//     privacy. Tracker obligations attach to payload that was downloaded;
+//     a transfer still acquiring metadata has none, so it is recovered as
+//     planned (stopped, release blocklisted).
+//   - No-progress recovery: unknown privacy (for example qBittorrent 4.x)
+//     is treated as private, so the transfer follows PrivateMode.
+func UnknownPrivacyDefined(w Workflow) bool {
+	return w == WorkflowMetadataRecovery || w == WorkflowNoProgressRecovery
+}
 
 // AllowsUnknownPrivacy reports whether the workflow is opted in to acting
 // on transfers of unknown privacy in this scope, and where that is set.

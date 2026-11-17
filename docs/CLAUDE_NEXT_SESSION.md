@@ -23,9 +23,13 @@ State after the third session of 2026-11-16 (`dev`, not pushed):
   to `private_recovery = "keep_running"`: fail and blocklist the grab in the
   manager, never stop the torrent; `"stop"` and `"observe"` are scoped
   choices. Real-instance-tested (default mode) with all four clients.
-- **Open proposal, not implemented:** letting unknown-privacy torrents
-  (qBittorrent 4.x) follow `private_recovery` too. They stay refused for
-  no-progress recovery. Ask before changing this.
+- Unknown privacy (qBittorrent 4.x) is treated as private for no-progress
+  recovery by user decision, configurable per scope
+  (`unknown_privacy.no_progress_recovery = false`). Fixture-tested only: no
+  4.x combination is registered, so nothing is sent there. Registering one
+  needs a real-instance run of the keep-running path on 4.6.7 (the
+  integration test's 4.x branch still asserts a refusal because it builds
+  its policy by hand) and the 4.6.7 fixture diagnosis below.
 - Blocklist evidence is matched by the grabbed release's title (the queue
   title differs for a metadata-less rTorrent download).
 - `scripts/it/run.sh --only REGEX` selects registered tests; record such
@@ -97,7 +101,7 @@ do not turn a choice of defaults into a prolonged blocker for other work.
 3. **Metadata recovery follow-ups:** real-instance automatic dispatch
    (shortened `metadata_timeout` via overrides, like `TestAutomaticRecovery`);
    observe what a manager does when a private torrent left running later
-   completes; decide the unknown-privacy proposal above with the user.
+   completes; run and register the unknown-privacy path on qBittorrent 4.6.7.
 4. **Focused qBittorrent 4.6.7 harness diagnosis** (client-only):
    `errored-restart` failed at `118f15c` (`stalledDL`, verified 0, not
    `missingFiles`). `run.sh` polls for non-checking full torrents but never
@@ -173,7 +177,8 @@ approvals or silent amendments to the authoritative spec.
   durable queue removal, failure/blocklist evidence, stopped registration,
   byte-identical payload and queued manager search. They do not establish a
   replacement grab or successful download. qBittorrent 4.6.7 refusal for
-  unknown privacy is tested; don't relax privacy to expand the matrix.
+  unknown privacy was tested at the recorded commits; the user has since
+  decided unknown privacy is treated as private (see the top of this file).
 - Restart exposes missing data on qBittorrent/Deluge; forced recheck can make
   the same loss look like a fresh download at zero. Complete/seeding alone
   doesn't prove data exists. rTorrent local d.message can remain stale after

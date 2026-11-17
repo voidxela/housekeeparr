@@ -284,9 +284,12 @@ in the proposal comes from engine-written state and live re-fetches.
 | 2026-11-16 (`b8d3313`) | Sonarr 4.0.20.3014 + rTorrent 0.9.8; Radarr 6.4.4.10685 + rTorrent 0.9.8 (isolated) | workflow **passed** (every step and independent check, `d.stop` as the stop: the download stayed registered, `d.state=0`/`d.is_active=0`, payload byte-identical), but the run as a whole failed on an unrelated observation fixture (see *Integration runs*), so this combination is **not registered** until a clean run. The same run's `d.message` probe again showed messages persisting across `d.stop`/`d.start` |
 
 The qBittorrent 5.3.0, Deluge 2.2.0, rTorrent 0.9.8, and Transmission 4.0.6/4.1.4 combinations above are registered in `action.Tested`; no other
-combination is eligible. qBittorrent 4.x does not report privacy, so
-recovery is refused there by the "public transfer" prerequisite (the test
-asserts this refusal). Automatic dispatch and replacement-search observation are covered in
+combination is eligible. qBittorrent 4.x does not report privacy; at the
+recorded commits recovery was refused there by the "public transfer"
+prerequisite. Since the user decision of 2026-11-16 unknown privacy is
+treated as private (grab blocklisted, torrent left running) unless a scope
+turns that off, but no 4.x combination is registered, so it still sends
+nothing; that path needs its own real-instance run before registration. Automatic dispatch and replacement-search observation are covered in
 the sections below. Not covered on real instances: the replacement's grab,
 progress and completion tracking, and retained-data and capacity limits
 (fixture-tested).
@@ -393,7 +396,7 @@ exercised.
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | Sonarr | 4.0 | `v4.0.20.3014` | HTTP API v3, API key header | **tested: 4.0.20.3014**; others contract-tested | **tested: 4.0.20.3014 with qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8** (manual and automatic dispatch) | **tested with qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8** (manual path; automatic fixture-tested) | not implemented | not implemented |
 | Radarr | 5.0 | `v6.4.4.10685` | HTTP API v3, API key header | **tested: 6.4.4.10685**; others contract-tested | **tested: 6.4.4.10685 with qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8** (manual and automatic dispatch) | **tested with qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, rTorrent 0.9.8** (manual path; automatic fixture-tested) | not implemented | n/a (Sonarr-specific in v1) |
-| qBittorrent | 4.1 (WebUI API v2) | `release-4.6.7`, `release-5.3.0` | WebUI API v2, session cookie | **tested: 5.3.0, 4.6.7**; others contract-tested | **tested: 5.3.0** with Sonarr/Radarr above; 4.x refused (privacy unknown) | **tested: 5.3.0** with Sonarr/Radarr above | not implemented | — |
+| qBittorrent | 4.1 (WebUI API v2) | `release-4.6.7`, `release-5.3.0` | WebUI API v2, session cookie | **tested: 5.3.0, 4.6.7**; others contract-tested | **tested: 5.3.0** with Sonarr/Radarr above; 4.x not registered (privacy unknown: would be treated as private; untested) | **tested: 5.3.0** with Sonarr/Radarr above | not implemented | — |
 | Transmission | 2.80 (RPC 15) | `4.0.6`, `4.1.4` | legacy RPC (deprecated in 4.1, still supported throughout 4.x), session-id handshake, optional basic auth | **tested: 4.0.6, 4.1.4**; others contract-tested | **tested: 4.0.6, 4.1.4** with Sonarr/Radarr above (`torrent-stop`, legacy RPC) | **tested: 4.0.6, 4.1.4** with Sonarr/Radarr above | not implemented | — |
 | Deluge | 2.0 | `deluge-2.0.0`, `deluge-2.1.1`, `deluge-2.2.0` | deluge-web JSON API (`/json`); daemon protocol unsupported | **tested: 2.2.0**; others contract-tested | **tested: 2.2.0** with Sonarr/Radarr above (`core.pause_torrent`) | **tested: 2.2.0** with Sonarr/Radarr above | not implemented | — |
 | rTorrent | 0.9.8 | `v0.9.8`, `v0.16.28` | XML-RPC over an HTTP(S) SCGI gateway (tested: lighttpd `mod_scgi`); raw SCGI unsupported | **tested: 0.9.8**; others contract-tested | **tested: 0.9.8** with Sonarr/Radarr above (`d.stop`) | **tested: 0.9.8** with Sonarr/Radarr above | not implemented | — |

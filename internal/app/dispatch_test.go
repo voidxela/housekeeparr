@@ -682,3 +682,28 @@ func TestCorrelatedHoldCountsUnmanagedStalls(t *testing.T) {
 		t.Fatalf("a shared stall (managed and unmanaged together) did not hold recovery: %+v", r)
 	}
 }
+
+// A stalled torrent whose privacy the client cannot report is treated as
+// private by default (blocklisted, never stopped); a scope can leave such
+// torrents alone.
+func TestUnknownPrivacyTorrentRecoveryEndToEnd(t *testing.T) {
+	for _, tc := range []struct {
+		name, extra string
+		removals    int
+	}{
+		{"treated as private by default", "", 1},
+		{"left alone where turned off", "\n[[rule]]\nname = \"cautious\"\npriority = 1\n[rule.match]\nclient = \"qbit\"\n[rule.unknown_privacy]\nno_progress_recovery = false\n", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newWorldWith(t, "automatic", 20, tc.extra)
+			w.stalled(hashA, 1, 1)
+			w.client.Update(hashA, func(tr *domain.Transfer) {
+				tr.Private = domain.UnknownValue[bool]("not reported by this client version")
+			})
+			w.run(4 * time.Hour)
+			if r, s := w.mgr.Removals(), w.client.Stops(); len(r) != tc.removals || len(s) != 0 {
+				t.Fatalf("removals %+v stops %v", r, s)
+			}
+		})
+	}
+}
