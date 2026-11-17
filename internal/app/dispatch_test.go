@@ -1347,3 +1347,24 @@ func TestPartialPackRefusesMissingPackDiagnostic(t *testing.T) {
 		t.Fatalf("cleared without the current partial-pack finding from Sonarr: %+v", r)
 	}
 }
+
+func TestIncompleteMissingListHasActionableFinding(t *testing.T) {
+	w := searchWorld(t, "automatic")
+	var items []domain.MissingItem
+	for id := int64(1); id <= 501; id++ {
+		items = append(items, fake.MissingEpisode(id, 1, "Missing episode", t0.Add(-time.Hour)))
+	}
+	w.mgr.SetMissing(items...)
+	w.run(10 * time.Minute)
+	ctx := context.Background()
+	fs, err := w.st.Findings(ctx, store.FindingFilter{Type: "missing.incomplete"})
+	if err != nil || len(fs) != 1 || len(fs[0].Detail.NextSteps) == 0 || fs[0].State != domain.FindingOpen {
+		t.Fatalf("truncated missing list needs an actionable finding: %+v, %v", fs, err)
+	}
+	w.mgr.SetMissing(items[:3]...)
+	w.run(time.Hour)
+	fs, err = w.st.Findings(ctx, store.FindingFilter{Type: "missing.incomplete"})
+	if err != nil || len(fs) != 1 || fs[0].State != domain.FindingResolved {
+		t.Fatalf("a complete missing read must resolve the finding: %+v, %v", fs, err)
+	}
+}

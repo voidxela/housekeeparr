@@ -510,7 +510,29 @@ func (e *Engine) readMissing(ctx context.Context, results []*fetched) {
 		if err := e.st.Write(ctx, func(tx *store.Tx) error {
 			var err error
 			gone, err = tx.SaveMissingSnapshot(snap, now)
-			return err
+			if err != nil {
+				return err
+			}
+			scope := "missing:" + m.ID() + "|"
+			ev := findings.Evaluation{Scope: scope, Actor: "engine"}
+			if snap.Complete {
+				ev.Resolve = func(domain.Finding) findings.Resolution {
+					return findings.Resolution{Reason: "The manager returned a complete missing-content listing."}
+				}
+			} else {
+				ev.Drafts = []findings.Draft{{
+					DedupKey: scope + "incomplete", Type: "missing.incomplete", Severity: domain.SeverityWarning,
+					Title:   m.ID() + " returned an incomplete missing-content listing",
+					Summary: fmt.Sprintf("Housekeeparr received %d items of %d reported. Items outside the listing may wait for a search.", len(snap.Items), snap.Total),
+					Subject: domain.Subject{ManagerID: m.ID(), Connections: []string{m.ID()}}, EvidenceAt: now,
+					Detail: domain.FindingDetail{NextSteps: []string{"Check the manager's Wanted → Missing list for overlooked items. If it is consistently larger than the listing bound, use targeted searches for items outside the observed list."}},
+				}}
+			}
+			changes, err := findings.Apply(tx, ev, now)
+			if err != nil {
+				return err
+			}
+			return notify.Enqueue(tx, e.cfg.Notify, changes, now)
 		}); err != nil {
 			e.log.Error("missing list not saved", "manager", m.ID(), "err", err)
 			continue
