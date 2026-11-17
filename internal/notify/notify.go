@@ -139,9 +139,11 @@ type Report struct {
 // skipped (its events age out).
 func Deliver(ctx context.Context, st *store.Store, targets []config.NotifyConfig, urls map[string]string, client *http.Client, now time.Time) (Report, error) {
 	var rep Report
-	if client == nil {
-		client = &http.Client{Timeout: timeout}
+	webhookClient := http.Client{Timeout: timeout}
+	if client != nil {
+		webhookClient = *client
 	}
+	webhookClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	for _, tg := range targets {
 		u := urls[tg.ID]
 		if u == "" {
@@ -169,7 +171,7 @@ func Deliver(ctx context.Context, st *store.Store, targets []config.NotifyConfig
 				rep.Held++
 				continue
 			}
-			derr := send(ctx, client, tg.Format, u, n)
+			derr := send(ctx, &webhookClient, tg.Format, u, n)
 			err := st.Write(ctx, func(tx *store.Tx) error {
 				switch {
 				case derr == nil:

@@ -197,3 +197,23 @@ func TestTextFormatAndExpiry(t *testing.T) {
 		t.Fatalf("%+v", rep)
 	}
 }
+
+func TestDeliveryDoesNotFollowRedirect(t *testing.T) {
+	ctx := context.Background()
+	st := open(t, t.TempDir())
+	defer st.Close()
+	receiver := &sink{}
+	redirected := receiver.server(t)
+	original := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, redirected.URL, http.StatusTemporaryRedirect)
+	}))
+	defer original.Close()
+	targets := []config.NotifyConfig{target(6)}
+	enqueue(t, st, targets, findings.Result{Opened: []domain.Finding{finding(1, domain.SeverityWarning)}}, t0)
+	rep, err := Deliver(ctx, st, targets, map[string]string{"hook": original.URL}, original.Client(), t0)
+	receiver.mu.Lock()
+	defer receiver.mu.Unlock()
+	if err != nil || rep.Failed != 1 || len(receiver.got) != 0 {
+		t.Fatalf("delivery escaped configured endpoint: report %+v, redirected requests %d, err %v", rep, len(receiver.got), err)
+	}
+}
