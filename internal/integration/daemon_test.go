@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -340,7 +341,28 @@ func TestDaemonRecovery(t *testing.T) {
 	stop()
 	resumed := time.Now().UTC().Add(-time.Second)
 	start("automatic")
-	s = wait("resumed", 35*time.Minute, func(s state) bool { return len(s.intents) >= 2 })
+	// Verify each recovery as soon as it is dispatched: the managers keep
+	// completed commands only briefly, so the replacement search would have
+	// left the command list by the time a later cycle dispatched the other.
+	verified := map[string]bool{}
+	verify := func(tg target) {
+		want := domain.StatePaused
+		if tr, ok := clientState(t, tg.e.Hash); ok && !tr.Private.IsKnown() {
+			want = domain.StateDownloading
+		}
+		after, hist, searches, _ := verifyRecovered(t, tg.a, tg.mgr, tg.e.asEntry(), rows[tg.e.Hash], cats[tg.e.Hash], digest[tg.e.Hash], hist0[tg.e.Hash], resumed, tg.search, want)
+		t.Logf("%s: verified: history %v, torrent %s, replacement searches %+v", tg.e.Key, hist, after.NativeState, searches)
+		verified[tg.e.Hash] = true
+	}
+	s = wait("resumed", 35*time.Minute, func(s state) bool {
+		for _, tg := range targets {
+			if ev := s.eval[tg.e.Hash]; ev != nil && ev.Result == store.EvalDispatched && !verified[tg.e.Hash] {
+				verify(tg)
+			}
+		}
+		return len(s.intents) >= 2 && len(verified) == len(targets)
+	})
+	slices.SortFunc(s.intents, func(a, b store.Intent) int { return a.CreatedAt.Compare(b.CreatedAt) })
 	for _, in := range s.intents {
 		if in.Origin != "automatic" || in.State != store.IntentSucceeded {
 			t.Fatalf("intent %d: origin %s state %s (%s)", in.ID, in.Origin, in.State, in.Explanation)
@@ -366,13 +388,4 @@ func TestDaemonRecovery(t *testing.T) {
 		t.Logf("%s: recovered %s after the client added it (worker paused for part of that)", tg.e.Key, at.Sub(added[tg.e.Hash]).Round(time.Second))
 	}
 	stop()
-
-	for _, tg := range targets {
-		want := domain.StatePaused
-		if tr, ok := clientState(t, tg.e.Hash); ok && !tr.Private.IsKnown() {
-			want = domain.StateDownloading
-		}
-		after, hist, searches, _ := verifyRecovered(t, tg.a, tg.mgr, tg.e.asEntry(), rows[tg.e.Hash], cats[tg.e.Hash], digest[tg.e.Hash], hist0[tg.e.Hash], resumed, tg.search, want)
-		t.Logf("%s: verified: history %v, torrent %s, replacement searches %+v", tg.e.Key, hist, after.NativeState, searches)
-	}
 }
