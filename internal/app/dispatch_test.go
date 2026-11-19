@@ -1832,3 +1832,32 @@ manager = "radarr"
 		t.Errorf("eligible movie was crowded out by another manager's missing list: %v", got)
 	}
 }
+
+func TestRollingPartialMissingListsKeepPerManagerCapacity(t *testing.T) {
+	w := newWorldWith(t, "automatic", 20, `
+[search]
+max_missing_items = 2
+[[rule]]
+name = "movie searches"
+priority = 1
+[rule.automation]
+missing_search = true
+[rule.match]
+manager = "radarr"
+`)
+	action.Tested = append(action.Tested,
+		action.TestedWorkflow{Workflow: policy.WorkflowMissingSearch, Manager: adapter.KindSonarr, ManagerVersion: "0.0.0-fake"},
+		action.TestedWorkflow{Workflow: policy.WorkflowMissingSearch, Manager: adapter.KindRadarr, ManagerVersion: "0.0.0-fake"})
+	w.mgr.PartialMissing(true)
+	w.mgr.SetMissing(fake.MissingEpisode(101, 3, "First", t0.Add(-time.Hour)), fake.MissingEpisode(102, 3, "Second", t0.Add(-time.Hour)))
+	w.runSearches(10 * time.Minute)
+	w.mgr.SetMissing(fake.MissingEpisode(103, 3, "Third", t0.Add(-time.Hour)), fake.MissingEpisode(104, 3, "Fourth", t0.Add(-time.Hour)))
+	w.radarr.SetMissing(fake.MissingMovie(5, "Available movie"))
+	w.runSearches(time.Hour)
+	if got := w.mgr.Searches(); len(got) != 0 {
+		t.Errorf("searched outside the enabled manager: %v", got)
+	}
+	if got := w.radarr.Searches(); len(got) != 1 || got[0][0] != 5 {
+		t.Errorf("another manager's partial lists consumed this manager's capacity: %v", got)
+	}
+}

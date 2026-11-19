@@ -128,48 +128,59 @@ func scanMissing(rows *sql.Rows) ([]MissingRecord, error) {
 
 // MissingFilter selects missing content.
 type MissingFilter struct {
-	ManagerID     string
-	ManagerIDs    []string
-	PresentOnly   bool
-	State         string
-	Limit         int
-	FreshSince    time.Time
-	SearchReadyAt time.Time
+	ManagerID       string
+	ManagerIDs      []string
+	PresentOnly     bool
+	State           string
+	Limit           int
+	LimitPerManager int
+	FreshSince      time.Time
+	SearchReadyAt   time.Time
 }
 
 // MissingContent lists missing content, never-searched and oldest-first.
 func (s *Store) MissingContent(ctx context.Context, f MissingFilter) ([]MissingRecord, error) {
-	q := "SELECT " + missingCols + " FROM missing_content WHERE 1=1"
+	from := " FROM missing_content WHERE 1=1"
 	var args []any
 	if f.ManagerID != "" {
-		q += " AND manager_id=?"
+		from += " AND manager_id=?"
 		args = append(args, f.ManagerID)
 	}
 	if len(f.ManagerIDs) != 0 {
-		q += " AND manager_id IN (" + strings.Repeat("?,", len(f.ManagerIDs)-1) + "?)"
+		from += " AND manager_id IN (" + strings.Repeat("?,", len(f.ManagerIDs)-1) + "?)"
 		for _, id := range f.ManagerIDs {
 			args = append(args, id)
 		}
 	}
 	if !f.FreshSince.IsZero() {
-		q += " AND last_seen>=?"
+		from += " AND last_seen>=?"
 		args = append(args, ms(f.FreshSince))
 	}
 	if !f.SearchReadyAt.IsZero() {
-		q += " AND available=1 AND last_seen<=? AND (next_search_at IS NULL OR next_search_at<=?)"
+		from += " AND available=1 AND last_seen<=? AND (next_search_at IS NULL OR next_search_at<=?)"
 		args = append(args, ms(f.SearchReadyAt), ms(f.SearchReadyAt))
 	}
 	if f.PresentOnly {
-		q += " AND present=1"
+		from += " AND present=1"
 	}
 	if f.State != "" {
-		q += " AND state=?"
+		from += " AND state=?"
 		args = append(args, f.State)
 	}
 	if f.Limit <= 0 {
 		f.Limit = 1000
 	}
-	q += " ORDER BY (origin = 'pack') DESC, searches ASC, COALESCE(last_search_at, 0) ASC, COALESCE(aired_at, 0) DESC, manager_id, content_key LIMIT ?"
+	const priority = "(origin = 'pack') DESC, searches ASC, COALESCE(last_search_at, 0) ASC, COALESCE(aired_at, 0) DESC, manager_id, content_key"
+	selection := "SELECT " + missingCols
+	q := selection + from
+	if f.LimitPerManager > 0 {
+		// Incomplete snapshots retain unseen rows. Each manager gets its
+		// own allowance even when another accumulates many such records.
+		q = selection + " FROM (" + selection + ", ROW_NUMBER() OVER (PARTITION BY manager_id ORDER BY " + priority +
+			") AS manager_rank" + from + ") WHERE manager_rank<=?"
+		args = append(args, f.LimitPerManager)
+	}
+	q += " ORDER BY " + priority + " LIMIT ?"
 	args = append(args, f.Limit)
 	rows, err := s.r.QueryContext(ctx, q, args...)
 	if err != nil {

@@ -194,7 +194,8 @@ func (s *Service) DispatchSearches(ctx context.Context, fresh map[string]bool) (
 	}
 	items, err := s.st.MissingContent(ctx, store.MissingFilter{
 		ManagerIDs: managers, PresentOnly: true, Limit: s.cfg.Search.MaxMissingItems * len(managers),
-		FreshSince: now.Add(-s.cfg.Search.MissingFreshness.Duration), SearchReadyAt: now,
+		LimitPerManager: s.cfg.Search.MaxMissingItems,
+		FreshSince:      now.Add(-s.cfg.Search.MissingFreshness.Duration), SearchReadyAt: now,
 	})
 	if err != nil {
 		return rep, err
