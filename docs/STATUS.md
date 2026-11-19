@@ -13,8 +13,8 @@ implemented.
 ## Review and remediation — 2026-11-19
 
 The continuation uses the branch based on `origin/dev` at `3d08077`.
-The latest Go source checkpoint is `1dd05f1`, tested locally as
-`3f31547` with an identical Git tree. The [run record](compatibility.md#review-continuation-runs)
+The latest Go source checkpoint is `0eae874`, tested locally as
+`36ebe48` with an identical Git tree. The [run record](compatibility.md#review-continuation-runs)
 lists the exact applications, fixture selections, and outcomes.
 
 | Finding and fix | Published commits |
@@ -22,11 +22,11 @@ lists the exact applications, fixture selections, and outcomes.
 | Retention could delete a pending search's command receipt or the clearance, finding, and transfer behind a targeted pack follow-up. Keep evidence while the scheduler depends on it. On older stores, mark a search with a missing receipt unverified after its follow window and hold a pack follow-up whose governing scope cannot be established. | `103684e`, `3bd2d5f` |
 | A previous pack clearance could hold a different manager's association with the same torrent. A 500-action cap hid earlier clearances of the actual association. Query the journal for the manager and download identity. | `12475e3` |
 | qBittorrent could interpret an uncontacted or malformed tracker entry, or a JSON value followed by additional data, as conclusive rejection. rTorrent could treat a future timestamp as recent. Keep the affected evidence unknown and leave source recovery to the established diagnosis. | `a713d2e`, `15c7677` |
-| One manager's full wanted list could crowd out search-ready items elsewhere. Select from fresh, available, due records for the eligible managers. Keep the per-manager observation cap and the live evaluation bound. | `2588577` |
+| One manager's full wanted list could crowd out search-ready items elsewhere. Select from fresh, available, due records. Apply a separate quota to each manager even when earlier partial snapshots remain in the store. | `2588577`, `0eae874` |
 | Manual failures could hide relevant automatic refusals. A refusal from a manager could hold the associated healthy client, while proactive search could still send requests to the affected manager. Use the actual failed step and share manager holds across automatic workflows. | `7da4149` |
 | Tracker read limits could silently leave some active downloads unassessed for source rejection. Report the deferred reads as a coverage finding and tell the operator how to raise the client-specific limit. Resolve on a complete listing with no deferred checks. | `f695bde` |
 | Pending webhook events could outlive their limit after their target was removed. Failed attempts also bypassed hourly pacing. Expire outbox events without an active endpoint and reserve durable per-target request capacity before delivery. Migration 0019 preserves prior verified delivery usage and has a schema-18 upgrade test. | `bb70fa6`, `7343205` |
-| The fixture runner could start managers before discovering that its isolated test process had no Go modules. Fetch modules before creating the namespace and exercise startup with an empty hosted module cache. | `2fe6fe1` |
+| The fixture runner could start managers before discovering that its isolated test process had no Go modules. Fetch modules before creating the namespace and exercise startup with an empty hosted module cache. Require Deluge to verify all preloaded full payloads before mutating its test fixtures. | `2fe6fe1`, `31bf37c` |
 
 ### Trial settings and unattended behavior
 

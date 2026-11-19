@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/voidxela/housekeeparr/internal/app"
+	"github.com/voidxela/housekeeparr/internal/config"
 	"github.com/voidxela/housekeeparr/internal/demo"
 	"github.com/voidxela/housekeeparr/internal/domain"
 	"github.com/voidxela/housekeeparr/internal/store"
@@ -438,5 +439,17 @@ func TestActivityShowsProactiveSearches(t *testing.T) {
 	page := w.Body.String()
 	if w.Code != 200 || !strings.Contains(page, "Northern Line S02E09") || !strings.Contains(page, "searched") || !strings.Contains(page, "unknown") {
 		t.Fatalf("status %d; proactive searches not rendered", w.Code)
+	}
+}
+
+func TestActivityShowsConfiguredNotificationBounds(t *testing.T) {
+	e := setup(t)
+	cfg := e.svc.Config()
+	cfg.Notify = []config.NotifyConfig{{ID: "hook"}}
+	cfg.Notifications.MaxAttempts = 3
+	cfg.Notifications.MaxAge.Duration = 2 * time.Hour
+	page := e.get(t, "/activity").Body.String()
+	if !strings.Contains(page, "3 attempts") || !strings.Contains(page, "2h") {
+		t.Fatal("Activity did not display the configured attempt and age limits")
 	}
 }

@@ -120,9 +120,10 @@ func (t *Tx) MarkNotificationFailed(id int64, now, next time.Time, errText strin
 	return err
 }
 
-// DropNotification gives up on an event, recording why.
+// DropNotification records the last failed attempt and why the event was dropped.
 func (t *Tx) DropNotification(id int64, now time.Time, reason string) error {
-	_, err := t.exec(`UPDATE notification_events SET dropped_at=?, last_error=? WHERE id=? AND sent_at IS NULL`, ms(now), reason, id)
+	_, err := t.exec(`UPDATE notification_events SET dropped_at=?, attempts=attempts+1, last_error=?
+		WHERE id=? AND sent_at IS NULL AND dropped_at IS NULL`, ms(now), reason, id)
 	return err
 }
 

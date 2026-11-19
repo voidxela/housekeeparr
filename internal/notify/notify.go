@@ -170,11 +170,12 @@ func Deliver(ctx context.Context, st *store.Store, targets []config.NotifyConfig
 				break
 			}
 			derr := send(ctx, &webhookClient, tg.Format, u, n)
+			exhausted := derr != nil && n.Attempts+1 >= settings.MaxAttempts
 			err := st.Write(ctx, func(tx *store.Tx) error {
 				switch {
 				case derr == nil:
 					return tx.MarkNotificationSent(n.ID, now)
-				case n.Attempts+1 >= settings.MaxAttempts:
+				case exhausted:
 					return tx.DropNotification(n.ID, now, fmt.Sprintf("gave up after %d attempts: %v", settings.MaxAttempts, derr))
 				default:
 					d := settings.InitialBackoff.Duration
@@ -191,6 +192,9 @@ func Deliver(ctx context.Context, st *store.Store, targets []config.NotifyConfig
 				rep.Sent++
 			} else {
 				rep.Failed++
+				if exhausted {
+					rep.Dropped++
+				}
 			}
 		}
 	}

@@ -660,6 +660,8 @@ a published commit in parentheses identifies the same Git tree.
 | 2026-11-17 | `a3c3037` | GitHub-hosted Ubuntu 24.04 amd64, unselected qBittorrent 5.3.0 with both managers | **24 of 24 passed**, including all five tracker-dependent cases, automatic no-progress and preserved-data recovery, both proactive searches, and the Sonarr pack clearance and restart. [Run 44201215456](https://github.com/voidxela/housekeeparr/actions/runs/44201215456) |
 | 2026-11-19 | `12475e3` | Linux amd64 workspace, selected rTorrent 0.9.8 / libtorrent 0.13.8 via lighttpd 1.4.79 | Fixtures started. The unprimed Go module cache blocked compilation inside the namespace. All eight required tests failed to run. |
 | 2026-11-19 | `12475e3` | Linux amd64 workspace, selected Deluge 2.2.0 / libtorrent 2.0.11.0 | **2 of 8 passed.** Both managers accepted the proactive searches and produced grabs. Deluge reported the new torrents paused at zero verified bytes, which prevented tracker rejection observations and the pack's imports. |
+| 2026-11-19 | `12475e3` | Linux amd64 workspace, selected Transmission 4.0.6 (38c164933e) | **8 of 8 passed**, including selected public, private and automatic preserved-data workflows, two proactive searches, and the Sonarr pack clearance and restart. |
+| 2026-11-19 | `12475e3` | Linux amd64 workspace, selected Transmission 4.1.4 (a6d907d9ea) | **8 of 8 passed**, including the same selected workflow contracts through legacy RPC. |
 
 The eight-test selection above is
 `--only 'PartialPackWorkflow|ProactiveSearch|PreservedDataFailure'`.

@@ -528,8 +528,10 @@ type Activity struct {
 	// Attempts are per-content recovery attempts since their latest reset.
 	Attempts []AttemptSummary `json:"attempts,omitempty"`
 	// Notifications are the latest notification events and their delivery.
-	Notifications []store.Notification `json:"notifications,omitempty"`
-	NotifyTargets int                  `json:"notify_targets"`
+	Notifications     []store.Notification `json:"notifications,omitempty"`
+	NotifyTargets     int                  `json:"notify_targets"`
+	NotifyMaxAttempts int                  `json:"notify_max_attempts"`
+	NotifyMaxAge      string               `json:"notify_max_age"`
 	// Missing is recorded missing content with Housekeeparr's search state.
 	Missing       []store.MissingRecord `json:"missing,omitempty"`
 	SearchEnabled bool                  `json:"search_enabled"`
@@ -566,6 +568,8 @@ func (s *Service) Activity(ctx context.Context, limit int) (*Activity, error) {
 		return nil, err
 	}
 	a.NotifyTargets = len(s.cfg.Notify)
+	a.NotifyMaxAttempts = s.cfg.Notifications.MaxAttempts
+	a.NotifyMaxAge = policy.HumanDuration(s.cfg.Notifications.MaxAge.Duration)
 	if a.Missing, err = s.st.MissingContent(ctx, store.MissingFilter{PresentOnly: true, Limit: 25}); err != nil {
 		return nil, err
 	}

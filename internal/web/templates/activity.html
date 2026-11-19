@@ -38,7 +38,7 @@
 </section>
 <section class="card" aria-labelledby="h-notify">
   <h2 id="h-notify">Notifications</h2>
-  {{if .NotifyTargets}}<p class="muted small">{{.NotifyTargets}} target(s) configured. Events are rate-limited per target; failed deliveries back off and are dropped after 8 attempts or a day.</p>{{else}}<p class="muted small">No notification targets are configured (<code>[[notify]]</code>).</p>{{end}}
+  {{if .NotifyTargets}}<p class="muted small">{{.NotifyTargets}} target(s) configured. Each target has an hourly request limit. Failed deliveries can retry for up to {{.NotifyMaxAttempts}} attempts within {{.NotifyMaxAge}}.</p>{{else}}<p class="muted small">No notification targets are configured (<code>[[notify]]</code>).</p>{{end}}
   {{if .Notifications}}<table class="table compact"><thead><tr><th scope="col">Queued</th><th scope="col">Target</th><th scope="col">Event</th><th scope="col">Delivery</th></tr></thead><tbody>
   {{range .Notifications}}<tr><td>{{clock .CreatedAt}}</td><td>{{.Target}}</td><td>{{if .FindingID}}<a href="/findings/{{.FindingID}}">{{.Title}}</a>{{else}}{{.Title}}{{end}} <span class="muted small">{{.Kind}}, {{.Severity}}</span></td><td>{{if .SentAt}}sent {{clockp .SentAt}}{{else if .DroppedAt}}dropped: {{.LastError}}{{else}}pending ({{.Attempts}} attempts){{if .LastError}}; last: {{.LastError}}{{end}}{{end}}</td></tr>{{end}}
   </tbody></table>{{end}}

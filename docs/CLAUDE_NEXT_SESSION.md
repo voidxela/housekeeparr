@@ -1,7 +1,7 @@
 # Housekeeparr continuation
 
 Start from `review/remediation`, based on `origin/dev` at `3d08077`.
-The latest Go source checkpoint is `1dd05f1`. Read [AGENTS.md](../AGENTS.md),
+The latest Go source checkpoint is `0eae874`. Read [AGENTS.md](../AGENTS.md),
 [SPEC.md](SPEC.md), the latest review section in [STATUS.md](STATUS.md), and
 the continuation table in [compatibility.md](compatibility.md).
 

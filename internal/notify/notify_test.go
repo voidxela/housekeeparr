@@ -189,7 +189,7 @@ func TestFailuresBackOffAndDrop(t *testing.T) {
 		now = now.Add(settings.MaxBackoff.Duration)
 	}
 	ns, _ := st.RecentNotifications(ctx, 5)
-	if ns[0].DroppedAt == nil || strings.Contains(ns[0].LastError, "SECRET") || !strings.Contains(ns[0].LastError, "HTTP 500") {
+	if ns[0].DroppedAt == nil || ns[0].Attempts != settings.MaxAttempts || strings.Contains(ns[0].LastError, "SECRET") || !strings.Contains(ns[0].LastError, "HTTP 500") {
 		t.Fatalf("%+v", ns[0])
 	}
 	// An unreachable URL: the transport error is not echoed.
