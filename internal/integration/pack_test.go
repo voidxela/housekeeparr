@@ -12,12 +12,14 @@ package integration
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 
 	"fmt"
 	"github.com/voidxela/housekeeparr/internal/action"
 	"github.com/voidxela/housekeeparr/internal/adapter"
+	"github.com/voidxela/housekeeparr/internal/adapter/arr"
 	"github.com/voidxela/housekeeparr/internal/app"
 	"github.com/voidxela/housekeeparr/internal/config"
 	"github.com/voidxela/housekeeparr/internal/engine"
@@ -135,6 +137,27 @@ func TestSonarrPartialPackWorkflow(t *testing.T) {
 	if !imported[eps[1].ID] || !imported[eps[2].ID] || imported[eps[3].ID] {
 		t.Fatalf("import history %v does not match E01/E02 imported, E03 missing (ids %d %d %d)", imported, eps[1].ID, eps[2].ID, eps[3].ID)
 	}
+	// The adapter pages a download's history by totalRecords: a one-record
+	// page size must return the same records, newest first, and a bound
+	// below the total must report the read as incomplete.
+	ac, err := arr.New(arr.Options{App: "sonarr", BaseURL: a.base, APIKey: a.key, Timeout: 15 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	whole, err := ac.History(context.Background(), e.Hash)
+	if err != nil || len(whole) < 3 {
+		t.Fatalf("history (default bound): %d records, %v", len(whole), err)
+	}
+	ac.HistoryPageSize, ac.HistoryMaxPages = 1, 50
+	paged, err := ac.History(context.Background(), e.Hash)
+	if err != nil || jsonText(paged) != jsonText(whole) {
+		t.Fatalf("one-record pages differ: %v\n%s\n%s", err, jsonText(paged), jsonText(whole))
+	}
+	ac.HistoryMaxPages = 2
+	if part, err := ac.History(context.Background(), e.Hash); !errors.Is(err, arr.ErrHistoryIncomplete) || len(part) != 2 || part[0].ID != whole[0].ID {
+		t.Fatalf("bounded read of %d records: %d returned, %v", len(whole), len(part), err)
+	}
+	t.Logf("history paging on the released manager: %d records read whole, page by page, and reported incomplete at two pages", len(whole))
 	tr0, ok := clientState(t, e.Hash)
 	if !ok || tr0.StateClass != domain.StateComplete {
 		t.Fatalf("pack not complete in the client: %v %s", ok, tr0.StateClass)

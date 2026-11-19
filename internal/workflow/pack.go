@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -52,8 +53,13 @@ func (r *Recovery) packLive(ctx context.Context, p action.Proposal) (action.Live
 			}
 		}
 	}
+	// Every import record is needed: an episode whose import fell outside
+	// the read would look never imported. Incomplete history refuses.
 	hist, err := m.History(ctx, pl.DownloadID)
-	if err != nil {
+	if errors.Is(err, arr.ErrHistoryIncomplete) {
+		live.PackErr = "history: " + err.Error() + "; which episodes this pack imported cannot be established, so clear it in the manager if it is finished"
+		return live, nil
+	} else if err != nil {
 		live.PackErr = "history: " + err.Error()
 		return live, nil
 	}
@@ -194,8 +200,10 @@ func (r *Recovery) observePack(ctx context.Context, st store.Step) (action.Obser
 				return action.Observation{Verdict: action.NotHolds, Detail: "the download is still in the queue"}, nil
 			}
 		}
+		// New ignore records are among the newest, so a truncated read
+		// still shows them.
 		hist, err := m.History(ctx, tg.DownloadID)
-		if err != nil {
+		if err != nil && !errors.Is(err, arr.ErrHistoryIncomplete) {
 			return action.Observation{}, err
 		}
 		n := 0

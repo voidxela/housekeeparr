@@ -32,14 +32,17 @@ type histEntry struct {
 
 // managerWrites holds a fake manager's simulated write state.
 type managerWrites struct {
-	nextID      int64
-	blocklist   []blEntry
-	history     []histEntry
-	removals    []arr.RemoveFlags
-	removeErr   error
-	removeNoop  bool
-	unmonitored map[string]bool
-	hasFile     map[string]bool
+	// historyLimit, when positive, truncates History to the newest records
+	// with arr.ErrHistoryIncomplete, as a read beyond the page bound does.
+	historyLimit int
+	nextID       int64
+	blocklist    []blEntry
+	history      []histEntry
+	removals     []arr.RemoveFlags
+	removeErr    error
+	removeNoop   bool
+	unmonitored  map[string]bool
+	hasFile      map[string]bool
 	// commands is the simulated command list; a blocklisting removal with
 	// redownload not skipped queues the manager-native search, as the
 	// released managers do (trigger "unspecified").
@@ -231,8 +234,14 @@ func (m *Manager) History(_ context.Context, downloadID string) ([]arr.HistoryEv
 			out = append(out, m.w.history[i].HistoryEvent)
 		}
 	}
+	if l := m.w.historyLimit; l > 0 && len(out) > l {
+		return out[:l], fmt.Errorf("%w for download %s: it has %d records and only the newest %d were read", arr.ErrHistoryIncomplete, downloadID, len(out), l)
+	}
 	return out, nil
 }
+
+// LimitHistory truncates History reads to the newest n records (0: no limit).
+func (m *Manager) LimitHistory(n int) { m.mu.Lock(); m.w.historyLimit = n; m.mu.Unlock() }
 
 // Content reports content as existing and monitored unless unmonitored.
 func (m *Manager) Content(_ context.Context, key string) (arr.Content, error) {

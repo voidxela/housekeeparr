@@ -7,6 +7,7 @@ package workflow
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -275,7 +276,8 @@ func (r *Recovery) Live(ctx context.Context, p action.Proposal) (action.Live, er
 		rd := &action.Redownload{Failed: rs.Failed, FromInteractive: rs.FromInteractive}
 		// The grab's release source decides whether the interactive-search
 		// setting applies; newest grab first.
-		if hist, err := m.History(ctx, downloadID); err != nil {
+		// Newest first: a truncated history still holds the latest grab.
+		if hist, err := m.History(ctx, downloadID); err != nil && !errors.Is(err, arr.ErrHistoryIncomplete) {
 			live.RedownloadErr = "history: " + err.Error()
 		} else {
 			for _, h := range hist {
@@ -322,8 +324,10 @@ func (r *Recovery) Baseline(ctx context.Context, st store.Step) (json.RawMessage
 		return nil, fmt.Errorf("no release title to match blocklist entries")
 	}
 	b := queueBaseline{BlocklistIDs: []int64{}, HistoryIDs: []int64{}, ReleaseTitle: tg.Title}
+	// The newest records suffice: later evidence is compared against
+	// these IDs, and new records are always among the newest.
 	hist, err := m.History(ctx, tg.DownloadID)
-	if err != nil {
+	if err != nil && !errors.Is(err, arr.ErrHistoryIncomplete) {
 		return nil, err
 	}
 	grabbed := false
@@ -470,7 +474,7 @@ func (r *Recovery) Observe(ctx context.Context, st store.Step) (action.Observati
 				newBlock = newIDs(ids, base.BlocklistIDs)
 			}
 			hist, err := m.History(ctx, tg.DownloadID)
-			if err != nil {
+			if err != nil && !errors.Is(err, arr.ErrHistoryIncomplete) {
 				return action.Observation{}, err
 			}
 			var newEvents []string

@@ -25,7 +25,7 @@ func TestRedownloadSettings(t *testing.T) {
 }
 
 func TestHistoryReleaseSource(t *testing.T) {
-	body := `{"records":[{"id":9,"eventType":"grabbed","downloadId":"AA","date":"2026-11-16T19:00:00Z","data":{"releaseSource":"InteractiveSearch","indexer":"x"}},
+	body := `{"totalRecords":2,"records":[{"id":9,"eventType":"grabbed","downloadId":"AA","date":"2026-11-16T19:00:00Z","data":{"releaseSource":"InteractiveSearch","indexer":"x"}},
 		{"id":8,"eventType":"downloadFailed","downloadId":"AA","date":"2026-11-16T19:01:00Z","data":{}}]}`
 	hs, err := serve(t, map[string]string{"/api/v3/history": body}).History(context.Background(), "aa")
 	if err != nil || len(hs) != 2 || hs[0].ReleaseSource != "InteractiveSearch" || hs[1].ReleaseSource != "" {

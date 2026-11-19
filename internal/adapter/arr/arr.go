@@ -40,6 +40,10 @@ type Client struct {
 	apiKey   string
 	PageSize int
 	MaxPages int
+	// HistoryPageSize and HistoryMaxPages bound one download's history
+	// read (defaults 200 and 10).
+	HistoryPageSize int
+	HistoryMaxPages int
 }
 
 // New creates a client.
@@ -513,40 +517,87 @@ type HistoryEvent struct {
 // History returns the newest history records for a download id, newest
 // first. Records are filtered by download id client-side as well.
 func (c *Client) History(ctx context.Context, downloadID string) ([]HistoryEvent, error) {
-	var pg struct {
-		Records []struct {
-			ID          *int64    `json:"id"`
-			EventType   string    `json:"eventType"`
-			SourceTitle string    `json:"sourceTitle"`
-			DownloadID  string    `json:"downloadId"`
-			EpisodeID   int64     `json:"episodeId"`
-			Date        time.Time `json:"date"`
-			Data        struct {
-				ReleaseSource string `json:"releaseSource"`
-			} `json:"data"`
-		} `json:"records"`
-	}
-	// One record per episode and event: 200 covers a large pack's grab,
-	// imports and an ignore; older records beyond it are not returned.
-	q := url.Values{"page": {"1"}, "pageSize": {"200"}, "downloadId": {strings.ToUpper(downloadID)}, "sortKey": {"date"}, "sortDirection": {"descending"}}
-	if err := c.Get(ctx, "history", "/api/v3/history", q, &pg); err != nil {
-		return nil, err
-	}
-	if pg.Records == nil {
-		return nil, httpx.Malformed(c.app+".history", fmt.Errorf("missing records"))
-	}
+	op := c.app + ".history"
 	var out []HistoryEvent
-	for _, r := range pg.Records {
-		if r.ID == nil {
-			return nil, httpx.Malformed(c.app+".history", fmt.Errorf("record without id"))
+	seen := map[int64]bool{}
+	total, rows := -1, 0
+	var incomplete []string
+	size, maxPages := c.HistoryPageSize, c.HistoryMaxPages
+	if size <= 0 {
+		size = 200
+	}
+	if maxPages <= 0 {
+		maxPages = 10
+	}
+	for p := 1; p <= maxPages; p++ {
+		var pg struct {
+			TotalRecords *int `json:"totalRecords"`
+			Records      []struct {
+				ID          *int64    `json:"id"`
+				EventType   string    `json:"eventType"`
+				SourceTitle string    `json:"sourceTitle"`
+				DownloadID  string    `json:"downloadId"`
+				EpisodeID   int64     `json:"episodeId"`
+				Date        time.Time `json:"date"`
+				Data        struct {
+					ReleaseSource string `json:"releaseSource"`
+				} `json:"data"`
+			} `json:"records"`
 		}
-		if strings.EqualFold(r.DownloadID, downloadID) {
-			out = append(out, HistoryEvent{ID: *r.ID, EventType: r.EventType, Date: r.Date, ReleaseSource: r.Data.ReleaseSource, SourceTitle: r.SourceTitle,
-				EpisodeID: r.EpisodeID})
+		// Newest first. One record per episode and event, so a large pack
+		// with repeated import attempts can need several pages.
+		q := url.Values{"page": {strconv.Itoa(p)}, "pageSize": {strconv.Itoa(size)}, "downloadId": {strings.ToUpper(downloadID)},
+			"sortKey": {"date"}, "sortDirection": {"descending"}}
+		if err := c.Get(ctx, "history", "/api/v3/history", q, &pg); err != nil {
+			return nil, err
 		}
+		if pg.Records == nil {
+			return nil, httpx.Malformed(op, fmt.Errorf("missing records"))
+		}
+		if pg.TotalRecords == nil || *pg.TotalRecords < 0 {
+			return nil, httpx.Malformed(op, fmt.Errorf("missing or negative totalRecords"))
+		}
+		if p == 1 {
+			total = *pg.TotalRecords
+		} else if *pg.TotalRecords != total {
+			incomplete = append(incomplete, "the history changed while it was being read")
+		}
+		rows += len(pg.Records)
+		for _, r := range pg.Records {
+			if r.ID == nil {
+				return nil, httpx.Malformed(op, fmt.Errorf("record without id"))
+			}
+			if seen[*r.ID] {
+				continue // shifted by a newer record between pages
+			}
+			seen[*r.ID] = true
+			if strings.EqualFold(r.DownloadID, downloadID) {
+				out = append(out, HistoryEvent{ID: *r.ID, EventType: r.EventType, Date: r.Date, ReleaseSource: r.Data.ReleaseSource, SourceTitle: r.SourceTitle,
+					EpisodeID: r.EpisodeID})
+			}
+		}
+		if len(pg.Records) < size || rows >= total {
+			break
+		}
+		if p == maxPages {
+			incomplete = append(incomplete, fmt.Sprintf("it has %d records and only the newest %d were read (%d pages of %d)", total, rows, maxPages, size))
+		}
+	}
+	if rows < total && len(incomplete) == 0 {
+		incomplete = append(incomplete, fmt.Sprintf("it reported %d records but returned %d", total, rows))
+	}
+	if len(incomplete) > 0 {
+		return out, fmt.Errorf("%w for download %s: %s", ErrHistoryIncomplete, strings.ToUpper(downloadID), strings.Join(incomplete, "; "))
 	}
 	return out, nil
 }
+
+// ErrHistoryIncomplete accompanies the newest records History could read
+// when it could not read a download's whole history. The newest records
+// still establish the latest grab and anything added after a baseline;
+// evidence that needs every record (which episodes a pack imported) must
+// not be inferred from them.
+var ErrHistoryIncomplete = errors.New("manager history incomplete")
 
 // RedownloadSettings are the manager settings that decide whether failing a
 // grab makes the manager search for a replacement itself (released
