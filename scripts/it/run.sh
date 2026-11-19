@@ -371,6 +371,9 @@ PY
 	export HK_IT_QBT_URL="$QBT" HK_IT_QBT_USER=admin HK_IT_QBT_PASS="$QBT_PASS" HK_IT_QBT_VERSION="$QBT_VERSION" HK_IT_QBT_SAVE="$save"
 	export HK_IT_QBT_SESSION_LOG="$WORK/qbt/qBittorrent/data/logs/qbittorrent.log"
 	TESTS+=(TestQBittorrentReleasedBehaviour)
+	# The deployed web interface (direct TLS and a trusted proxy) listens
+	# on 0.0.0.0, so only inside the loopback-only namespace.
+	if [ -n "${HK_IT_IN_NETNS:-}" ]; then TESTS+=(TestWebDeployment); fi
 }
 
 # --- Transmission (built from a pinned release by build-transmission.sh) ----
@@ -660,7 +663,7 @@ if [ "$CAPTURE" = 1 ]; then export HK_IT_CAPTURE_DIR="$ROOT/internal/integration
 cd "$ROOT"
 if [ "$STANDIN" = 1 ] && has "$MANAGERS" sonarr && has "$MANAGERS" radarr; then
 	MANAGED_PROBES+=(TestAutomaticRecovery TestAutomaticPreservedDataFailure)
-	[ "$DAEMON" = 1 ] && MANAGED_PROBES+=(TestDaemonRecovery)
+	if [ "$DAEMON" = 1 ]; then MANAGED_PROBES+=(TestDaemonRecovery); fi
 fi
 PROBES+=("${MANAGED_PROBES[@]}")
 if [ -n "${ONLY:-}" ]; then
@@ -683,7 +686,7 @@ fi
 # The automatic-dispatch test needs both managers and runs last.
 for p in "${PROBES[@]}"; do
 	timeout=10m
-	[ "$p" = TestDaemonRecovery ] && timeout=4h
+	if [ "$p" = TestDaemonRecovery ]; then timeout=4h; fi
 	go test -tags integration -count=1 -timeout "$timeout" -v -run "^$p\$" ./internal/integration/ | tee -a "$WORK/go-test.log"
 	[ "${PIPESTATUS[0]}" -eq 0 ] || STATUS=1
 done
