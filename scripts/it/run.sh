@@ -18,6 +18,9 @@
 #   --only REGEX      run only the registered tests whose names match REGEX
 #                     (extended regex); the selection is printed and each
 #                     selected test is still required to pass
+#   --daemon          also register TestDaemonRecovery (both managers): the
+#                     production worker loop at the default timing, about
+#                     two and a half hours; usually combined with --only
 #
 # Every selected application's tests must report PASS; a skipped test fails
 # the run, so a missing environment variable can never be recorded as a pass.
@@ -42,6 +45,7 @@ CAPTURE=0
 KEEP=0
 NETNS=1
 ONLY=
+DAEMON=0
 ORIG_ARGS=("$@")
 while [ $# -gt 0 ]; do
 	case "$1" in
@@ -54,6 +58,7 @@ while [ $# -gt 0 ]; do
 	--keep) KEEP=1; shift ;;
 	--no-netns) NETNS=0; shift ;;
 	--only) ONLY="$2"; shift 2 ;;
+	--daemon) DAEMON=1; shift ;;
 	*) echo "unknown argument: $1" >&2; exit 2 ;;
 	esac
 done
@@ -655,6 +660,7 @@ if [ "$CAPTURE" = 1 ]; then export HK_IT_CAPTURE_DIR="$ROOT/internal/integration
 cd "$ROOT"
 if [ "$STANDIN" = 1 ] && has "$MANAGERS" sonarr && has "$MANAGERS" radarr; then
 	MANAGED_PROBES+=(TestAutomaticRecovery TestAutomaticPreservedDataFailure)
+	[ "$DAEMON" = 1 ] && MANAGED_PROBES+=(TestDaemonRecovery)
 fi
 PROBES+=("${MANAGED_PROBES[@]}")
 if [ -n "${ONLY:-}" ]; then
@@ -676,7 +682,9 @@ fi
 # order registered (unknown-content probes before managed-content probes).
 # The automatic-dispatch test needs both managers and runs last.
 for p in "${PROBES[@]}"; do
-	go test -tags integration -count=1 -v -run "^$p\$" ./internal/integration/ | tee -a "$WORK/go-test.log"
+	timeout=10m
+	[ "$p" = TestDaemonRecovery ] && timeout=4h
+	go test -tags integration -count=1 -timeout "$timeout" -v -run "^$p\$" ./internal/integration/ | tee -a "$WORK/go-test.log"
 	[ "${PIPESTATUS[0]}" -eq 0 ] || STATUS=1
 done
 set -e
