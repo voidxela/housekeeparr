@@ -59,19 +59,41 @@ latency and the effect of correlated stalls on small installations.
   uncached tests, and the static binary check passed at `cfe3cff`.
   A fixed-address mapping at `1<<46` succeeded and one at `1<<47`
   returned ENOMEM, consistent with a 48-bit user virtual address space.
+  `go test -race -count=1 ./...` passed on the same checkpoint. Focused
+  app, engine, action, web and notify tests passed five times with
+  the race detector.
 - The initial unselected qBittorrent 5.3.0 hosted run passed all 24
   acceptance checks. Both Transmission lines passed the eight-test
   selection at `12475e3`. The rTorrent rerun passed all eight at
-  `3f31547`, and the Transmission 4.1.4 follow-up passed all three.
+  `3f31547`. The three-test pack and search follow-ups for Transmission
+  4.1.4 at `3f31547` and Transmission 4.0.6 at `cfe3cff` both passed.
 - Retained disposable fixtures filled the workspace's 4.9 GB `/tmp`
   mount. The managers rejected grabs while free space was below their
   100 MiB import floor. Go also reported explicit linker and SQLite
   disk-full errors. Completed fixture directories and their logs were
   preserved, and the subsequent Go run used scratch on the larger
   workspace volume.
-- The [latest hosted run](https://github.com/voidxela/housekeeparr/actions/runs/44549087328)
-  retests qBittorrent and Deluge in serial at `63cda18`. Final race and
-  the recovered Transmission 4.0.6 follow-up are pending at this checkpoint.
+- The [final-source hosted run](https://github.com/voidxela/housekeeparr/actions/runs/44549087328)
+  passed all 24 unselected qBittorrent 5.3.0 tests and all eight selected
+  Deluge 2.2.0 tests at `63cda18`. The job used serial loopback-only runs
+  and started qBittorrent with an empty Go module cache.
+
+### Deferred validation and coverage
+
+- The fixture runs shorten the qualification windows so the tests can
+  exercise complete workflows. A default-length daemon trial is still
+  needed to measure unattended recovery latency, restart behavior, and
+  the correlated-stall hold against representative installations.
+- The reviewed fixtures fit within a single pack-history page. Larger pack
+  histories and wanted lists beyond the configured read bound need
+  representative released-manager fixtures. Incomplete evidence stays
+  visible and cannot justify a write.
+- Web tests exercise signed sessions, CSRF and concurrent sign-ins
+  in-process. Direct TLS and reverse-proxy browser sessions still need a
+  deployed fixture with a certificate and proxy configuration.
+- Manager-native outcome tracking windows and the web listener's request
+  timeouts retain their compiled values. The timing inventory below
+  records the tradeoffs alongside the configurable trial controls.
 
 ## Review and remediation — 2026-11-17
 

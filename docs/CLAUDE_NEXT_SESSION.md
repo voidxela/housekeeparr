@@ -47,14 +47,19 @@ trial defaults in the example configuration.
 
 ## Validation and remaining work
 
-The compatibility table tracks the exact test runs. GitHub-hosted
+The compatibility table tracks the exact test runs. Build, vet, gofmt,
+uncached unit tests, the static Linux build, and the full race suite
+passed on the latest Go source. Focused race checks also passed five
+times across app, engine, action, web and notify. GitHub-hosted
 Ubuntu 24.04 ran the complete qBittorrent 5.3.0 suite with both managers
 in the normal loopback-only namespace. On the managed workspace,
 libtorrent's denied `AF_NETLINK` socket can prevent qBittorrent tracker
-announces and pause Deluge's session. The hosted Linux workflow runs
-qBittorrent and a Deluge selection in serial. Its Deluge step uses a
-pinned Debian 13 container for the Python 3.13 packages and constructs
-the harness's nested loopback-only namespace.
+announces and pause Deluge's session. The final-source hosted Linux workflow passed 24 unselected qBittorrent
+checks and eight selected Deluge checks in serial. Its Deluge step
+uses a pinned Debian 13 container for the Python 3.13 packages and
+constructs the harness's nested loopback-only namespace. Put `TMPDIR`
+on the larger workspace volume for batches that retain fixture
+directories.
 
 Continue default-length daemon-loop and production-trial verification
 from SPEC. Prioritize broad pack histories, wanted queues beyond the

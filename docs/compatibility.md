@@ -665,6 +665,9 @@ a published commit in parentheses identifies the same Git tree.
 | 2026-11-19 | `3f31547` (published as `1dd05f1`) | Linux amd64 workspace, selected rTorrent 0.9.8 / libtorrent 0.13.8 via lighttpd 1.4.79 | **8 of 8 passed.** Included both managers' preserved-data and proactive searches, the Sonarr pack restart, and automatic preserved-data recovery. |
 | 2026-11-19 | `3f31547` (`1dd05f1`) | Linux amd64 workspace, three-test selection for Transmission 4.0.6 (38c164933e) | **0 of 3 passed.** The scratch mount had about 47 MiB free. The manager's 100 MiB import floor rejected the search and pack fixture releases. |
 | 2026-11-19 | `3f31547` (`1dd05f1`) | Linux amd64 workspace, three-test selection for Transmission 4.1.4 (a6d907d9ea) | **3 of 3 passed** after completed disposable fixtures were archived to the larger workspace volume. |
+| 2026-11-19 | `63cda18` | GitHub-hosted Ubuntu 24.04 amd64, unselected qBittorrent 5.3.0 (WebUI 2.16.2) | **24 of 24 passed** with both managers. This run started with an empty Go module cache. [Run 44549087328](https://github.com/voidxela/housekeeparr/actions/runs/44549087328) |
+| 2026-11-19 | `63cda18` | Same hosted job, Debian 13 amd64 container, selected Deluge 2.2.0 / libtorrent 2.0.11.0 | **8 of 8 passed**, including both managers' public and private preserved-data cases, both proactive searches, Sonarr pack clearance across restart, and automatic preserved-data recovery. The readiness checks established complete fixture payloads before the suite. |
+| 2026-11-19 | `cfe3cff` (published as `63cda18`) | Linux amd64 workspace, three-test Transmission 4.0.6 follow-up (38c164933e) | **3 of 3 passed**, including both proactive searches and Sonarr pack clearance, payload preservation and restart. The fixture scratch directory was on the larger workspace volume. |
 
 The eight-test selection above is
 `--only 'PartialPackWorkflow|ProactiveSearch|PreservedDataFailure'`.
