@@ -189,13 +189,19 @@ def deluge(url, pw, dport, duser, dpass, manifest, tdir, save):
             c.call("core.force_recheck", [t["hash"]])
         if t["key"] == "stopped":
             c.call("core.pause_torrent", [t["hash"]])
-    full_hashes = [t["hash"] for t in m if t.get("data") == "full"]
-    deadline = time.time() + 30
-    while time.time() < deadline:
-        if all(c.call("core.get_torrent_status", h, ["state"]).get("state") == "Seeding" for h in full_hashes):
-            break
+    full_fixtures = [t for t in m if t.get("data") == "full"]
+    deadline = time.monotonic() + 30
+    while True:
+        waiting = {}
+        for t in full_fixtures:
+            state = c.call("core.get_torrent_status", t["hash"], ["state"]).get("state")
+            if state != "Seeding":
+                waiting[t["key"]] = state
+        if not waiting:
+            return
+        if time.monotonic() >= deadline:
+            raise RuntimeError("Deluge fixtures did not verify their full payloads: %r" % waiting)
         time.sleep(0.5)
-    time.sleep(1)
 
 
 def deluge_post_restart(url, pw, dport, duser, dpass, manifest, save):
