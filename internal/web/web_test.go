@@ -453,3 +453,21 @@ func TestActivityShowsConfiguredNotificationBounds(t *testing.T) {
 		t.Fatal("Activity did not display the configured attempt and age limits")
 	}
 }
+
+// A confirmed action is not tied to the browser's connection: a request
+// whose context is already cancelled (the client or a proxy gave up) still
+// runs the action to its normal outcome, here the coordinator's refusal.
+func TestActOutlivesTheRequest(t *testing.T) {
+	e := setup(t)
+	f := firstFinding(t, e, domain.FindingTransferStalled)
+	page := e.get(t, "/findings/"+itoa(f.ID)).Body.String()
+	m := regexp.MustCompile(`name="csrf" value="([0-9a-f]+)"`).FindStringSubmatch(page)
+	r := post("/findings/"+itoa(f.ID)+"/act", "http://127.0.0.1:8485", url.Values{"csrf": {m[1]}, "confirm": {"yes"}})
+	ctx, cancel := context.WithCancel(r.Context())
+	cancel()
+	w := e.do(t, r.WithContext(ctx))
+	loc, _ := url.QueryUnescape(w.Header().Get("Location"))
+	if w.Code != http.StatusSeeOther || !strings.Contains(loc, "nothing was sent") || strings.Contains(loc, "canceled") {
+		t.Fatalf("act with a cancelled request: %d %s", w.Code, loc)
+	}
+}

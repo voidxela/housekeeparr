@@ -142,6 +142,15 @@ listen = "127.0.0.1:8484"
 # tls_cert = "/etc/housekeeparr/cert.pem"
 # tls_key = "/etc/housekeeparr/key.pem"
 # trusted_proxy = false
+# A proxy must pass the original Host header (nginx: proxy_set_header Host
+# $host) and wait at least write_timeout (see packaging/README.md).
+#
+# Listener timeouts. A manual action is answered when it has finished, so
+# write_timeout must be at least four times action_timing.settle.
+# read_header_timeout = "5s"
+# read_timeout = "15s"
+# write_timeout = "2m"
+# idle_timeout = "1m"
 
 [polling]
 interval = "10m"         # transfer sampling interval (proposed default)

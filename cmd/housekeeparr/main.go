@@ -338,7 +338,8 @@ func cmdRun(args []string, out, errOut io.Writer) int {
 	var srv *web.Server
 	if cfg.Web.Enabled && !*headless {
 		wo := web.Options{Listen: cfg.Web.Listen, Logger: log, AllowedHosts: cfg.Web.AllowedHosts, TLSCert: cfg.Web.TLSCert, TLSKey: cfg.Web.TLSKey,
-			TrustedProxy: cfg.Web.TrustedProxy}
+			TrustedProxy: cfg.Web.TrustedProxy, ReadHeaderTimeout: cfg.Web.ReadHeaderTimeout.Duration, ReadTimeout: cfg.Web.ReadTimeout.Duration,
+			WriteTimeout: cfg.Web.WriteTimeout.Duration, IdleTimeout: cfg.Web.IdleTimeout.Duration}
 		if cfg.Web.Password != "" {
 			wo.Auth = &web.Auth{Username: cfg.Web.Username, Password: secrets["web.password"],
 				SessionTTL: cfg.Web.SessionTTL.Duration, SignInWindow: cfg.Web.SignInWindow.Duration, SignInFailures: cfg.Web.SignInFailures}
@@ -355,7 +356,11 @@ func cmdRun(args []string, out, errOut io.Writer) int {
 				stop()
 			}
 		}()
-		log.Info("web interface listening", "url", "http://"+cfg.Web.Listen+"/")
+		scheme := "http"
+		if cfg.Web.TLSCert != "" {
+			scheme = "https"
+		}
+		log.Info("web interface listening", "url", scheme+"://"+cfg.Web.Listen+"/")
 	} else {
 		log.Info("headless: no listener opened")
 	}

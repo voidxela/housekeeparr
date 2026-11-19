@@ -304,6 +304,14 @@ type WebConfig struct {
 	SessionTTL     Duration `toml:"session_ttl"`
 	SignInWindow   Duration `toml:"sign_in_window"`
 	SignInFailures int      `toml:"sign_in_failures"`
+	// Listener timeouts. A manual action is answered only after it
+	// finished (live checks, each write's settle observation), so the
+	// write timeout must outlast one; a reverse proxy's read timeout
+	// should be at least as long.
+	ReadHeaderTimeout Duration `toml:"read_header_timeout"`
+	ReadTimeout       Duration `toml:"read_timeout"`
+	WriteTimeout      Duration `toml:"write_timeout"`
+	IdleTimeout       Duration `toml:"idle_timeout"`
 }
 
 // NotificationSettings bounds webhook batching, retry and delivery across targets.
@@ -464,6 +472,8 @@ func Defaults() Config {
 		Web: WebConfig{
 			Enabled: false, Listen: "127.0.0.1:8484", SessionTTL: Duration{12 * time.Hour},
 			SignInWindow: Duration{15 * time.Minute}, SignInFailures: 5,
+			ReadHeaderTimeout: Duration{5 * time.Second}, ReadTimeout: Duration{15 * time.Second}, WriteTimeout: Duration{2 * time.Minute},
+			IdleTimeout: Duration{time.Minute},
 		},
 		Polling: PollingConfig{
 			Interval:       Duration{d.PollInterval},
@@ -610,6 +620,18 @@ func validate(cfg *Config, md toml.MetaData) []Problem {
 	}
 	if cfg.Web.SignInFailures < 1 || cfg.Web.SignInFailures > 100 {
 		errf("web.sign_in_failures", "must be between 1 and 100")
+	}
+	for _, t := range []struct {
+		name string
+		d    time.Duration
+	}{{"read_header_timeout", cfg.Web.ReadHeaderTimeout.Duration}, {"read_timeout", cfg.Web.ReadTimeout.Duration},
+		{"write_timeout", cfg.Web.WriteTimeout.Duration}, {"idle_timeout", cfg.Web.IdleTimeout.Duration}} {
+		if t.d < time.Second || t.d > 10*time.Minute {
+			errf("web."+t.name, "must be between 1s and 10m")
+		}
+	}
+	if min := 4 * cfg.ActionTiming.Settle.Duration; cfg.Web.WriteTimeout.Duration < min {
+		errf("web.write_timeout", "must be at least four times action_timing.settle (%s), or a manual action's answer is cut off before the action finishes", min)
 	}
 	// Web interface: loopback unless authentication, an explicit host
 	// allowlist, and TLS (or a declared TLS-terminating proxy) are set.

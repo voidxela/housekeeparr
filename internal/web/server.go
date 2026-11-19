@@ -26,6 +26,7 @@ import (
 
 	"github.com/voidxela/housekeeparr/internal/action"
 	"github.com/voidxela/housekeeparr/internal/app"
+	"github.com/voidxela/housekeeparr/internal/config"
 	"github.com/voidxela/housekeeparr/internal/findings"
 	"github.com/voidxela/housekeeparr/internal/policy"
 )
@@ -47,6 +48,8 @@ type Options struct {
 	// and one of them.
 	TLSCert, TLSKey string
 	TrustedProxy    bool
+	// Listener timeouts; zero uses the configuration defaults.
+	ReadHeaderTimeout, ReadTimeout, WriteTimeout, IdleTimeout time.Duration
 }
 
 // Server serves the interface.
@@ -60,8 +63,10 @@ type Server struct {
 	auth    *authState
 	tlsCert string
 	tlsKey  string
-	http    *http.Server
-	static  http.Handler
+	// trustedProxy: a TLS-terminating proxy is declared in front.
+	trustedProxy bool
+	http         *http.Server
+	static       http.Handler
 }
 
 // New builds a server. A non-loopback listen address requires
@@ -92,7 +97,7 @@ func New(svc *app.Service, o Options) (*Server, error) {
 	if _, err := rand.Read(key); err != nil {
 		return nil, err
 	}
-	s := &Server{svc: svc, log: o.Logger, listen: o.Listen, csrfKey: key, tlsCert: o.TLSCert, tlsKey: o.TLSKey,
+	s := &Server{svc: svc, log: o.Logger, listen: o.Listen, csrfKey: key, tlsCert: o.TLSCert, tlsKey: o.TLSKey, trustedProxy: o.TrustedProxy,
 		hosts: map[string]bool{"localhost": true, "127.0.0.1": true, "::1": true}}
 	if isLoopback(host) {
 		s.hosts[strings.Trim(host, "[]")] = true
@@ -108,8 +113,16 @@ func New(svc *app.Service, o Options) (*Server, error) {
 	}
 	sub, _ := fs.Sub(assets, "static")
 	s.static = http.StripPrefix("/static/", http.FileServer(http.FS(sub)))
-	s.http = &http.Server{Addr: o.Listen, Handler: s.Handler(), ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 64 << 10}
+	d := config.Defaults().Web
+	or := func(v time.Duration, def config.Duration) time.Duration {
+		if v > 0 {
+			return v
+		}
+		return def.Duration
+	}
+	s.http = &http.Server{Addr: o.Listen, Handler: s.Handler(), ReadHeaderTimeout: or(o.ReadHeaderTimeout, d.ReadHeaderTimeout),
+		ReadTimeout: or(o.ReadTimeout, d.ReadTimeout), WriteTimeout: or(o.WriteTimeout, d.WriteTimeout), IdleTimeout: or(o.IdleTimeout, d.IdleTimeout),
+		MaxHeaderBytes: 64 << 10}
 	return s, nil
 }
 
@@ -188,7 +201,12 @@ func (s *Server) guard(next http.Handler) http.Handler {
 		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			if !s.sameOrigin(r) {
-				http.Error(w, "Cross-origin request refused.", http.StatusForbidden)
+				msg := "Cross-origin request refused."
+				if s.trustedProxy {
+					msg += " Behind a reverse proxy, pass the original Host header to Housekeeparr (nginx: proxy_set_header Host $host); this request's Host is " +
+						strconv.Quote(r.Host) + "."
+				}
+				http.Error(w, msg, http.StatusForbidden)
 				return
 			}
 		}
@@ -266,7 +284,9 @@ func (s *Server) findingAction(w http.ResponseWriter, r *http.Request) {
 			err = errors.New("confirm the previewed effects before running the action")
 			break
 		}
-		_, _, err = s.svc.Act(ctx, id, app.ActorWeb)
+		// The action outlives the request: a browser or proxy giving up
+		// must not stop a workflow between its journaled writes.
+		_, _, err = s.svc.Act(context.WithoutCancel(ctx), id, app.ActorWeb)
 	case "snooze":
 		var d time.Duration
 		d, err = time.ParseDuration(r.PostFormValue("duration"))
