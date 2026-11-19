@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -167,29 +168,40 @@ func (s *Service) DispatchSearches(ctx context.Context, fresh map[string]bool) (
 		rep.Skipped = "writes are held: " + js.RestoreHold.Reason
 		return rep, nil
 	}
-	if err := s.followSearches(ctx, s.now()); err != nil {
+	now := s.now()
+	if err := s.followSearches(ctx, now); err != nil {
 		return rep, err
 	}
-	breakers, err := s.actionBreakers(ctx, s.now())
+	breakers, err := s.actionBreakers(ctx, now)
 	if err != nil {
 		return rep, err
 	}
-	items, err := s.st.MissingContent(ctx, store.MissingFilter{PresentOnly: true, Limit: 500})
+	var managers []string
+	for _, m := range slices.Concat(s.cfg.Sonarr, s.cfg.Radarr) {
+		if !fresh[m.ID] {
+			continue
+		}
+		if why := breakers["manager:"+m.ID]; why != "" {
+			if len(rep.Waiting) < 5 {
+				rep.Waiting = append(rep.Waiting, fmt.Sprintf("%s: manager held — %s", m.ID, why))
+			}
+			continue
+		}
+		managers = append(managers, m.ID)
+	}
+	if len(managers) == 0 {
+		return rep, nil
+	}
+	items, err := s.st.MissingContent(ctx, store.MissingFilter{
+		ManagerIDs: managers, PresentOnly: true, Limit: s.cfg.Search.MaxMissingItems * len(managers),
+		FreshSince: now.Add(-s.cfg.Search.MissingFreshness.Duration), SearchReadyAt: now,
+	})
 	if err != nil {
 		return rep, err
 	}
 	for _, it := range items {
 		if rep.Evaluated >= maxSearchCandidates || ctx.Err() != nil {
 			break
-		}
-		if !fresh[it.ManagerID] {
-			continue
-		}
-		if why := breakers["manager:"+it.ManagerID]; why != "" {
-			if len(rep.Waiting) < 5 {
-				rep.Waiting = append(rep.Waiting, fmt.Sprintf("%s|%s: manager held — %s", it.ManagerID, it.ContentKey, why))
-			}
-			continue
 		}
 		pv, err := s.PreviewSearch(ctx, it.ManagerID, it.ContentKey, action.OriginAutomatic)
 		if err != nil {

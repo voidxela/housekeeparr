@@ -479,11 +479,6 @@ type MissingReader interface {
 	Missing(ctx context.Context, maxItems int) (domain.MissingSnapshot, error)
 }
 
-// Missing-list reads (implementation proposals): at most once per
-// configured interval per manager, bounded to missingMax items, and only while
-// some scope could enable proactive searches.
-const missingMax = 500
-
 // readMissing refreshes the missing lists of managers read successfully
 // this cycle. A failure is logged and leaves the stored list unchanged.
 func (e *Engine) readMissing(ctx context.Context, results []*fetched) {
@@ -508,7 +503,7 @@ func (e *Engine) readMissing(ctx context.Context, results []*fetched) {
 		if age := now.Sub(last); seen && age >= 0 && age < e.cfg.Search.MissingInterval.Duration {
 			continue
 		}
-		snap, err := mr.Missing(ctx, missingMax)
+		snap, err := mr.Missing(ctx, e.cfg.Search.MaxMissingItems)
 		if err != nil {
 			e.log.Warn("missing list not read", "manager", m.ID(), "class", adapter.ClassOf(err), "error", errorText(err))
 			continue

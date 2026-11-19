@@ -145,6 +145,7 @@ jitter = "30s"           # random delay added to each cycle start
 spacing = "15m"
 missing_interval = "1h"
 missing_freshness = "2h"
+max_missing_items = 500
 follow_window = "1h"
 initial_backoff = "24h"
 max_backoff = "720h"

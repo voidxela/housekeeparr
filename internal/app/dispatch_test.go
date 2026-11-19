@@ -1803,3 +1803,32 @@ manager = "radarr"
 		t.Errorf("healthy manager failed to search: %v", got)
 	}
 }
+
+func TestOneManagersFullMissingListDoesNotStarveAnother(t *testing.T) {
+	w := newWorldWith(t, "automatic", 20, missingRule+`
+[[rule]]
+name = "movie searches"
+priority = 1
+[rule.automation]
+missing_search = true
+[rule.match]
+manager = "radarr"
+`)
+	action.Tested = append(action.Tested,
+		action.TestedWorkflow{Workflow: policy.WorkflowMissingSearch, Manager: adapter.KindSonarr, ManagerVersion: "0.0.0-fake"},
+		action.TestedWorkflow{Workflow: policy.WorkflowMissingSearch, Manager: adapter.KindRadarr, ManagerVersion: "0.0.0-fake"})
+	episodes := make([]domain.MissingItem, 500)
+	for i := range episodes {
+		episodes[i] = fake.MissingEpisode(int64(i+101), 3, "Unavailable episode", t0.Add(-time.Hour))
+		episodes[i].Available = domain.KnownValue(false)
+	}
+	w.mgr.SetMissing(episodes...)
+	w.radarr.SetMissing(fake.MissingMovie(5, "Available movie"))
+	w.runSearches(10 * time.Minute)
+	if got := w.mgr.Searches(); len(got) != 0 {
+		t.Errorf("searched unavailable content: %v", got)
+	}
+	if got := w.radarr.Searches(); len(got) != 1 || got[0][0] != 5 {
+		t.Errorf("eligible movie was crowded out by another manager's missing list: %v", got)
+	}
+}

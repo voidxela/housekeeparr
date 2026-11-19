@@ -100,6 +100,7 @@ type SearchConfig struct {
 	Spacing          Duration `toml:"spacing"`
 	MissingInterval  Duration `toml:"missing_interval"`
 	MissingFreshness Duration `toml:"missing_freshness"`
+	MaxMissingItems  int      `toml:"max_missing_items"`
 	FollowWindow     Duration `toml:"follow_window"`
 	InitialBackoff   Duration `toml:"initial_backoff"`
 	MaxBackoff       Duration `toml:"max_backoff"`
@@ -460,7 +461,7 @@ func Defaults() Config {
 		},
 		Search: SearchConfig{
 			Spacing: Duration{15 * time.Minute}, MissingInterval: Duration{time.Hour},
-			MissingFreshness: Duration{2 * time.Hour}, FollowWindow: Duration{time.Hour},
+			MissingFreshness: Duration{2 * time.Hour}, MaxMissingItems: 500, FollowWindow: Duration{time.Hour},
 			InitialBackoff: Duration{24 * time.Hour}, MaxBackoff: Duration{30 * 24 * time.Hour},
 		},
 		Notifications: NotificationSettings{
@@ -571,6 +572,9 @@ func validate(cfg *Config, md toml.MetaData) []Problem {
 		if field.value.Duration <= 0 {
 			errf("search."+field.name, "must be positive")
 		}
+	}
+	if search.MaxMissingItems < 1 || search.MaxMissingItems > 10000 {
+		errf("search.max_missing_items", "must be between 1 and 10000 per manager")
 	}
 	if search.MissingFreshness.Duration < search.MissingInterval.Duration {
 		errf("search.missing_freshness", "must cover at least one missing-interval")

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/voidxela/housekeeparr/internal/domain"
@@ -127,10 +128,13 @@ func scanMissing(rows *sql.Rows) ([]MissingRecord, error) {
 
 // MissingFilter selects missing content.
 type MissingFilter struct {
-	ManagerID   string
-	PresentOnly bool
-	State       string
-	Limit       int
+	ManagerID     string
+	ManagerIDs    []string
+	PresentOnly   bool
+	State         string
+	Limit         int
+	FreshSince    time.Time
+	SearchReadyAt time.Time
 }
 
 // MissingContent lists missing content, never-searched and oldest-first.
@@ -140,6 +144,20 @@ func (s *Store) MissingContent(ctx context.Context, f MissingFilter) ([]MissingR
 	if f.ManagerID != "" {
 		q += " AND manager_id=?"
 		args = append(args, f.ManagerID)
+	}
+	if len(f.ManagerIDs) != 0 {
+		q += " AND manager_id IN (" + strings.Repeat("?,", len(f.ManagerIDs)-1) + "?)"
+		for _, id := range f.ManagerIDs {
+			args = append(args, id)
+		}
+	}
+	if !f.FreshSince.IsZero() {
+		q += " AND last_seen>=?"
+		args = append(args, ms(f.FreshSince))
+	}
+	if !f.SearchReadyAt.IsZero() {
+		q += " AND available=1 AND last_seen<=? AND (next_search_at IS NULL OR next_search_at<=?)"
+		args = append(args, ms(f.SearchReadyAt), ms(f.SearchReadyAt))
 	}
 	if f.PresentOnly {
 		q += " AND present=1"
@@ -151,7 +169,7 @@ func (s *Store) MissingContent(ctx context.Context, f MissingFilter) ([]MissingR
 	if f.Limit <= 0 {
 		f.Limit = 1000
 	}
-	q += " ORDER BY (origin = 'pack') DESC, searches ASC, COALESCE(last_search_at, 0) ASC, COALESCE(aired_at, 0) DESC LIMIT ?"
+	q += " ORDER BY (origin = 'pack') DESC, searches ASC, COALESCE(last_search_at, 0) ASC, COALESCE(aired_at, 0) DESC, manager_id, content_key LIMIT ?"
 	args = append(args, f.Limit)
 	rows, err := s.r.QueryContext(ctx, q, args...)
 	if err != nil {
