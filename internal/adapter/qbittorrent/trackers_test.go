@@ -164,6 +164,9 @@ func TestTrackerReadsBoundedPerListing(t *testing.T) {
 	if !snap.Complete || len(snap.Transfers) != total {
 		t.Fatalf("complete=%v len=%d", snap.Complete, len(snap.Transfers))
 	}
+	if snap.TrackerReadLimit != maxTrackerReads || snap.TrackerReadsDeferred != total-maxTrackerReads {
+		t.Fatalf("coverage summary limit=%d deferred=%d", snap.TrackerReadLimit, snap.TrackerReadsDeferred)
+	}
 	if got := f.trackerReqs.Load(); got != maxTrackerReads {
 		t.Fatalf("trackerReqs = %d, want %d", got, maxTrackerReads)
 	}

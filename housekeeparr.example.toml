@@ -238,6 +238,8 @@ download_clients = { "qBittorrent" = "qbittorrent" }
 # download_clients = { "qBittorrent" = "qbittorrent" }
 
 [[qbittorrent]]
+# tracker_read_limit = 25  # also available for rTorrent
+# rTorrent additionally accepts tracker_freshness = "1h".
 id = "qbittorrent"
 name = "qBittorrent"
 url = "http://127.0.0.1:8080"

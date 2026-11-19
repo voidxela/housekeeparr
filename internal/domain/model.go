@@ -182,6 +182,9 @@ type TransferSnapshot struct {
 	// transfer. Only complete listings may establish disappearance.
 	Complete    bool     `json:"complete"`
 	Limitations []string `json:"limitations,omitempty"`
+	// Supplemental tracker reads can be bounded independently of list completeness.
+	TrackerReadLimit     int `json:"tracker_read_limit,omitempty"`
+	TrackerReadsDeferred int `json:"tracker_reads_deferred,omitempty"`
 }
 
 // StatusMessage is a manager-provided diagnostic message group.

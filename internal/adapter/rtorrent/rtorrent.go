@@ -26,26 +26,36 @@ import (
 
 // Options configure the adapter.
 type Options struct {
-	ID       string
-	BaseURL  string
-	RPCPath  string // default /RPC2
-	Username string
-	Password string
-	Timeout  time.Duration
-	CAFile   string
+	ID               string
+	BaseURL          string
+	RPCPath          string // default /RPC2
+	Username         string
+	Password         string
+	Timeout          time.Duration
+	CAFile           string
+	TrackerReadLimit int
+	TrackerFreshness time.Duration
 }
 
 // Client implements adapter.DownloadClient.
 type Client struct {
-	id      string
-	http    *httpx.Client
-	rpcPath string
-	auth    string
-	mu      sync.Mutex
+	id               string
+	http             *httpx.Client
+	rpcPath          string
+	auth             string
+	mu               sync.Mutex
+	trackerReadLimit int
+	trackerFreshness time.Duration
 }
 
 // New creates an rTorrent adapter.
 func New(o Options) (*Client, error) {
+	if o.TrackerReadLimit <= 0 {
+		o.TrackerReadLimit = maxTrackerReads
+	}
+	if o.TrackerFreshness <= 0 {
+		o.TrackerFreshness = trackerFresh
+	}
 	hc, err := httpx.New(o.BaseURL, httpx.Options{Timeout: o.Timeout, CAFile: o.CAFile, MaxResponseBytes: 64 << 20, UserAgent: "Housekeeparr"})
 	if err != nil {
 		return nil, err
@@ -53,7 +63,7 @@ func New(o Options) (*Client, error) {
 	if o.RPCPath == "" {
 		o.RPCPath = "/RPC2"
 	}
-	c := &Client{id: o.ID, http: hc, rpcPath: o.RPCPath}
+	c := &Client{id: o.ID, http: hc, rpcPath: o.RPCPath, trackerReadLimit: o.TrackerReadLimit, trackerFreshness: o.TrackerFreshness}
 	if o.Username != "" || o.Password != "" {
 		c.auth = "Basic " + base64.StdEncoding.EncodeToString([]byte(o.Username+":"+o.Password))
 	}
@@ -203,7 +213,7 @@ func (c *Client) ListTransfers(ctx context.Context) (domain.TransferSnapshot, er
 	if !ok {
 		return domain.TransferSnapshot{}, httpx.Malformed("rtorrent.d.multicall2", fmt.Errorf("result is %T, not an array", v))
 	}
-	snap := domain.TransferSnapshot{ClientID: c.id, CollectedAt: time.Now().UTC(), Complete: true}
+	snap := domain.TransferSnapshot{ClientID: c.id, CollectedAt: time.Now().UTC(), Complete: true, TrackerReadLimit: c.trackerReadLimit}
 	for _, r := range rows {
 		cols, ok := r.([]any)
 		if !ok || len(cols) != len(fields) {
@@ -224,8 +234,9 @@ func (c *Client) ListTransfers(ctx context.Context) (domain.TransferSnapshot, er
 			t.SourceFailure = domain.UnknownValue[domain.SourceFailure]("tracker results are read only for active downloads")
 		case !strings.HasPrefix(msg, "Tracker:"):
 			t.SourceFailure = domain.KnownValue(domain.SourceNoFailure)
-		case reads >= maxTrackerReads:
-			t.SourceFailure = domain.UnknownValue[domain.SourceFailure](fmt.Sprintf("tracker results not read this cycle (bounded to %d per listing)", maxTrackerReads))
+		case reads >= c.trackerReadLimit:
+			snap.TrackerReadsDeferred++
+			t.SourceFailure = domain.UnknownValue[domain.SourceFailure](fmt.Sprintf("tracker results not read this cycle (bounded to %d per listing)", c.trackerReadLimit))
 		default:
 			reads++
 			t.SourceFailure = c.trackerResult(ctx, t.NativeID, msg, snap.CollectedAt)
@@ -281,7 +292,7 @@ func (c *Client) trackerResult(ctx context.Context, hash, msg string, now time.T
 		if succeeded > 0 && succeeded >= failed {
 			return domain.KnownValue(domain.SourceNoFailure)
 		}
-		if failed > 0 && now.Sub(time.Unix(failed, 0)) <= trackerFresh {
+		if failed > 0 && now.Sub(time.Unix(failed, 0)) <= c.trackerFreshness {
 			fresh = true
 		}
 	}

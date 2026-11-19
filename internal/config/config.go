@@ -408,7 +408,9 @@ type ClientConfig struct {
 	Password SecretRef `toml:"password"`
 	// RPCPath is the RPC endpoint path for Transmission (default
 	// /transmission/rpc) or rTorrent's XML-RPC gateway (default /RPC2).
-	RPCPath string `toml:"rpc_path"`
+	RPCPath          string   `toml:"rpc_path"`
+	TrackerReadLimit int      `toml:"tracker_read_limit"`
+	TrackerFreshness Duration `toml:"tracker_freshness"`
 	// Policy holds connection-scoped diagnosis overrides.
 	Policy PolicyOverrides `toml:"policy"`
 }
@@ -758,6 +760,15 @@ func validate(cfg *Config, md toml.MetaData) []Problem {
 		field := ce.Section + "." + c.ID
 		if err := c.Password.validateSyntax(); err != nil {
 			errf(field+".password", "%v", err)
+		}
+		if c.TrackerReadLimit < 0 || c.TrackerReadLimit > 200 {
+			errf(field+".tracker_read_limit", "must be between 1 and 200 when set")
+		}
+		if c.TrackerReadLimit != 0 && ce.Section != "rtorrent" && ce.Section != "qbittorrent" {
+			errf(field+".tracker_read_limit", "only applies to qBittorrent and rTorrent")
+		}
+		if c.TrackerFreshness.Duration < 0 || (c.TrackerFreshness.Duration != 0 && ce.Section != "rtorrent") {
+			errf(field+".tracker_freshness", "must be positive and only applies to rTorrent")
 		}
 		switch ce.Section {
 		case "qbittorrent":

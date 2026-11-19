@@ -1132,3 +1132,21 @@ poll = "200ms"
 		t.Fatal(err)
 	}
 }
+
+func TestTrackerReadBoundsCanBeConfiguredPerClient(t *testing.T) {
+	const raw = `
+version = 1
+[[qbittorrent]]
+id = "qbit"
+url = "http://127.0.0.1:8080"
+tracker_read_limit = 50
+[[rtorrent]]
+id = "rt"
+url = "http://127.0.0.1:8081"
+tracker_read_limit = 10
+tracker_freshness = "25m"
+`
+	if _, _, err := Parse([]byte(raw), ""); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -43,6 +43,7 @@ const (
 	FindingMetadataTimeout   = "transfer.metadata_timeout"
 	FindingTransferError     = "transfer.client_error"
 	FindingSourceRejected    = "transfer.source_rejected"
+	FindingTrackerCoverage   = "transfer.tracker_coverage"
 	FindingPartialPack       = "import.partial_pack"
 	FindingImportAttention   = "import.attention"
 	FindingQueueUnmatched    = "queue.unmatched"

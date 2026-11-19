@@ -102,13 +102,13 @@ func Build(cfg *config.Config, secrets map[string]string) (*Connections, error) 
 		)
 		switch kind {
 		case adapter.KindRTorrent:
-			c, err = rtorrent.New(rtorrent.Options{ID: q.ID, BaseURL: q.URL, RPCPath: q.RPCPath, Username: q.Username, Password: pw, Timeout: timeout, CAFile: q.CAFile})
+			c, err = rtorrent.New(rtorrent.Options{ID: q.ID, BaseURL: q.URL, RPCPath: q.RPCPath, Username: q.Username, Password: pw, Timeout: timeout, CAFile: q.CAFile, TrackerReadLimit: q.TrackerReadLimit, TrackerFreshness: q.TrackerFreshness.Duration})
 		case adapter.KindDeluge:
 			c, err = deluge.New(deluge.Options{ID: q.ID, BaseURL: q.URL, Password: pw, Timeout: timeout, CAFile: q.CAFile})
 		case adapter.KindTransmission:
 			c, err = transmission.New(transmission.Options{ID: q.ID, BaseURL: q.URL, RPCPath: q.RPCPath, Username: q.Username, Password: pw, Timeout: timeout, CAFile: q.CAFile})
 		default:
-			c, err = qbittorrent.New(qbittorrent.Options{ID: q.ID, BaseURL: q.URL, Username: q.Username, Password: pw, Timeout: timeout, CAFile: q.CAFile})
+			c, err = qbittorrent.New(qbittorrent.Options{ID: q.ID, BaseURL: q.URL, Username: q.Username, Password: pw, Timeout: timeout, CAFile: q.CAFile, TrackerReadLimit: q.TrackerReadLimit})
 		}
 		if err != nil {
 			return nil, fmt.Errorf("%s.%s: %w", ce.Section, q.ID, err)

@@ -1003,3 +1003,34 @@ func TestSearchSettlesIndependentlyOfDownload(t *testing.T) {
 		t.Fatalf("command list still read after both outcomes settled: %v", need)
 	}
 }
+
+func TestTrackerReadLimitSurfacesAndResolvesCoverageFinding(t *testing.T) {
+	h := newHarness(t, baseConfig)
+	snap := domain.TransferSnapshot{ClientID: "qbit", TrackerReadLimit: 25, TrackerReadsDeferred: 3, Complete: true}
+	read := func() domain.Finding {
+		t.Helper()
+		if err := h.st.Write(ctx, func(tx *store.Tx) error {
+			_, err := h.eng.evaluateClient(tx, snap, nil, h.clock.Now())
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		fs, err := h.st.Findings(ctx, store.FindingFilter{Type: domain.FindingTrackerCoverage})
+		if err != nil || len(fs) != 1 {
+			t.Fatalf("tracker coverage findings: %+v, %v", fs, err)
+		}
+		return fs[0]
+	}
+	if f := read(); f.State != domain.FindingOpen || !strings.Contains(f.Summary, "3 active downloads") ||
+		len(f.Detail.NextSteps) != 1 || !strings.Contains(f.Detail.NextSteps[0], "tracker_read_limit") {
+		t.Fatalf("coverage finding: %+v", f)
+	}
+	snap.TrackerReadsDeferred, snap.Complete = 0, false
+	if f := read(); f.State != domain.FindingOpen {
+		t.Fatalf("partial evidence resolved the coverage finding: %+v", f)
+	}
+	snap.Complete = true
+	if f := read(); f.State != domain.FindingResolved {
+		t.Fatalf("complete evidence did not resolve the coverage finding: %+v", f)
+	}
+}

@@ -36,12 +36,13 @@ const maxTrackerReads = 25
 
 // Options configure the adapter.
 type Options struct {
-	ID       string
-	BaseURL  string
-	Username string
-	Password string // resolved secret; never logged
-	Timeout  time.Duration
-	CAFile   string
+	ID               string
+	BaseURL          string
+	Username         string
+	Password         string // resolved secret; never logged
+	Timeout          time.Duration
+	CAFile           string
+	TrackerReadLimit int
 }
 
 // Client implements adapter.DownloadClient.
@@ -52,13 +53,17 @@ type Client struct {
 	password string
 	referer  string
 
-	mu       sync.Mutex
-	loggedIn bool
-	version  version
+	mu               sync.Mutex
+	loggedIn         bool
+	version          version
+	trackerReadLimit int
 }
 
 // New creates a qBittorrent adapter.
 func New(o Options) (*Client, error) {
+	if o.TrackerReadLimit <= 0 {
+		o.TrackerReadLimit = maxTrackerReads
+	}
 	hc, err := httpx.New(o.BaseURL, httpx.Options{
 		Timeout: o.Timeout, CAFile: o.CAFile, CookieJar: true,
 		// Large seeding libraries produce big listings; bound them anyway.
@@ -70,7 +75,7 @@ func New(o Options) (*Client, error) {
 	}
 	u, _ := url.Parse(o.BaseURL)
 	return &Client{id: o.ID, http: hc, username: o.Username, password: o.Password,
-		referer: u.Scheme + "://" + u.Host}, nil
+		referer: u.Scheme + "://" + u.Host, trackerReadLimit: o.TrackerReadLimit}, nil
 }
 
 func (c *Client) ID() string         { return c.id }
@@ -295,7 +300,7 @@ func (c *Client) ListTransfers(ctx context.Context) (domain.TransferSnapshot, er
 	c.mu.Lock()
 	v := c.version
 	c.mu.Unlock()
-	snap := domain.TransferSnapshot{ClientID: c.id, CollectedAt: collected, Complete: true}
+	snap := domain.TransferSnapshot{ClientID: c.id, CollectedAt: collected, Complete: true, TrackerReadLimit: c.trackerReadLimit}
 	snap.Transfers = make([]domain.Transfer, 0, len(raw))
 	trackerReads := 0
 	for i := range raw {
@@ -305,8 +310,9 @@ func (c *Client) ListTransfers(ctx context.Context) (domain.TransferSnapshot, er
 		}
 		if t.StateClass != domain.StateDownloading {
 			t.SourceFailure = domain.UnknownValue[domain.SourceFailure]("tracker results are read only for active downloads")
-		} else if trackerReads >= maxTrackerReads {
-			t.SourceFailure = domain.UnknownValue[domain.SourceFailure](fmt.Sprintf("tracker results not read this cycle (bounded to %d per listing)", maxTrackerReads))
+		} else if trackerReads >= c.trackerReadLimit {
+			snap.TrackerReadsDeferred++
+			t.SourceFailure = domain.UnknownValue[domain.SourceFailure](fmt.Sprintf("tracker results not read this cycle (bounded to %d per listing)", c.trackerReadLimit))
 		} else {
 			trackerReads++
 			t.SourceFailure = c.readSourceFailure(ctx, t.NativeID)

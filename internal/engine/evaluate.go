@@ -48,6 +48,26 @@ func (e *Engine) evaluateClient(tx *store.Tx, snap domain.TransferSnapshot, gone
 	reasons := map[string]string{} // dedup key → verified resolution reason
 	listed := map[string]bool{}
 	next := now.Add(clientEff.Settings.PollInterval)
+	coverageKey := scope + "tracker_coverage"
+	switch {
+	case snap.TrackerReadsDeferred > 0:
+		ev.Drafts = append(ev.Drafts, findings.Draft{
+			DedupKey: coverageKey, Type: domain.FindingTrackerCoverage, Severity: domain.SeverityWarning,
+			Title: fmt.Sprintf("Tracker checks reached their limit on %s", meta.Name),
+			Summary: fmt.Sprintf("%d active downloads had no tracker result checked in this listing (limit %d).",
+				snap.TrackerReadsDeferred, snap.TrackerReadLimit),
+			Subject:    domain.Subject{ClientID: snap.ClientID, Connections: []string{snap.ClientID}},
+			EvidenceAt: now, NextEvaluationAt: &next,
+			Detail: domain.FindingDetail{
+				NextSteps:   []string{"Reduce simultaneous active downloads, or raise tracker_read_limit for this client if its API has capacity."},
+				Limitations: []string{"Deferred tracker reads provide no evidence of tracker rejection or tracker health."},
+			},
+		})
+	case snap.Complete && snap.TrackerReadLimit > 0:
+		reasons[coverageKey] = "The latest complete listing deferred no tracker checks."
+	default:
+		ev.Keep[coverageKey] = true
+	}
 	// Load active findings and correlated queue rows once, not per transfer.
 	activeList, err := tx.ActiveFindingsWithPrefix(scope)
 	if err != nil {
