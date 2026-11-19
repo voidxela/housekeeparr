@@ -14,28 +14,29 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/voidxela/housekeeparr/internal/config"
 )
 
 // Auth enables authentication (SPEC §12). Without it the interface is
 // loopback-only.
 type Auth struct {
-	Username string
-	Password string
+	Username       string
+	Password       string
+	SessionTTL     time.Duration
+	SignInWindow   time.Duration
+	SignInFailures int
 }
 
-const (
-	sessionCookie = "hk_session"
-	sessionTTL    = 12 * time.Hour
-	// Failed logins are bounded globally: after maxFailures within
-	// failureWindow, logins are refused until the window passes.
-	maxFailures   = 5
-	failureWindow = 15 * time.Minute
-)
+const sessionCookie = "hk_session"
 
 type authState struct {
-	user, pass [32]byte // digests, compared in constant time
-	key        []byte   // signs session cookies (per process)
-	secure     bool     // Secure cookies (TLS here or at a trusted proxy)
+	user, pass     [32]byte // digests, compared in constant time
+	key            []byte   // signs session cookies (per process)
+	secure         bool     // Secure cookies (TLS here or at a trusted proxy)
+	sessionTTL     time.Duration
+	signInWindow   time.Duration
+	signInFailures int
 
 	mu       sync.Mutex
 	failures []time.Time
@@ -49,7 +50,19 @@ func newAuthState(a *Auth, secure bool) (*authState, error) {
 	if _, err := rand.Read(k); err != nil {
 		return nil, err
 	}
-	return &authState{user: sha256.Sum256([]byte(a.Username)), pass: sha256.Sum256([]byte(a.Password)), key: k, secure: secure}, nil
+	defaults := config.Defaults().Web
+	s := &authState{user: sha256.Sum256([]byte(a.Username)), pass: sha256.Sum256([]byte(a.Password)), key: k, secure: secure,
+		sessionTTL: a.SessionTTL, signInWindow: a.SignInWindow, signInFailures: a.SignInFailures}
+	if s.sessionTTL <= 0 {
+		s.sessionTTL = defaults.SessionTTL.Duration
+	}
+	if s.signInWindow <= 0 {
+		s.signInWindow = defaults.SignInWindow.Duration
+	}
+	if s.signInFailures <= 0 {
+		s.signInFailures = defaults.SignInFailures
+	}
+	return s, nil
 }
 
 func (a *authState) credentialsOK(user, pass string) bool {
@@ -63,12 +76,12 @@ func (a *authState) authenticate(now time.Time, user, pass string) (ok, locked b
 	defer a.mu.Unlock()
 	keep := a.failures[:0]
 	for _, t := range a.failures {
-		if now.Sub(t) < failureWindow {
+		if now.Sub(t) < a.signInWindow {
 			keep = append(keep, t)
 		}
 	}
 	a.failures = keep
-	if len(a.failures) >= maxFailures {
+	if len(a.failures) >= a.signInFailures {
 		return false, true
 	}
 	if !a.credentialsOK(user, pass) {
@@ -90,7 +103,7 @@ func (a *authState) newSession(now time.Time) (string, error) {
 	if _, err := rand.Read(n); err != nil {
 		return "", err
 	}
-	p := strconv.FormatInt(now.Add(sessionTTL).Unix(), 10) + "." + base64.RawURLEncoding.EncodeToString(n)
+	p := strconv.FormatInt(now.Add(a.sessionTTL).Unix(), 10) + "." + base64.RawURLEncoding.EncodeToString(n)
 	return p + "." + a.sign(p), nil
 }
 
@@ -219,7 +232,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		render(http.StatusInternalServerError, "Could not start a session.", next)
 		return
 	}
-	http.SetCookie(w, s.auth.cookie(v, int(sessionTTL.Seconds())))
+	http.SetCookie(w, s.auth.cookie(v, int(s.auth.sessionTTL.Seconds())))
 	http.Redirect(w, r, next, http.StatusSeeOther)
 }
 

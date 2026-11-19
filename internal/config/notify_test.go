@@ -93,3 +93,16 @@ request_timeout = "5s"
 		t.Fatal(err)
 	}
 }
+
+func TestWebSessionAndSignInBoundsAreConfigurable(t *testing.T) {
+	const raw = `
+version = 1
+[web]
+session_ttl = "2h"
+sign_in_window = "5m"
+sign_in_failures = 3
+`
+	if _, _, err := Parse([]byte(raw), ""); err != nil {
+		t.Fatal(err)
+	}
+}

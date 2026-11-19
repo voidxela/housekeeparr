@@ -16,6 +16,8 @@ import (
 	"github.com/voidxela/housekeeparr/internal/demo"
 )
 
+const defaultSignInFailures = 5
+
 func authEnv(t *testing.T) *env {
 	t.Helper()
 	d, err := demo.Generate(context.Background(), t.TempDir(), time.Date(2026, 11, 1, 16, 0, 0, 0, time.UTC))
@@ -160,11 +162,11 @@ func TestSignInIsRateLimitedAndRedirectsStayLocal(t *testing.T) {
 	if w.Header().Get("Location") != "/" {
 		t.Fatalf("open redirect: %q", w.Header().Get("Location"))
 	}
-	for i := 0; i < maxFailures; i++ {
+	for i := 0; i < defaultSignInFailures; i++ {
 		signIn(t, e, "wrong")
 	}
 	if w := signIn(t, e, "correct horse"); w.Code != http.StatusTooManyRequests {
-		t.Fatalf("after %d failures: %d", maxFailures, w.Code)
+		t.Fatalf("after %d failures: %d", defaultSignInFailures, w.Code)
 	}
 }
 
@@ -217,7 +219,36 @@ func TestConcurrentFailedSignInsRespectGlobalLimit(t *testing.T) {
 			t.Fatalf("unexpected sign-in status %d", status)
 		}
 	}
-	if failed != maxFailures {
-		t.Fatalf("ran %d credential checks before blocking, want %d", failed, maxFailures)
+	if failed != defaultSignInFailures {
+		t.Fatalf("ran %d credential checks before blocking, want %d", failed, defaultSignInFailures)
+	}
+}
+
+func TestWebAuthUsesConfiguredSessionAndSignInBounds(t *testing.T) {
+	a, err := newAuthState(&Auth{Username: "admin", Password: "pw", SessionTTL: time.Hour, SignInWindow: 5 * time.Minute, SignInFailures: 1}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
+	if ok, locked := a.authenticate(now, "admin", "wrong"); ok || locked {
+		t.Fatal("initial failure did not match the limit")
+	}
+	if ok, locked := a.authenticate(now.Add(time.Minute), "admin", "pw"); ok || !locked {
+		t.Fatal("configured sign-in limit was ignored")
+	}
+	if ok, locked := a.authenticate(now.Add(5*time.Minute), "admin", "pw"); !ok || locked {
+		t.Fatal("configured sign-in hold did not expire")
+	}
+	value, err := a.newSession(now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.AddCookie(a.cookie(value, 0))
+	if _, valid := a.session(r, now.Add(59*time.Minute)); !valid {
+		t.Fatal("session expired early")
+	}
+	if _, valid := a.session(r, now.Add(time.Hour)); valid {
+		t.Fatal("session lasted beyond its configured expiry")
 	}
 }

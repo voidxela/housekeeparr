@@ -340,7 +340,8 @@ func cmdRun(args []string, out, errOut io.Writer) int {
 		wo := web.Options{Listen: cfg.Web.Listen, Logger: log, AllowedHosts: cfg.Web.AllowedHosts, TLSCert: cfg.Web.TLSCert, TLSKey: cfg.Web.TLSKey,
 			TrustedProxy: cfg.Web.TrustedProxy}
 		if cfg.Web.Password != "" {
-			wo.Auth = &web.Auth{Username: cfg.Web.Username, Password: secrets["web.password"]}
+			wo.Auth = &web.Auth{Username: cfg.Web.Username, Password: secrets["web.password"],
+				SessionTTL: cfg.Web.SessionTTL.Duration, SignInWindow: cfg.Web.SignInWindow.Duration, SignInFailures: cfg.Web.SignInFailures}
 		}
 		srv, err = web.New(svc, wo)
 		if err != nil {

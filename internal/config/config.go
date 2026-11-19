@@ -290,9 +290,12 @@ type WebConfig struct {
 	// TLSCert and TLSKey serve HTTPS directly. TrustedProxy instead
 	// declares that a reverse proxy terminates TLS in front of a private
 	// listener. A non-loopback listener requires one of them.
-	TLSCert      string `toml:"tls_cert"`
-	TLSKey       string `toml:"tls_key"`
-	TrustedProxy bool   `toml:"trusted_proxy"`
+	TLSCert        string   `toml:"tls_cert"`
+	TLSKey         string   `toml:"tls_key"`
+	TrustedProxy   bool     `toml:"trusted_proxy"`
+	SessionTTL     Duration `toml:"session_ttl"`
+	SignInWindow   Duration `toml:"sign_in_window"`
+	SignInFailures int      `toml:"sign_in_failures"`
 }
 
 // NotificationSettings bounds webhook batching, retry and delivery across targets.
@@ -450,7 +453,10 @@ func Defaults() Config {
 		Version: CurrentVersion,
 		Mode:    ModeObserve,
 		State:   StateConfig{Dir: "state"},
-		Web:     WebConfig{Enabled: false, Listen: "127.0.0.1:8484"},
+		Web: WebConfig{
+			Enabled: false, Listen: "127.0.0.1:8484", SessionTTL: Duration{12 * time.Hour},
+			SignInWindow: Duration{15 * time.Minute}, SignInFailures: 5,
+		},
 		Polling: PollingConfig{
 			Interval:       Duration{d.PollInterval},
 			RequestTimeout: Duration{30 * time.Second},
@@ -588,6 +594,15 @@ func validate(cfg *Config, md toml.MetaData) []Problem {
 		errf("state.dir", "required")
 	}
 
+	if cfg.Web.SessionTTL.Duration < time.Second {
+		errf("web.session_ttl", "must be at least one second")
+	}
+	if cfg.Web.SignInWindow.Duration <= 0 {
+		errf("web.sign_in_window", "must be positive")
+	}
+	if cfg.Web.SignInFailures < 1 || cfg.Web.SignInFailures > 100 {
+		errf("web.sign_in_failures", "must be between 1 and 100")
+	}
 	// Web interface: loopback unless authentication, an explicit host
 	// allowlist, and TLS (or a declared TLS-terminating proxy) are set.
 	if cfg.Web.Enabled || md.IsDefined("web", "listen") {

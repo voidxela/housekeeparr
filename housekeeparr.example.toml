@@ -117,6 +117,9 @@ missing_search = false
 dir = "state"
 
 [web]
+session_ttl = "12h"
+sign_in_window = "15m"
+sign_in_failures = 5
 # The interface is optional and binds to loopback by default.
 enabled = true
 listen = "127.0.0.1:8484"
