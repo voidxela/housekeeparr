@@ -305,7 +305,7 @@ type NotifyConfig struct {
 	// MinSeverity is the least severe finding notified: "notice",
 	// "warning" (default) or "error".
 	MinSeverity string `toml:"min_severity"`
-	// MaxPerHour bounds deliveries to this target (default 10); held
+	// MaxPerHour bounds delivery attempts to this target (default 10); held
 	// events are delivered later, oldest first, or summarised.
 	MaxPerHour int `toml:"max_per_hour"`
 	// LinkBase, when set, is the interface's base URL used for links.

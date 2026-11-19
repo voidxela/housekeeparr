@@ -387,3 +387,53 @@ func TestForwardMigrationV17MissingOrigin(t *testing.T) {
 		t.Fatalf("%+v", list)
 	}
 }
+
+func TestForwardMigrationV18NotificationRateUsage(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(dir, dbFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := migrationFS.ReadDir("migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Name() >= "0019" {
+			break
+		}
+		body, err := migrationFS.ReadFile("migrations/" + e.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(string(body)); err != nil {
+			t.Fatalf("%s: %v", e.Name(), err)
+		}
+	}
+	if _, err := db.Exec("INSERT INTO meta(key, value) VALUES('schema_version','18'),('data_origin','live'),('instance_id','v18inst'),('created_at','0')"); err != nil {
+		t.Fatal(err)
+	}
+	sentAt := time.Unix(7200, 0)
+	if _, err := db.Exec(`INSERT INTO notification_events(target, dedup_key, kind, severity, title, body, created_at, next_at, sent_at)
+		VALUES('hook','opening','finding.opened','warning','title','body',?,?,?)`, ms(sentAt), ms(sentAt), ms(sentAt)); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(ctx, dir, Options{})
+	if err != nil {
+		t.Fatalf("open v18 database: %v", err)
+	}
+	defer s.Close()
+	if err := s.Write(ctx, func(tx *Tx) error {
+		ok, err := tx.ReserveNotificationAttempt("hook", sentAt.Add(30*time.Minute), 1)
+		if err != nil || ok {
+			t.Fatalf("the old delivery did not count towards pacing: %t, %v", ok, err)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}

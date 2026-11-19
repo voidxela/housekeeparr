@@ -298,3 +298,32 @@ func TestConfiguredNotificationBoundsControlBatchingAndBackoff(t *testing.T) {
 		}
 	}
 }
+
+func TestFailedAttemptsObeyHourlyLimitAcrossRestart(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	st := open(t, dir)
+	var receiver sink
+	receiver.status = http.StatusServiceUnavailable
+	srv := receiver.server(t)
+	tg := []config.NotifyConfig{target(2)}
+	settings := config.Defaults().Notifications
+	urls := map[string]string{"hook": srv.URL}
+	enqueue(t, st, tg, findings.Result{Opened: []domain.Finding{
+		finding(1, domain.SeverityError), finding(2, domain.SeverityError), finding(3, domain.SeverityError),
+	}}, t0)
+	if rep, err := Deliver(ctx, st, tg, settings, urls, nil, t0); err != nil || rep.Failed != 2 || rep.Held != 1 {
+		t.Fatalf("failed sends exceeded the hourly limit: %+v, %v", rep, err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	st = open(t, dir)
+	defer st.Close()
+	if rep, err := Deliver(ctx, st, tg, settings, urls, nil, t0.Add(30*time.Minute)); err != nil || rep.Failed != 0 || rep.Held != 3 {
+		t.Fatalf("restart lost failed attempts: %+v, %v", rep, err)
+	}
+	if rep, err := Deliver(ctx, st, tg, settings, urls, nil, t0.Add(61*time.Minute)); err != nil || rep.Failed != 2 || rep.Held != 1 {
+		t.Fatalf("hourly capacity did not return: %+v, %v", rep, err)
+	}
+}

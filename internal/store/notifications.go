@@ -87,12 +87,16 @@ func (s *Store) PendingNotifications(ctx context.Context, target string) (int, e
 	return n, err
 }
 
-// SentNotifications counts deliveries to a target since a time; the hourly
-// limit is enforced from this persisted count, so restarts do not reset it.
-func (s *Store) SentNotifications(ctx context.Context, target string, since time.Time) (int, error) {
-	var n int
-	err := s.r.QueryRowContext(ctx, `SELECT count(*) FROM notification_events WHERE target=? AND sent_at >= ?`, target, ms(since)).Scan(&n)
-	return n, err
+// ReserveNotificationAttempt spends hourly capacity before a webhook request.
+func (t *Tx) ReserveNotificationAttempt(target string, at time.Time, maxPerHour int) (bool, error) {
+	res, err := t.exec(`INSERT INTO notification_attempts(target, attempted_at)
+		SELECT ?, ? WHERE (SELECT count(*) FROM notification_attempts WHERE target=? AND attempted_at >= ?) < ?`,
+		target, ms(at), target, ms(at.Add(-time.Hour)), maxPerHour)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
 }
 
 // RecentNotifications lists the latest events across targets.

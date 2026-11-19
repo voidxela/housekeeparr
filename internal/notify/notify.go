@@ -130,6 +130,7 @@ type Report struct {
 // skipped (its events age out).
 func Deliver(ctx context.Context, st *store.Store, targets []config.NotifyConfig, settings config.NotificationSettings, urls map[string]string, client *http.Client, now time.Time) (Report, error) {
 	var rep Report
+	started := time.Now()
 	if err := st.Write(ctx, func(tx *store.Tx) error {
 		var err error
 		rep.Dropped, err = tx.ExpireNotifications(now, settings.MaxAge.Duration)
@@ -150,18 +151,23 @@ func Deliver(ctx context.Context, st *store.Store, targets []config.NotifyConfig
 		if u == "" {
 			continue
 		}
-		sent, err := st.SentNotifications(ctx, tg.ID, now.Add(-time.Hour))
-		if err != nil {
-			return rep, err
-		}
 		due, err := st.DueNotifications(ctx, tg.ID, now, 100)
 		if err != nil {
 			return rep, err
 		}
-		for _, n := range due {
-			if sent >= tg.MaxPerHour {
-				rep.Held++
-				continue
+		for i, n := range due {
+			var reserved bool
+			at := now.Add(time.Since(started))
+			if err := st.Write(ctx, func(tx *store.Tx) error {
+				var err error
+				reserved, err = tx.ReserveNotificationAttempt(tg.ID, at, tg.MaxPerHour)
+				return err
+			}); err != nil {
+				return rep, err
+			}
+			if !reserved {
+				rep.Held += len(due) - i
+				break
 			}
 			derr := send(ctx, &webhookClient, tg.Format, u, n)
 			err := st.Write(ctx, func(tx *store.Tx) error {
@@ -182,7 +188,6 @@ func Deliver(ctx context.Context, st *store.Store, targets []config.NotifyConfig
 				return rep, err
 			}
 			if derr == nil {
-				sent++
 				rep.Sent++
 			} else {
 				rep.Failed++
