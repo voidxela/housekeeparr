@@ -186,9 +186,17 @@ func TestDaemonRecovery(t *testing.T) {
 	}
 	read := func() state {
 		t.Helper()
-		st, err := store.Open(ctx, stateDir, store.Options{ReadOnly: true})
-		if err != nil {
-			t.Fatal(err)
+		// The worker creates the database during its first cycle, which
+		// starts after up to the default 30 s jitter.
+		var st *store.Store
+		for deadline := time.Now().Add(3 * time.Minute); ; {
+			if st, err = store.Open(ctx, stateDir, store.Options{ReadOnly: true}); err == nil {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal(err)
+			}
+			time.Sleep(5 * time.Second)
 		}
 		defer st.Close()
 		s := state{assess: map[string]*policy.Assessment{}, finding: map[string]domain.Finding{}, eval: map[string]*store.AutomationEvaluation{},
