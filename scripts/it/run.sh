@@ -153,6 +153,7 @@ prefetch() {
 }
 if [ "$NETNS" = 1 ] && [ -z "${HK_IT_IN_NETNS:-}" ]; then
 	command -v unshare >/dev/null || { echo "unshare is required for network isolation (or pass --no-netns)" >&2; exit 2; }
+	(cd "$ROOT" && go mod download)
 	prefetch
 	# -m: a private mount namespace, so the managers' metadata hosts can be
 	# redirected to the loopback stand-in by bind-mounting a private hosts
