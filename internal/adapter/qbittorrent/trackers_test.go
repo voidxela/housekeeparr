@@ -269,3 +269,21 @@ func TestTrackerRejectionWithUncontactedTrackerIsUnknown(t *testing.T) {
 		}
 	}
 }
+
+func TestMalformedTrackerEvidenceCannotQualifyRejection(t *testing.T) {
+	const h = "0000000000000000000000000000000000000001"
+	for name, body := range map[string]string{
+		"missing tracker identity": `[{"status":5,"msg":"Unregistered torrent"}]`,
+		"trailing value":           `[{"url":"https://tracker.example/announce","status":5,"msg":"Unregistered torrent"}] {}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := setup(t, &fakeQBit{
+				version: "v5.3.0", webapi: "2.11.4", user: "admin", pass: "pw",
+				trackers: map[string][]byte{h: []byte(body)},
+			})
+			if got := c.readSourceFailure(context.Background(), h); got.IsKnown() {
+				t.Fatalf("malformed tracker payload was trusted: %+v", got)
+			}
+		})
+	}
+}

@@ -4,7 +4,6 @@
 package qbittorrent
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -289,8 +288,7 @@ func (c *Client) ListTransfers(ctx context.Context) (domain.TransferSnapshot, er
 	// Only an explicit JSON array (possibly empty) is a complete listing;
 	// null is malformed.
 	var list *[]torrent
-	dec := json.NewDecoder(bytes.NewReader(body))
-	if err := dec.Decode(&list); err != nil {
+	if err := json.Unmarshal(body, &list); err != nil {
 		return domain.TransferSnapshot{}, httpx.Malformed("qbittorrent.torrents_info", err)
 	}
 	if list == nil {
@@ -338,8 +336,7 @@ func (c *Client) readSourceFailure(ctx context.Context, hash string) domain.Sign
 		return domain.UnknownValue[domain.SourceFailure]("tracker list could not be read: " + string(adapter.ClassOf(err)))
 	}
 	var list *[]trackerEntry
-	dec := json.NewDecoder(bytes.NewReader(body))
-	if err := dec.Decode(&list); err != nil {
+	if err := json.Unmarshal(body, &list); err != nil {
 		err = httpx.Malformed("qbittorrent.torrents_trackers", err)
 		return domain.UnknownValue[domain.SourceFailure]("tracker list could not be read: " + string(adapter.ClassOf(err)))
 	}
@@ -357,6 +354,11 @@ func classifyTrackers(entries []trackerEntry) domain.Signal[domain.SourceFailure
 	incomplete := false
 	for _, e := range entries {
 		if strings.HasPrefix(e.URL, "** [") {
+			continue
+		}
+		tracker, err := url.Parse(e.URL)
+		if err != nil || tracker.Scheme == "" || tracker.Host == "" {
+			incomplete = true
 			continue
 		}
 		realCount++
@@ -379,6 +381,9 @@ func classifyTrackers(entries []trackerEntry) domain.Signal[domain.SourceFailure
 		}
 	}
 	if realCount == 0 {
+		if incomplete {
+			return domain.UnknownValue[domain.SourceFailure]("some tracker entries lack a usable identity")
+		}
 		return domain.KnownValue(domain.SourceNoFailure)
 	}
 	if hasErrMsg {
