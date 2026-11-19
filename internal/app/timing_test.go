@@ -24,6 +24,7 @@ func TestDefaultTimingBoundaries(t *testing.T) {
 	}{
 		{"every poll", nil, 120 * time.Minute},
 		{"one missed poll", func(w *world) { w.clock.Advance(10 * time.Minute) }, 130 * time.Minute},
+		{"worker restart", func(w *world) { w.restart() }, 120 * time.Minute},
 		{"30-minute outage", func(w *world) { w.clock.Advance(20 * time.Minute) }, 170 * time.Minute}, // streak restarts at t0+80m
 	}
 	for _, tc := range cases {

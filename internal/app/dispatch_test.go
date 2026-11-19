@@ -79,6 +79,9 @@ type world struct {
 	st      *store.Store
 	eng     *engine.Engine
 	svc     *app.Service
+	// restart replaces the engine and service as a new worker process on
+	// the same state store would (a new run, no monotonic continuity).
+	restart func()
 }
 
 func newWorld(t *testing.T, mode string, acquisitions int) *world {
@@ -127,6 +130,16 @@ func newWorldWith(t *testing.T, mode string, acquisitions int, extra string) *wo
 	ex := workflow.FromConnections(conns.Clients, conns.Managers, cfg.ActionTiming)
 	ex.Settle, ex.Poll = 50*time.Millisecond, 5*time.Millisecond
 	w.svc.SetExecutor(ex)
+	w.restart = func() {
+		eng, err := engine.New(context.Background(), engine.Options{Config: cfg, Store: w.st, Conns: conns, Clock: w.clock,
+			Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), RunKind: "test", Version: "test"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		w.eng = eng
+		w.svc = app.New(w.st, cfg, w.clock.Now, w.eng)
+		w.svc.SetExecutor(ex)
+	}
 	saved := action.Tested
 	action.Tested = []action.TestedWorkflow{
 		{Workflow: policy.WorkflowNoProgressRecovery, Manager: adapter.KindSonarr, ManagerVersion: "0.0.0-fake", Client: adapter.KindQBittorrent, ClientVersion: "0.0.0-fake"},
