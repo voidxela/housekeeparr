@@ -13,8 +13,8 @@ implemented.
 ## Review and remediation — 2026-11-19
 
 The continuation uses the branch based on `origin/dev` at `3d08077`.
-The latest Go source checkpoint is `0eae874`, tested locally as
-`36ebe48` with an identical Git tree. The [run record](compatibility.md#review-continuation-runs)
+The latest Go source checkpoint is `63cda18`, tested locally as
+`cfe3cff` with an identical Git tree. The [run record](compatibility.md#review-continuation-runs)
 lists the exact applications, fixture selections, and outcomes.
 
 | Finding and fix | Published commits |
@@ -25,7 +25,7 @@ lists the exact applications, fixture selections, and outcomes.
 | One manager's full wanted list could crowd out search-ready items elsewhere. Select from fresh, available, due records. Apply a separate quota to each manager even when earlier partial snapshots remain in the store. | `2588577`, `0eae874` |
 | Manual failures could hide relevant automatic refusals. A refusal from a manager could hold the associated healthy client, while proactive search could still send requests to the affected manager. Use the actual failed step and share manager holds across automatic workflows. | `7da4149` |
 | Tracker read limits could silently leave some active downloads unassessed for source rejection. Report the deferred reads as a coverage finding and tell the operator how to raise the client-specific limit. Resolve on a complete listing with no deferred checks. | `f695bde` |
-| Pending webhook events could outlive their limit after their target was removed. Failed attempts also bypassed hourly pacing. Expire outbox events without an active endpoint and reserve durable per-target request capacity before delivery. Migration 0019 preserves prior verified delivery usage and has a schema-18 upgrade test. | `bb70fa6`, `7343205` |
+| Pending webhook events could outlive their limit after their target was removed. Failed attempts also bypassed hourly pacing. Expire outbox events without an active endpoint and reserve durable per-target request capacity before delivery. Migration 0019 preserves prior verified delivery usage and has a schema-18 upgrade test. Activity displays the configured bounds, and exhausting delivery records the last attempt. | `bb70fa6`, `7343205`, `63cda18` |
 | The fixture runner could start managers before discovering that its isolated test process had no Go modules. Fetch modules before creating the namespace and exercise startup with an empty hosted module cache. Require Deluge to verify all preloaded full payloads before mutating its test fixtures. | `2fe6fe1`, `31bf37c` |
 
 ### Trial settings and unattended behavior
@@ -52,6 +52,26 @@ evidence reports a blocker. Incomplete wanted listings and exhausted
 tracker reads have operator-visible findings. A default-length
 production trial remains the evidence needed to evaluate real recovery
 latency and the effect of correlated stalls on small installations.
+
+### Verification
+
+- On Linux amd64 kernel 6.18.57 with Go 1.27.4, build, vet, gofmt,
+  uncached tests, and the static binary check passed at `cfe3cff`.
+  A fixed-address mapping at `1<<46` succeeded and one at `1<<47`
+  returned ENOMEM, consistent with a 48-bit user virtual address space.
+- The initial unselected qBittorrent 5.3.0 hosted run passed all 24
+  acceptance checks. Both Transmission lines passed the eight-test
+  selection at `12475e3`. The rTorrent rerun passed all eight at
+  `3f31547`, and the Transmission 4.1.4 follow-up passed all three.
+- Retained disposable fixtures filled the workspace's 4.9 GB `/tmp`
+  mount. The managers rejected grabs while free space was below their
+  100 MiB import floor. Go also reported explicit linker and SQLite
+  disk-full errors. Completed fixture directories and their logs were
+  preserved, and the subsequent Go run used scratch on the larger
+  workspace volume.
+- The [latest hosted run](https://github.com/voidxela/housekeeparr/actions/runs/44549087328)
+  retests qBittorrent and Deluge in serial at `63cda18`. Final race and
+  the recovered Transmission 4.0.6 follow-up are pending at this checkpoint.
 
 ## Review and remediation — 2026-11-17
 

@@ -656,15 +656,19 @@ a published commit in parentheses identifies the same Git tree.
 
 | Date | Commit | Runner, client, and selection | Result |
 | --- | --- | --- | --- |
-| 2026-11-17 | `f4cbfac` | GitHub-hosted Ubuntu 24.04 amd64, unselected qBittorrent 5.3.0 with both managers | Setup stopped before instances started. The isolated process could not access the runner-home fixture paths. |
+| 2026-11-17 | `f4cbfac` | GitHub-hosted Ubuntu 24.04 amd64, unselected qBittorrent 5.3.0 with both managers | Setup stopped before instances started. The isolated process could not access the runner-home fixture paths. [Run 44201050886](https://github.com/voidxela/housekeeparr/actions/runs/44201050886) |
 | 2026-11-17 | `a3c3037` | GitHub-hosted Ubuntu 24.04 amd64, unselected qBittorrent 5.3.0 with both managers | **24 of 24 passed**, including all five tracker-dependent cases, automatic no-progress and preserved-data recovery, both proactive searches, and the Sonarr pack clearance and restart. [Run 44201215456](https://github.com/voidxela/housekeeparr/actions/runs/44201215456) |
 | 2026-11-19 | `12475e3` | Linux amd64 workspace, selected rTorrent 0.9.8 / libtorrent 0.13.8 via lighttpd 1.4.79 | Fixtures started. The unprimed Go module cache blocked compilation inside the namespace. All eight required tests failed to run. |
 | 2026-11-19 | `12475e3` | Linux amd64 workspace, selected Deluge 2.2.0 / libtorrent 2.0.11.0 | **2 of 8 passed.** Both managers accepted the proactive searches and produced grabs. Deluge reported the new torrents paused at zero verified bytes, which prevented tracker rejection observations and the pack's imports. |
 | 2026-11-19 | `12475e3` | Linux amd64 workspace, selected Transmission 4.0.6 (38c164933e) | **8 of 8 passed**, including selected public, private and automatic preserved-data workflows, two proactive searches, and the Sonarr pack clearance and restart. |
 | 2026-11-19 | `12475e3` | Linux amd64 workspace, selected Transmission 4.1.4 (a6d907d9ea) | **8 of 8 passed**, including the same selected workflow contracts through legacy RPC. |
+| 2026-11-19 | `3f31547` (published as `1dd05f1`) | Linux amd64 workspace, selected rTorrent 0.9.8 / libtorrent 0.13.8 via lighttpd 1.4.79 | **8 of 8 passed.** Included both managers' preserved-data and proactive searches, the Sonarr pack restart, and automatic preserved-data recovery. |
+| 2026-11-19 | `3f31547` (`1dd05f1`) | Linux amd64 workspace, three-test selection for Transmission 4.0.6 (38c164933e) | **0 of 3 passed.** The scratch mount had about 47 MiB free. The manager's 100 MiB import floor rejected the search and pack fixture releases. |
+| 2026-11-19 | `3f31547` (`1dd05f1`) | Linux amd64 workspace, three-test selection for Transmission 4.1.4 (a6d907d9ea) | **3 of 3 passed** after completed disposable fixtures were archived to the larger workspace volume. |
 
 The eight-test selection above is
 `--only 'PartialPackWorkflow|ProactiveSearch|PreservedDataFailure'`.
+The three-test selection is `--only 'PartialPackWorkflow|ProactiveSearch'`.
 For Deluge, a separate loopback-namespace probe with the same pinned
 libtorrent 2.0.11.0 produced `Operation not permitted` opening an
 `AF_NETLINK` socket, a session-paused alert, and no listening socket. This
