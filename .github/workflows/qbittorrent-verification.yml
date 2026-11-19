@@ -1,4 +1,4 @@
-name: qBittorrent release verification
+name: Released torrent client verification
 
 on:
   push:
@@ -12,7 +12,7 @@ permissions:
 jobs:
   isolated-integration:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Check out the tested commit
         run: |
@@ -29,9 +29,26 @@ jobs:
           tar -xzf "$HK_VERIFY_ROOT/go.tar.gz" -C "$HK_VERIFY_ROOT"
           printf '%s\n' "$HK_VERIFY_ROOT/go/bin" >> "$GITHUB_PATH"
           printf 'GOMODCACHE=%s\nGOCACHE=%s\nHOUSEKEEPARR_IT_CACHE=%s\n' "$HK_VERIFY_ROOT/gomod" "$HK_VERIFY_ROOT/gobuild" "$HK_VERIFY_ROOT/fixtures" >> "$GITHUB_ENV"
-      - name: Verify both managers in a loopback-only namespace
+      - name: Verify qBittorrent with both managers
         run: |
           cd "$HK_VERIFY_ROOT"
           test ! -e "$GOMODCACHE"
           sudo chown -R root:root "$HK_VERIFY_ROOT"
           sudo --preserve-env=PATH,GOMODCACHE,GOCACHE,HOUSEKEEPARR_IT_CACHE env "PATH=$PATH" scripts/it/run.sh --clients qbittorrent --managers sonarr,radarr --qbt 5.3.0
+      - name: Verify Deluge with both managers
+        run: |
+          # The pinned Deluge Python extension uses the Debian 3.13 ABI.
+          # The disposable container can create the harness's nested namespaces.
+          docker run --rm --privileged \
+            --mount "type=bind,src=$HK_VERIFY_ROOT,dst=/verify" \
+            --workdir /verify \
+            debian:trixie-slim@sha256:7378260c0a098d27ac206225db5e7d92b8c7c84ea7afccc86eeb513756bbd392 \
+            bash -euc '
+              apt-get update
+              apt-get install -y --no-install-recommends ca-certificates curl libicu76 procps python3 util-linux xz-utils
+              export PATH="/verify/go/bin:$PATH"
+              export GOMODCACHE=/verify/gomod GOCACHE=/verify/gobuild HOUSEKEEPARR_IT_CACHE=/verify/fixtures
+              python3 --version
+              go version
+              scripts/it/run.sh --clients deluge --manager-client deluge --managers sonarr,radarr --only "PartialPackWorkflow|ProactiveSearch|PreservedDataFailure"
+            '
