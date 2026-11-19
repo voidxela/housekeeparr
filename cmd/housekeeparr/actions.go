@@ -156,7 +156,7 @@ func cmdAct(args []string, out, errOut io.Writer) int {
 		fmt.Fprintln(errOut, err)
 		return exitUsage
 	}
-	svc.SetExecutor(workflow.FromConnections(conns.Clients, conns.Managers))
+	svc.SetExecutor(workflow.FromConnections(conns.Clients, conns.Managers, svc.Config().ActionTiming))
 	pv, res, err := svc.Act(context.Background(), id, app.ActorCLI)
 	if errors.Is(err, app.ErrNotFound) {
 		fmt.Fprintf(errOut, "finding %d not found\n", id)

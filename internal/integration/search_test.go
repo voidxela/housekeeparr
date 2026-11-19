@@ -134,7 +134,7 @@ func runProactiveSearch(t *testing.T, a arrAPI, section string, e managedEntry, 
 	defer func() { action.Tested = saved }()
 
 	svc := app.New(st, cfg, nil, eng)
-	svc.SetExecutor(workflow.FromConnections(conns.Clients, conns.Managers))
+	svc.SetExecutor(workflow.FromConnections(conns.Clients, conns.Managers, cfg.ActionTiming))
 	pv, err := svc.PreviewSearch(ctx, section, key, action.OriginAutomatic)
 	if err != nil {
 		t.Fatal(err)

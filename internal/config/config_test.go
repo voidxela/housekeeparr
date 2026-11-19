@@ -1119,3 +1119,16 @@ require_pieces_unavailable = false
 		t.Errorf("override source = %+v", s)
 	}
 }
+
+func TestActionTimingsCanBeConfigured(t *testing.T) {
+	const raw = `
+version = 1
+[action_timing]
+preview_ttl = "2m"
+settle = "20s"
+poll = "200ms"
+`
+	if _, _, err := Parse([]byte(raw), ""); err != nil {
+		t.Fatal(err)
+	}
+}

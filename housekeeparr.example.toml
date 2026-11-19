@@ -149,6 +149,12 @@ follow_window = "1h"
 initial_backoff = "24h"
 max_backoff = "720h"
 
+# Preview validity and how long to observe an accepted workflow write.
+[action_timing]
+preview_ttl = "5m"
+settle = "15s"
+poll = "1s"
+
 # Webhook delivery and batching bounds across all targets.
 [notifications]
 digest_threshold = 5

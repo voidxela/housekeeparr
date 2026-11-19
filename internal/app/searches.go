@@ -44,7 +44,7 @@ func (s *Service) PreviewSearch(ctx context.Context, managerID, key string, orig
 		return nil, err
 	}
 	now := s.now()
-	in := action.SearchPlanInput{Item: *it, Origin: origin, ConfigRevision: s.cfg.Revision, Tested: action.Tested, Now: now, Limits: s.cfg.Limits(), Timing: s.cfg.Search}
+	in := action.SearchPlanInput{Item: *it, Origin: origin, ConfigRevision: s.cfg.Revision, Tested: action.Tested, Now: now, Limits: s.cfg.Limits(), Timing: s.cfg.Search, PreviewTTL: s.cfg.ActionTiming.PreviewTTL.Duration}
 	in.Scope = policy.Subject{ManagerID: managerID, ContentKey: key}
 	var packScopeKnown bool
 	if it.Origin == "pack" {
@@ -400,7 +400,7 @@ func (s *Service) coverageNote(ctx context.Context, managerID string, at time.Ti
 // previewPack plans the clearance of a partial season pack.
 func (s *Service) previewPack(ctx context.Context, f *domain.Finding, origin action.Origin, out *ActionPreview) (*ActionPreview, error) {
 	now := s.now()
-	in := action.PackPlanInput{Finding: *f, Origin: origin, ConfigRevision: s.cfg.Revision, Tested: action.Tested, Now: now}
+	in := action.PackPlanInput{Finding: *f, Origin: origin, ConfigRevision: s.cfg.Revision, Tested: action.Tested, Now: now, PreviewTTL: s.cfg.ActionTiming.PreviewTTL.Duration}
 	var err error
 	in.Scope, err = s.packScope(ctx, f.Subject.ManagerID, f.Subject.ClientID, f.Subject.NativeID)
 	if err != nil {

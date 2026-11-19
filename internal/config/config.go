@@ -54,16 +54,17 @@ const (
 
 // Config is the validated configuration.
 type Config struct {
-	Version    int              `toml:"version"`
-	Mode       Mode             `toml:"mode"`
-	Automation AutomationConfig `toml:"automation"`
-	State      StateConfig      `toml:"state"`
-	Web        WebConfig        `toml:"web"`
-	Polling    PollingConfig    `toml:"polling"`
-	Search     SearchConfig     `toml:"search"`
-	Retention  RetentionConfig  `toml:"retention"`
-	Log        LogConfig        `toml:"log"`
-	Policy     PolicyOverrides  `toml:"policy"`
+	Version      int                `toml:"version"`
+	Mode         Mode               `toml:"mode"`
+	Automation   AutomationConfig   `toml:"automation"`
+	State        StateConfig        `toml:"state"`
+	Web          WebConfig          `toml:"web"`
+	Polling      PollingConfig      `toml:"polling"`
+	Search       SearchConfig       `toml:"search"`
+	ActionTiming ActionTimingConfig `toml:"action_timing"`
+	Retention    RetentionConfig    `toml:"retention"`
+	Log          LogConfig          `toml:"log"`
+	Policy       PolicyOverrides    `toml:"policy"`
 
 	Rules      []RuleConfig      `toml:"rule"`
 	Overrides  []OverrideConfig  `toml:"override"`
@@ -83,6 +84,13 @@ type Config struct {
 	Path string `toml:"-"`
 	// Revision is a digest of the effective (non-secret) configuration.
 	Revision string `toml:"-"`
+}
+
+// ActionTimingConfig bounds preview and executor observation windows.
+type ActionTimingConfig struct {
+	PreviewTTL Duration `toml:"preview_ttl"`
+	Settle     Duration `toml:"settle"`
+	Poll       Duration `toml:"poll"`
 }
 
 // SearchConfig controls pacing and observation of Housekeeparr searches.
@@ -444,6 +452,9 @@ func Defaults() Config {
 			MaxConcurrency: 4,
 			Jitter:         Duration{30 * time.Second},
 		},
+		ActionTiming: ActionTimingConfig{
+			PreviewTTL: Duration{5 * time.Minute}, Settle: Duration{15 * time.Second}, Poll: Duration{time.Second},
+		},
 		Search: SearchConfig{
 			Spacing: Duration{15 * time.Minute}, MissingInterval: Duration{time.Hour},
 			MissingFreshness: Duration{2 * time.Hour}, FollowWindow: Duration{time.Hour},
@@ -530,6 +541,16 @@ func validate(cfg *Config, md toml.MetaData) []Problem {
 	validateUnknownPrivacyMap(errf, "automation.unknown_privacy", cfg.Automation.UnknownPrivacy)
 	validatePrivateRecovery(errf, "automation.private_recovery", cfg.Automation.PrivateRecovery)
 	validateLimits(errf, cfg)
+	timing := cfg.ActionTiming
+	if timing.PreviewTTL.Duration <= 0 {
+		errf("action_timing.preview_ttl", "must be positive")
+	}
+	if timing.Settle.Duration <= 0 {
+		errf("action_timing.settle", "must be positive")
+	}
+	if timing.Poll.Duration <= 0 || timing.Poll.Duration > timing.Settle.Duration {
+		errf("action_timing.poll", "must be positive and at most action_timing.settle")
+	}
 	search := cfg.Search
 	for _, field := range []struct {
 		name  string

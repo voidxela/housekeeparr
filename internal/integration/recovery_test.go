@@ -499,7 +499,7 @@ func runRecoveryMode(t *testing.T, a arrAPI, mgr recoveryManager, me managedEntr
 	if !p.Eligible() {
 		t.Fatalf("proposal not eligible: %+v", p.Blockers())
 	}
-	ex := workflow.FromConnections(conns.Clients, conns.Managers)
+	ex := workflow.FromConnections(conns.Clients, conns.Managers, cfg.ActionTiming)
 	// What the live check will see of the manager's redownload settings and
 	// this grab's release source (real values, logged as evidence).
 	if lv, err := ex.Live(ctx, *p); err == nil {

@@ -348,7 +348,7 @@ func clearPack(t *testing.T, sid int, e managedEntry, missingEp int64) {
 	}
 	var mp *adapter.Probe
 	svc := app.New(st, cfg, nil, eng)
-	svc.SetExecutor(workflow.FromConnections(conns.Clients, conns.Managers))
+	svc.SetExecutor(workflow.FromConnections(conns.Clients, conns.Managers, cfg.ActionTiming))
 	saved := action.Tested
 	defer func() { action.Tested = saved }()
 	deadline := time.Now().Add(4 * time.Minute)

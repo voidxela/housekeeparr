@@ -15,6 +15,7 @@ import (
 	"github.com/voidxela/housekeeparr/internal/action"
 	"github.com/voidxela/housekeeparr/internal/adapter"
 	"github.com/voidxela/housekeeparr/internal/adapter/arr"
+	"github.com/voidxela/housekeeparr/internal/config"
 	"github.com/voidxela/housekeeparr/internal/domain"
 	"github.com/voidxela/housekeeparr/internal/policy"
 	"github.com/voidxela/housekeeparr/internal/store"
@@ -52,8 +53,8 @@ type Recovery struct {
 
 // FromConnections returns an executor over the connections that support
 // the recovery operations.
-func FromConnections(clients []adapter.DownloadClient, managers []adapter.MediaManager) *Recovery {
-	r := &Recovery{Managers: map[string]Manager{}, Clients: map[string]Client{}}
+func FromConnections(clients []adapter.DownloadClient, managers []adapter.MediaManager, timing config.ActionTimingConfig) *Recovery {
+	r := &Recovery{Managers: map[string]Manager{}, Clients: map[string]Client{}, Settle: timing.Settle.Duration, Poll: timing.Poll.Duration}
 	for _, c := range clients {
 		if w, ok := c.(Client); ok {
 			r.Clients[c.ID()] = w

@@ -234,7 +234,7 @@ func cmdRun(args []string, out, errOut io.Writer) int {
 	// suspected restore holds all writes.
 	{
 		jsvc := app.New(st, cfg, nil, nil)
-		jsvc.SetExecutor(workflow.FromConnections(conns.Clients, conns.Managers))
+		jsvc.SetExecutor(workflow.FromConnections(conns.Clients, conns.Managers, cfg.ActionTiming))
 		rep, err := jsvc.Reconcile(ctx)
 		if err != nil {
 			fmt.Fprintln(errOut, "action journal reconciliation:", err)
@@ -274,7 +274,7 @@ func cmdRun(args []string, out, errOut io.Writer) int {
 	// One service for the web interface and automatic dispatch, so manual
 	// and automatic execution are serialised by the same lock.
 	svc := app.New(st, cfg, nil, eng)
-	svc.SetExecutor(workflow.FromConnections(conns.Clients, conns.Managers))
+	svc.SetExecutor(workflow.FromConnections(conns.Clients, conns.Managers, cfg.ActionTiming))
 	dispatch := func(ctx context.Context, rep engine.CycleReport) {
 		r, err := svc.DispatchAutomatic(ctx, rep.Fresh())
 		switch {

@@ -124,7 +124,7 @@ func newWorldWith(t *testing.T, mode string, acquisitions int, extra string) *wo
 		t.Fatal(err)
 	}
 	w.svc = app.New(w.st, cfg, w.clock.Now, w.eng)
-	ex := workflow.FromConnections(conns.Clients, conns.Managers)
+	ex := workflow.FromConnections(conns.Clients, conns.Managers, cfg.ActionTiming)
 	ex.Settle, ex.Poll = 50*time.Millisecond, 5*time.Millisecond
 	w.svc.SetExecutor(ex)
 	saved := action.Tested
@@ -1701,5 +1701,45 @@ func TestMissingSearchWithoutRetainedReceiptBecomesUnverified(t *testing.T) {
 	record, err := w.st.MissingRecord(ctx, "sonarr", "episode:101")
 	if err != nil || record == nil || record.State != store.MissingEndUnknown {
 		t.Fatalf("missing search outcome = %+v, error = %v", record, err)
+	}
+}
+
+func TestConfiguredPreviewTTLControlsPackAndSearchExpiry(t *testing.T) {
+	w := packWorld(t, nil, `
+[action_timing]
+preview_ttl = "2m"
+`)
+	ctx := context.Background()
+	for range 6 {
+		w.clock.Advance(10 * time.Minute)
+		if rep := w.eng.Cycle(ctx, nil); rep.StoreError != "" {
+			t.Fatal(rep.StoreError)
+		}
+	}
+	f, err := w.st.Findings(ctx, store.FindingFilter{Type: domain.FindingPartialPack})
+	if err != nil || len(f) != 1 {
+		t.Fatalf("pack finding: %+v, %v", f, err)
+	}
+	p, err := w.svc.Preview(ctx, f[0].ID, action.OriginAutomatic)
+	if err != nil || p.Proposal == nil {
+		t.Fatalf("pack preview: %+v, %v", p, err)
+	}
+	if got := p.Proposal.ExpiresAt.Sub(w.clock.Now()); got != 2*time.Minute {
+		t.Fatalf("pack preview TTL %s", got)
+	}
+	if err := w.st.Write(ctx, func(tx *store.Tx) error {
+		_, err := tx.SaveMissingSnapshot(domain.MissingSnapshot{ManagerID: "sonarr", Items: []domain.MissingItem{
+			fake.MissingEpisode(203, 1, "Missing pack episode", t0.Add(-72*time.Hour)),
+		}}, w.clock.Now())
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s, err := w.svc.PreviewSearch(ctx, "sonarr", "episode:203", action.OriginAutomatic)
+	if err != nil || s.Proposal == nil {
+		t.Fatalf("search preview: %+v, %v", s, err)
+	}
+	if got := s.Proposal.ExpiresAt.Sub(w.clock.Now()); got != 2*time.Minute {
+		t.Fatalf("search preview TTL %s", got)
 	}
 }
