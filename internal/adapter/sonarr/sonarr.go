@@ -279,6 +279,15 @@ func (c *Client) Missing(ctx context.Context, maxItems int) (domain.MissingSnaps
 	})
 }
 
+// MissingFrom is Missing starting at a page of the list (windowed reads).
+func (c *Client) MissingFrom(ctx context.Context, maxItems, startPage int) (domain.MissingSnapshot, error) {
+	now := time.Now().UTC()
+	q := url.Values{"sortKey": {"episodes.airDateUtc"}, "sortDirection": {"descending"}, "includeSeries": {"true"}}
+	return c.api.MissingFrom(ctx, c.id, q, maxItems, startPage, func(raw json.RawMessage) (domain.MissingItem, error) {
+		return normalizeMissing(raw, now)
+	})
+}
+
 // SearchEpisodes triggers a Sonarr EpisodeSearch command for 1 to 10 episode IDs.
 func (c *Client) SearchEpisodes(ctx context.Context, episodeIDs []int64) (int64, error) {
 	return c.api.Search(ctx, "EpisodeSearch", "episodeIds", episodeIDs)

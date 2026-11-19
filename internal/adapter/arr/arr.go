@@ -217,22 +217,38 @@ func (c *Client) Queue(ctx context.Context, managerID string, extra url.Values, 
 }
 
 // Missing reads monitored, missing items from /api/v3/wanted/missing within
-// configured pagination bounds and maxItems (when maxItems > 0). Missing or
-// null envelope fields are malformed responses. If normalize returns a zero
-// ContentID with nil error, that record is skipped (for example when hasFile is
-// true) while still counting toward totalRecords. Complete is true only when
-// all reported records were read, totalRecords did not change between pages,
-// and no record ID repeated.
+// configured pagination bounds and maxItems (when maxItems > 0), from the
+// first page. Missing or null envelope fields are malformed responses. If
+// normalize returns a zero ContentID with nil error, that record is skipped
+// (for example when hasFile is true) while still counting toward
+// totalRecords. Complete is true only when all reported records were read,
+// totalRecords did not change between pages, and no record ID repeated.
 func (c *Client) Missing(ctx context.Context, managerID string, extra url.Values, maxItems int, normalize func(json.RawMessage) (domain.MissingItem, error)) (domain.MissingSnapshot, error) {
+	return c.MissingFrom(ctx, managerID, extra, maxItems, 1, normalize)
+}
+
+// MissingFrom is Missing starting at startPage, so a list longer than the
+// read bound can be read in rotating windows. The snapshot's NextPage is
+// where the following window starts: 1 once this read reached the end of
+// the list. Only a read from the first page to the end can be complete.
+// The page size is capped at maxItems so every window advances.
+func (c *Client) MissingFrom(ctx context.Context, managerID string, extra url.Values, maxItems, startPage int, normalize func(json.RawMessage) (domain.MissingItem, error)) (domain.MissingSnapshot, error) {
 	op := c.app + ".missing"
-	snap := domain.MissingSnapshot{ManagerID: managerID, Complete: true}
+	if startPage < 1 {
+		startPage = 1
+	}
+	size := c.PageSize
+	if maxItems > 0 && maxItems < size {
+		size = maxItems
+	}
+	snap := domain.MissingSnapshot{ManagerID: managerID, Complete: true, StartPage: startPage, NextPage: 1, PageSize: size}
 	seen := map[int64]bool{}
 	total, rows := -1, 0
-	truncated := false
-	for p := 1; p <= c.MaxPages; p++ {
+	truncated, ended := false, false
+	for p := startPage; p < startPage+c.MaxPages; p++ {
 		q := url.Values{
 			"page":          {strconv.Itoa(p)},
-			"pageSize":      {strconv.Itoa(c.PageSize)},
+			"pageSize":      {strconv.Itoa(size)},
 			"sortKey":       {"id"},
 			"sortDirection": {"ascending"},
 			"monitored":     {"true"},
@@ -247,16 +263,22 @@ func (c *Client) Missing(ctx context.Context, managerID string, extra url.Values
 		if err := pg.validateFor("missing"); err != nil {
 			return domain.MissingSnapshot{}, httpx.Malformed(op, err)
 		}
-		if p == 1 {
+		if p == startPage {
 			snap.CollectedAt = time.Now().UTC()
 			total = *pg.TotalRecords
+			// The list shrank below the window's start: read from the
+			// beginning now rather than spend this read on nothing.
+			if startPage > 1 && total <= (startPage-1)*size {
+				return c.MissingFrom(ctx, managerID, extra, maxItems, 1, normalize)
+			}
 		} else if *pg.TotalRecords != total {
 			snap.Complete = false
 		}
 		records := *pg.Records
 		for _, raw := range records {
 			if maxItems > 0 && len(snap.Items) >= maxItems {
-				truncated = true
+				// Mid-page: the next window starts on this page again.
+				truncated, snap.NextPage = true, p
 				break
 			}
 			rows++
@@ -281,16 +303,23 @@ func (c *Client) Missing(ctx context.Context, managerID string, extra url.Values
 			it.ManagerID = managerID
 			snap.Items = append(snap.Items, it)
 		}
-		if truncated || len(records) < c.PageSize || rows >= total {
+		if truncated {
 			break
 		}
-		if (maxItems > 0 && len(snap.Items) >= maxItems) || p == c.MaxPages {
-			truncated = true
+		if len(records) < size || (p-1)*size+len(records) >= total {
+			ended = true
+			break
+		}
+		if (maxItems > 0 && len(snap.Items) >= maxItems) || p == startPage+c.MaxPages-1 {
+			truncated, snap.NextPage = true, p+1
 			break
 		}
 	}
-	if truncated || rows != total {
+	if truncated || !ended || startPage != 1 || rows != total {
 		snap.Complete = false
+	}
+	if !truncated && !ended {
+		snap.NextPage = 1
 	}
 	snap.Total = total
 	return snap, nil

@@ -55,6 +55,36 @@ func (m *Manager) Missing(_ context.Context, maxItems int) (domain.MissingSnapsh
 	return domain.MissingSnapshot{ManagerID: m.id, CollectedAt: m.now(), Items: items, Total: len(m.ms.items), Complete: complete}, nil
 }
 
+// MissingFrom returns one window of maxItems items starting at page
+// startPage (the fake's page size is maxItems).
+func (m *Manager) MissingFrom(_ context.Context, maxItems, startPage int) (domain.MissingSnapshot, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ms.reads++
+	if m.ms.err != nil {
+		return domain.MissingSnapshot{}, m.ms.err
+	}
+	if startPage < 1 {
+		startPage = 1
+	}
+	all := m.ms.items
+	from := (startPage - 1) * maxItems
+	if from >= len(all) {
+		startPage, from = 1, 0
+	}
+	to, next := from+maxItems, startPage+1
+	if to >= len(all) {
+		to, next = len(all), 1
+	}
+	items := append([]domain.MissingItem(nil), all[from:to]...)
+	for i := range items {
+		items[i].ManagerID = m.id
+	}
+	complete := !m.ms.partial && startPage == 1 && next == 1
+	return domain.MissingSnapshot{ManagerID: m.id, CollectedAt: m.now(), Items: items, Total: len(all), Complete: complete,
+		StartPage: startPage, NextPage: next, PageSize: maxItems}, nil
+}
+
 // Searches returns the content IDs of every search requested.
 func (m *Manager) Searches() [][]int64 {
 	m.mu.Lock()

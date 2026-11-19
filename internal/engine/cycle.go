@@ -479,6 +479,11 @@ type MissingReader interface {
 	Missing(ctx context.Context, maxItems int) (domain.MissingSnapshot, error)
 }
 
+// MissingWindowReader reads one window of a missing list from a page.
+type MissingWindowReader interface {
+	MissingFrom(ctx context.Context, maxItems, startPage int) (domain.MissingSnapshot, error)
+}
+
 // readMissing refreshes the missing lists of managers read successfully
 // this cycle. A failure is logged and leaves the stored list unchanged.
 func (e *Engine) readMissing(ctx context.Context, results []*fetched) {
@@ -503,7 +508,20 @@ func (e *Engine) readMissing(ctx context.Context, results []*fetched) {
 		if age := now.Sub(last); seen && age >= 0 && age < e.cfg.Search.MissingInterval.Duration {
 			continue
 		}
-		snap, err := mr.Missing(ctx, e.cfg.Search.MaxMissingItems)
+		// A list longer than the bound is read in rotating windows, so
+		// items beyond the first window are not left unread for ever.
+		var snap domain.MissingSnapshot
+		var err error
+		if wr, ok := m.(MissingWindowReader); ok {
+			start, cerr := e.st.MissingCursor(ctx, m.ID())
+			if cerr != nil {
+				e.log.Error("missing list cursor not read", "manager", m.ID(), "err", cerr)
+				continue
+			}
+			snap, err = wr.MissingFrom(ctx, e.cfg.Search.MaxMissingItems, start)
+		} else {
+			snap, err = mr.Missing(ctx, e.cfg.Search.MaxMissingItems)
+		}
 		if err != nil {
 			e.log.Warn("missing list not read", "manager", m.ID(), "class", adapter.ClassOf(err), "error", errorText(err))
 			continue
@@ -516,6 +534,11 @@ func (e *Engine) readMissing(ctx context.Context, results []*fetched) {
 			if err != nil {
 				return err
 			}
+			if snap.NextPage > 0 {
+				if err := tx.SetMissingCursor(m.ID(), snap.NextPage); err != nil {
+					return err
+				}
+			}
 			scope := "missing:" + m.ID() + "|"
 			ev := findings.Evaluation{Scope: scope, Actor: "engine"}
 			if snap.Complete {
@@ -526,9 +549,9 @@ func (e *Engine) readMissing(ctx context.Context, results []*fetched) {
 				ev.Drafts = []findings.Draft{{
 					DedupKey: scope + "incomplete", Type: "missing.incomplete", Severity: domain.SeverityWarning,
 					Title:   m.ID() + " returned an incomplete missing-content listing",
-					Summary: fmt.Sprintf("Housekeeparr received %d items of %d reported. Items outside the listing may wait for a search.", len(snap.Items), snap.Total),
+					Summary: missingWindowSummary(snap, e.cfg.Search.MissingInterval.Duration),
 					Subject: domain.Subject{ManagerID: m.ID(), Connections: []string{m.ID()}}, EvidenceAt: now,
-					Detail: domain.FindingDetail{NextSteps: []string{"Check the manager's Wanted → Missing list for overlooked items. If it is consistently larger than the listing bound, use targeted searches for items outside the observed list."}},
+					Detail: domain.FindingDetail{NextSteps: []string{"Nothing is required: later reads continue through the list. To search the whole list sooner, raise search.max_missing_items or lower search.missing_interval; check the manager's Wanted → Missing list for monitored items that should not be."}},
 				}}
 			}
 			changes, err := findings.Apply(tx, ev, now)
@@ -548,4 +571,16 @@ func (e *Engine) readMissing(ctx context.Context, results []*fetched) {
 		e.mu.Unlock()
 		e.log.Info("missing list read", "manager", m.ID(), "items", len(snap.Items), "total", snap.Total, "complete", snap.Complete, "no_longer_missing", gone)
 	}
+}
+
+// missingWindowSummary explains a windowed or otherwise incomplete read.
+func missingWindowSummary(s domain.MissingSnapshot, interval time.Duration) string {
+	if s.PageSize <= 0 || s.Total <= 0 {
+		return fmt.Sprintf("Housekeeparr received %d items of %d reported. Items outside the listing wait for a later read.", len(s.Items), s.Total)
+	}
+	from := (s.StartPage-1)*s.PageSize + 1
+	windows := (s.Total + len(s.Items) - 1) / max(len(s.Items), 1)
+	return fmt.Sprintf("The manager lists %d missing items; this read covered %d of them from position %d. Reads rotate through the list, one window every %s, "+
+		"so every item is read about every %s; items are searched only while their read is fresh.", s.Total, len(s.Items), from,
+		policy.HumanDuration(interval), policy.HumanDuration(time.Duration(windows)*interval))
 }

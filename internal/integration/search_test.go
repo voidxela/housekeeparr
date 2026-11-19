@@ -121,6 +121,40 @@ func runProactiveSearch(t *testing.T, a arrAPI, section string, e managedEntry, 
 		t.Fatalf("missing item not available: %+v", it)
 	}
 	t.Logf("missing list read: %s %q aired %v available %v", it.ContentKey, it.Title, it.AiredAt, *it.Available)
+	// Windowed reads on the released manager: one-item windows walk the
+	// wanted list in order, each item once, and wrap at the end.
+	for _, m := range conns.Managers {
+		wr, ok := m.(engine.MissingWindowReader)
+		if !ok || m.ID() != section {
+			continue
+		}
+		whole, err := wr.MissingFrom(ctx, 1000, 1)
+		if err != nil || !whole.Complete {
+			t.Fatalf("whole wanted list: %+v %v", whole, err)
+		}
+		var walked []string
+		start := 1
+		for i := 0; i <= whole.Total; i++ {
+			w, err := wr.MissingFrom(ctx, 1, start)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, it := range w.Items {
+				walked = append(walked, store.MissingKey(it))
+			}
+			if start = w.NextPage; start == 1 {
+				break
+			}
+		}
+		var want []string
+		for _, it := range whole.Items {
+			want = append(want, store.MissingKey(it))
+		}
+		if fmt.Sprint(walked) != fmt.Sprint(want) {
+			t.Fatalf("one-item windows walked %v, the whole list is %v", walked, want)
+		}
+		t.Logf("wanted list of %d read in %d one-item windows, in order, wrapping at the end", whole.Total, len(walked))
+	}
 	// What this test establishes, for exactly this manager version.
 	var mp *adapter.Probe
 	recs, _ := st.Connections(ctx)

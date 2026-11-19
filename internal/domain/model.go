@@ -342,6 +342,12 @@ type MissingSnapshot struct {
 	// every reported item was read (Total within the read bound).
 	Total    int  `json:"total"`
 	Complete bool `json:"complete"`
+	// StartPage, NextPage and PageSize describe a windowed read of a list
+	// longer than the read bound: NextPage is where the following window
+	// starts (1: the list was read to its end, or from the start again).
+	StartPage int `json:"start_page,omitempty"`
+	NextPage  int `json:"next_page,omitempty"`
+	PageSize  int `json:"page_size,omitempty"`
 }
 
 // Source is one of a manager's configured indexers as it reports it

@@ -3,7 +3,9 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -92,6 +94,32 @@ func (t *Tx) SaveMissingSnapshot(s domain.MissingSnapshot, now time.Time) (int, 
 	}
 	n, err := res.RowsAffected()
 	return int(n), err
+}
+
+// MissingCursor returns the page the next windowed read of a manager's
+// missing list starts at (1 when none is recorded).
+func (s *Store) MissingCursor(ctx context.Context, managerID string) (int, error) {
+	var v string
+	err := s.r.QueryRowContext(ctx, "SELECT value FROM meta WHERE key=?", "missing_page:"+managerID).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 1, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	if n, err := strconv.Atoi(v); err == nil && n >= 1 {
+		return n, nil
+	}
+	return 1, nil
+}
+
+// SetMissingCursor records where the next windowed read starts.
+func (t *Tx) SetMissingCursor(managerID string, page int) error {
+	if page < 1 {
+		page = 1
+	}
+	_, err := t.exec("INSERT INTO meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", "missing_page:"+managerID, strconv.Itoa(page))
+	return err
 }
 
 const missingCols = `manager_id, content_key, series_id, title, aired_at, available, first_seen, last_seen, present, gone_at, searches,

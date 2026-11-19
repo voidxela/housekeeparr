@@ -239,6 +239,12 @@ func (c *Client) Missing(ctx context.Context, maxItems int) (domain.MissingSnaps
 	return c.api.Missing(ctx, c.id, q, maxItems, normalizeMissing)
 }
 
+// MissingFrom is Missing starting at a page of the list (windowed reads).
+func (c *Client) MissingFrom(ctx context.Context, maxItems, startPage int) (domain.MissingSnapshot, error) {
+	q := url.Values{"sortKey": {"movieMetadata.sortTitle"}, "sortDirection": {"ascending"}}
+	return c.api.MissingFrom(ctx, c.id, q, maxItems, startPage, normalizeMissing)
+}
+
 // SearchMovies triggers a Radarr MoviesSearch command for 1 to 10 movie IDs.
 func (c *Client) SearchMovies(ctx context.Context, movieIDs []int64) (int64, error) {
 	return c.api.Search(ctx, "MoviesSearch", "movieIds", movieIDs)
