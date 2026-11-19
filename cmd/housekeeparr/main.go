@@ -304,7 +304,7 @@ func cmdRun(args []string, out, errOut io.Writer) int {
 		for _, n := range cfg.Notify {
 			urls[n.ID] = secrets["notify."+n.ID+".url"]
 		}
-		nr, err := notify.Deliver(ctx, st, cfg.Notify, urls, nil, time.Now())
+		nr, err := notify.Deliver(ctx, st, cfg.Notify, cfg.Notifications, urls, nil, time.Now())
 		switch {
 		case err != nil:
 			log.Error("notification delivery stopped", "err", err)

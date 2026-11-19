@@ -62,7 +62,7 @@ func (e *Engine) readSources(ctx context.Context, results []*fetched) {
 				return err
 			}
 			res = r
-			return notify.Enqueue(tx, e.cfg.Notify, r, now)
+			return notify.Enqueue(tx, e.cfg.Notify, e.cfg.Notifications, r, now)
 		}); err != nil {
 			e.log.Error("search sources not saved", "manager", m.ID(), "err", err)
 			continue

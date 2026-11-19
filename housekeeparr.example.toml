@@ -149,6 +149,15 @@ follow_window = "1h"
 initial_backoff = "24h"
 max_backoff = "720h"
 
+# Webhook delivery and batching bounds across all targets.
+[notifications]
+digest_threshold = 5
+max_attempts = 8
+max_age = "24h"
+initial_backoff = "1m"
+max_backoff = "1h"
+request_timeout = "10s"
+
 [retention]
 observations = "168h"                 # detailed transfer observations
 max_observations_per_transfer = 1000

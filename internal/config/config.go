@@ -69,7 +69,8 @@ type Config struct {
 	Overrides  []OverrideConfig  `toml:"override"`
 	Exclusions []ExclusionConfig `toml:"exclude"`
 
-	Notify []NotifyConfig `toml:"notify"`
+	Notify        []NotifyConfig       `toml:"notify"`
+	Notifications NotificationSettings `toml:"notifications"`
 
 	Sonarr       []ManagerConfig `toml:"sonarr"`
 	Radarr       []ManagerConfig `toml:"radarr"`
@@ -283,6 +284,16 @@ type WebConfig struct {
 	TrustedProxy bool   `toml:"trusted_proxy"`
 }
 
+// NotificationSettings bounds webhook batching, retry and delivery across targets.
+type NotificationSettings struct {
+	DigestThreshold int      `toml:"digest_threshold"`
+	MaxAttempts     int      `toml:"max_attempts"`
+	MaxAge          Duration `toml:"max_age"`
+	InitialBackoff  Duration `toml:"initial_backoff"`
+	MaxBackoff      Duration `toml:"max_backoff"`
+	RequestTimeout  Duration `toml:"request_timeout"`
+}
+
 // NotifyConfig is one webhook notification target (SPEC §11.2). The URL is
 // a secret reference: webhook URLs routinely embed tokens.
 type NotifyConfig struct {
@@ -437,6 +448,10 @@ func Defaults() Config {
 			Spacing: Duration{15 * time.Minute}, MissingInterval: Duration{time.Hour},
 			MissingFreshness: Duration{2 * time.Hour}, FollowWindow: Duration{time.Hour},
 			InitialBackoff: Duration{24 * time.Hour}, MaxBackoff: Duration{30 * 24 * time.Hour},
+		},
+		Notifications: NotificationSettings{
+			DigestThreshold: 5, MaxAttempts: 8, MaxAge: Duration{24 * time.Hour},
+			InitialBackoff: Duration{time.Minute}, MaxBackoff: Duration{time.Hour}, RequestTimeout: Duration{10 * time.Second},
 		},
 		Retention: RetentionConfig{
 			Observations:               Duration{7 * 24 * time.Hour},
@@ -1589,6 +1604,25 @@ func (c *Config) Clients() []ClientEntry {
 
 // validateNotify checks notification targets and fills their defaults.
 func validateNotify(errf errFunc, cfg *Config) {
+	s := cfg.Notifications
+	if s.DigestThreshold < 1 {
+		errf("notifications.digest_threshold", "must be positive")
+	}
+	if s.MaxAttempts < 1 {
+		errf("notifications.max_attempts", "must be positive")
+	}
+	if s.MaxAge.Duration <= 0 || s.MaxAge.Duration > cfg.Retention.AuditEvents.Duration {
+		errf("notifications.max_age", "must be positive and fit within retention.audit_events")
+	}
+	if s.InitialBackoff.Duration <= 0 || s.InitialBackoff.Duration > s.MaxBackoff.Duration {
+		errf("notifications.initial_backoff", "must be positive and at most notifications.max_backoff")
+	}
+	if s.MaxBackoff.Duration <= 0 || s.MaxBackoff.Duration > s.MaxAge.Duration {
+		errf("notifications.max_backoff", "must be positive and at most notifications.max_age")
+	}
+	if s.RequestTimeout.Duration <= 0 || s.RequestTimeout.Duration > s.MaxAge.Duration {
+		errf("notifications.request_timeout", "must be positive and at most notifications.max_age")
+	}
 	seen := map[string]bool{}
 	for i := range cfg.Notify {
 		n := &cfg.Notify[i]

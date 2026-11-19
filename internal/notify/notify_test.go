@@ -58,7 +58,7 @@ func finding(id int64, sev domain.Severity) domain.Finding {
 
 func enqueue(t *testing.T, st *store.Store, tg []config.NotifyConfig, res findings.Result, now time.Time) {
 	t.Helper()
-	if err := st.Write(context.Background(), func(tx *store.Tx) error { return Enqueue(tx, tg, res, now) }); err != nil {
+	if err := st.Write(context.Background(), func(tx *store.Tx) error { return Enqueue(tx, tg, config.Defaults().Notifications, res, now) }); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -78,7 +78,7 @@ func TestOpenedAndResolvedFindingsAreDelivered(t *testing.T) {
 	enqueue(t, st, tg, findings.Result{Opened: []domain.Finding{finding(1, domain.SeverityWarning), finding(2, domain.SeverityNotice)}}, t0)
 	// Resolution of a finding never delivered is not notified.
 	enqueue(t, st, tg, findings.Result{Resolved: []domain.Finding{finding(3, domain.SeverityWarning)}}, t0)
-	rep, err := Deliver(ctx, st, tg, urls, nil, t0)
+	rep, err := Deliver(ctx, st, tg, config.Defaults().Notifications, urls, nil, t0)
 	if err != nil || rep.Sent != 1 {
 		t.Fatalf("rep %+v err %v (notice is below min_severity)", rep, err)
 	}
@@ -92,7 +92,7 @@ func TestOpenedAndResolvedFindingsAreDelivered(t *testing.T) {
 	r := finding(1, domain.SeverityWarning)
 	r.Resolution = "Verified: progress resumed."
 	enqueue(t, st, tg, findings.Result{Resolved: []domain.Finding{r}}, t0.Add(time.Minute))
-	rep, _ = Deliver(ctx, st, tg, urls, nil, t0.Add(time.Minute))
+	rep, _ = Deliver(ctx, st, tg, config.Defaults().Notifications, urls, nil, t0.Add(time.Minute))
 	if rep.Sent != 1 || len(s.bodies) != 2 || !strings.Contains(s.bodies[1], "Verified: progress resumed.") {
 		t.Fatalf("rep %+v bodies %v", rep, s.bodies)
 	}
@@ -112,10 +112,10 @@ func TestNotificationsExpireWhenTargetIsUnavailableOrRemoved(t *testing.T) {
 			st := open(t, t.TempDir())
 			defer st.Close()
 			enqueue(t, st, []config.NotifyConfig{target(10)}, findings.Result{Opened: []domain.Finding{finding(1, domain.SeverityWarning)}}, t0)
-			if r, err := Deliver(ctx, st, tc.targets, nil, nil, t0.Add(23*time.Hour)); err != nil || r.Dropped != 0 {
+			if r, err := Deliver(ctx, st, tc.targets, config.Defaults().Notifications, nil, nil, t0.Add(23*time.Hour)); err != nil || r.Dropped != 0 {
 				t.Fatalf("event dropped early: %+v, %v", r, err)
 			}
-			if r, err := Deliver(ctx, st, tc.targets, nil, nil, t0.Add(25*time.Hour)); err != nil || r.Dropped != 1 {
+			if r, err := Deliver(ctx, st, tc.targets, config.Defaults().Notifications, nil, nil, t0.Add(25*time.Hour)); err != nil || r.Dropped != 1 {
 				t.Fatalf("old event was not recorded as expired: %+v, %v", r, err)
 			}
 			rows, err := st.RecentNotifications(ctx, 1)
@@ -151,16 +151,16 @@ func TestRateLimitIsPersisted(t *testing.T) {
 	tg := []config.NotifyConfig{target(2)}
 	urls := map[string]string{"hook": srv.URL}
 	enqueue(t, st, tg, findings.Result{Opened: []domain.Finding{finding(1, domain.SeverityError), finding(2, domain.SeverityError), finding(3, domain.SeverityError)}}, t0)
-	if rep, _ := Deliver(ctx, st, tg, urls, nil, t0); rep.Sent != 2 || rep.Held != 1 {
+	if rep, _ := Deliver(ctx, st, tg, config.Defaults().Notifications, urls, nil, t0); rep.Sent != 2 || rep.Held != 1 {
 		t.Fatalf("first pass %+v", rep)
 	}
 	st.Close()
 	st = open(t, dir)
 	defer st.Close()
-	if rep, _ := Deliver(ctx, st, tg, urls, nil, t0.Add(30*time.Minute)); rep.Sent != 0 || rep.Held != 1 {
+	if rep, _ := Deliver(ctx, st, tg, config.Defaults().Notifications, urls, nil, t0.Add(30*time.Minute)); rep.Sent != 0 || rep.Held != 1 {
 		t.Fatalf("after restart %+v", rep)
 	}
-	if rep, _ := Deliver(ctx, st, tg, urls, nil, t0.Add(61*time.Minute)); rep.Sent != 1 {
+	if rep, _ := Deliver(ctx, st, tg, config.Defaults().Notifications, urls, nil, t0.Add(61*time.Minute)); rep.Sent != 1 {
 		t.Fatalf("an hour later %+v", rep)
 	}
 }
@@ -176,16 +176,17 @@ func TestFailuresBackOffAndDrop(t *testing.T) {
 	urls := map[string]string{"hook": srv.URL + "/tok-SECRET"}
 	enqueue(t, st, tg, findings.Result{Opened: []domain.Finding{finding(1, domain.SeverityError)}}, t0)
 	now := t0
-	for i := 0; i < maxAttempts; i++ {
-		rep, err := Deliver(ctx, st, tg, urls, nil, now)
+	settings := config.Defaults().Notifications
+	for i := 0; i < settings.MaxAttempts; i++ {
+		rep, err := Deliver(ctx, st, tg, config.Defaults().Notifications, urls, nil, now)
 		if err != nil || rep.Failed != 1 {
 			t.Fatalf("attempt %d: %+v %v", i, rep, err)
 		}
 		// Not retried before its backoff.
-		if rep, _ := Deliver(ctx, st, tg, urls, nil, now.Add(30*time.Second)); rep.Failed != 0 {
+		if rep, _ := Deliver(ctx, st, tg, config.Defaults().Notifications, urls, nil, now.Add(30*time.Second)); rep.Failed != 0 {
 			t.Fatalf("retried before backoff: %+v", rep)
 		}
-		now = now.Add(maxBackoff)
+		now = now.Add(settings.MaxBackoff.Duration)
 	}
 	ns, _ := st.RecentNotifications(ctx, 5)
 	if ns[0].DroppedAt == nil || strings.Contains(ns[0].LastError, "SECRET") || !strings.Contains(ns[0].LastError, "HTTP 500") {
@@ -193,7 +194,7 @@ func TestFailuresBackOffAndDrop(t *testing.T) {
 	}
 	// An unreachable URL: the transport error is not echoed.
 	enqueue(t, st, tg, findings.Result{Opened: []domain.Finding{finding(2, domain.SeverityError)}}, now)
-	_, _ = Deliver(ctx, st, tg, map[string]string{"hook": "http://127.0.0.1:1/tok-SECRET"}, nil, now)
+	_, _ = Deliver(ctx, st, tg, config.Defaults().Notifications, map[string]string{"hook": "http://127.0.0.1:1/tok-SECRET"}, nil, now)
 	ns, _ = st.RecentNotifications(ctx, 1)
 	if strings.Contains(ns[0].LastError, "SECRET") || ns[0].LastError == "" {
 		t.Fatalf("%q", ns[0].LastError)
@@ -211,7 +212,7 @@ func TestTextFormatAndExpiry(t *testing.T) {
 	f := finding(1, domain.SeverityError)
 	f.Title = "Bad\ntitle"
 	enqueue(t, st, tg, findings.Result{Opened: []domain.Finding{f}}, t0)
-	if rep, _ := Deliver(ctx, st, tg, urls, nil, t0); rep.Sent != 1 {
+	if rep, _ := Deliver(ctx, st, tg, config.Defaults().Notifications, urls, nil, t0); rep.Sent != 1 {
 		t.Fatal(rep)
 	}
 	r := s.got[0]
@@ -220,7 +221,7 @@ func TestTextFormatAndExpiry(t *testing.T) {
 	}
 	// Undelivered for a day (target unconfigured meanwhile): dropped, not sent late.
 	enqueue(t, st, tg, findings.Result{Opened: []domain.Finding{finding(2, domain.SeverityError)}}, t0)
-	if rep, _ := Deliver(ctx, st, tg, urls, nil, t0.Add(25*time.Hour)); rep.Dropped != 1 || rep.Sent != 0 {
+	if rep, _ := Deliver(ctx, st, tg, config.Defaults().Notifications, urls, nil, t0.Add(25*time.Hour)); rep.Dropped != 1 || rep.Sent != 0 {
 		t.Fatalf("%+v", rep)
 	}
 }
@@ -237,7 +238,7 @@ func TestDeliveryDoesNotFollowRedirect(t *testing.T) {
 	defer original.Close()
 	targets := []config.NotifyConfig{target(6)}
 	enqueue(t, st, targets, findings.Result{Opened: []domain.Finding{finding(1, domain.SeverityWarning)}}, t0)
-	rep, err := Deliver(ctx, st, targets, map[string]string{"hook": original.URL}, original.Client(), t0)
+	rep, err := Deliver(ctx, st, targets, config.Defaults().Notifications, map[string]string{"hook": original.URL}, original.Client(), t0)
 	receiver.mu.Lock()
 	defer receiver.mu.Unlock()
 	if err != nil || rep.Failed != 1 || len(receiver.got) != 0 {
@@ -258,5 +259,42 @@ func TestNotificationOutboxRedactsTitles(t *testing.T) {
 	}
 	if strings.Contains(pending[0].Title, "SECRETVALUE") {
 		t.Fatalf("notification title retained a tracker credential: %s", pending[0].Title)
+	}
+}
+
+func TestConfiguredNotificationBoundsControlBatchingAndBackoff(t *testing.T) {
+	ctx := context.Background()
+	st := open(t, t.TempDir())
+	defer st.Close()
+	settings := config.Defaults().Notifications
+	settings.DigestThreshold = 1
+	settings.MaxAttempts = 3
+	settings.InitialBackoff = config.Duration{Duration: 2 * time.Minute}
+	settings.MaxBackoff = config.Duration{Duration: 3 * time.Minute}
+	tg := []config.NotifyConfig{target(10)}
+	res := findings.Result{Opened: []domain.Finding{finding(1, domain.SeverityWarning), finding(2, domain.SeverityWarning)}}
+	if err := st.Write(ctx, func(tx *store.Tx) error { return Enqueue(tx, tg, settings, res, t0) }); err != nil {
+		t.Fatal(err)
+	}
+	srv := (&sink{status: http.StatusServiceUnavailable}).server(t)
+	urls := map[string]string{"hook": srv.URL}
+	for _, step := range []struct {
+		at, next time.Duration
+		dropped  bool
+	}{
+		{at: 0, next: 2 * time.Minute},
+		{at: 2 * time.Minute, next: 5 * time.Minute},
+		{at: 5 * time.Minute, dropped: true},
+	} {
+		if rep, err := Deliver(ctx, st, tg, settings, urls, nil, t0.Add(step.at)); err != nil || rep.Failed != 1 {
+			t.Fatalf("delivery at %s: %+v, %v", step.at, rep, err)
+		}
+		rows, err := st.RecentNotifications(ctx, 2)
+		if err != nil || len(rows) != 1 || rows[0].Kind != KindDigest {
+			t.Fatalf("expected one digest: %+v, %v", rows, err)
+		}
+		if (rows[0].DroppedAt != nil) != step.dropped || (!step.dropped && !rows[0].NextAt.Equal(t0.Add(step.next))) {
+			t.Fatalf("retry after %s: %+v", step.at, rows[0])
+		}
 	}
 }

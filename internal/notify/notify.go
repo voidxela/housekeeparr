@@ -33,15 +33,6 @@ const (
 	KindAttention = "automation.attention" // automation is stopped for a reason the user must resolve
 )
 
-// Bounds. These are implementation proposals, not validated defaults.
-const (
-	perCycle    = 5                // more opened findings in one cycle become one digest
-	maxAttempts = 8                // delivery attempts before an event is dropped
-	maxAge      = 24 * time.Hour   // undelivered events older than this are dropped
-	maxBackoff  = time.Hour        // retry delay ceiling
-	timeout     = 10 * time.Second // per delivery
-)
-
 func rank(s string) int {
 	switch s {
 	case string(domain.SeverityError):
@@ -75,7 +66,7 @@ func body(f domain.Finding) string {
 // or recurred findings at or above each target's severity (several at
 // once become one digest, so a shared outage cannot flood a target), and
 // the resolution of a finding whose opening was delivered.
-func Enqueue(tx *store.Tx, targets []config.NotifyConfig, res findings.Result, now time.Time) error {
+func Enqueue(tx *store.Tx, targets []config.NotifyConfig, settings config.NotificationSettings, res findings.Result, now time.Time) error {
 	for _, tg := range targets {
 		var opened []domain.Finding
 		for _, f := range append(append([]domain.Finding{}, res.Opened...), res.Recurred...) {
@@ -83,19 +74,19 @@ func Enqueue(tx *store.Tx, targets []config.NotifyConfig, res findings.Result, n
 				opened = append(opened, f)
 			}
 		}
-		if len(opened) > perCycle {
+		if len(opened) > settings.DigestThreshold {
 			worst := string(domain.SeverityNotice)
 			var titles []string
 			for i, f := range opened {
 				if rank(string(f.Severity)) < rank(worst) {
 					worst = string(f.Severity)
 				}
-				if i < perCycle {
+				if i < settings.DigestThreshold {
 					titles = append(titles, "• "+f.Title)
 				}
 			}
 			b := fmt.Sprintf("%d findings opened at once, which often has a shared cause (a connection, tracker, or network problem).\n%s\n…and %d more.",
-				len(opened), strings.Join(titles, "\n"), len(opened)-perCycle)
+				len(opened), strings.Join(titles, "\n"), len(opened)-settings.DigestThreshold)
 			if _, err := tx.EnqueueNotification(store.Notification{Target: tg.ID, DedupKey: fmt.Sprintf("digest|%d", now.UnixMilli()), Kind: KindDigest,
 				Severity: worst, Title: fmt.Sprintf("Housekeeparr: %d new findings", len(opened)), Body: redact.Truncate(redact.String(b), 1000),
 				Link: strings.TrimRight(tg.LinkBase, "/") + map[bool]string{true: "/attention", false: ""}[tg.LinkBase != ""], CreatedAt: now}); err != nil {
@@ -137,18 +128,21 @@ type Report struct {
 // Deliver sends due events, within each target's hourly limit. urls maps
 // target IDs to their resolved webhook URLs; a target without one is
 // skipped (its events age out).
-func Deliver(ctx context.Context, st *store.Store, targets []config.NotifyConfig, urls map[string]string, client *http.Client, now time.Time) (Report, error) {
+func Deliver(ctx context.Context, st *store.Store, targets []config.NotifyConfig, settings config.NotificationSettings, urls map[string]string, client *http.Client, now time.Time) (Report, error) {
 	var rep Report
 	if err := st.Write(ctx, func(tx *store.Tx) error {
 		var err error
-		rep.Dropped, err = tx.ExpireNotifications(now, maxAge)
+		rep.Dropped, err = tx.ExpireNotifications(now, settings.MaxAge.Duration)
 		return err
 	}); err != nil {
 		return Report{}, err
 	}
-	webhookClient := http.Client{Timeout: timeout}
+	webhookClient := http.Client{}
 	if client != nil {
 		webhookClient = *client
+	}
+	if webhookClient.Timeout <= 0 || webhookClient.Timeout > settings.RequestTimeout.Duration {
+		webhookClient.Timeout = settings.RequestTimeout.Duration
 	}
 	webhookClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	for _, tg := range targets {
@@ -174,12 +168,12 @@ func Deliver(ctx context.Context, st *store.Store, targets []config.NotifyConfig
 				switch {
 				case derr == nil:
 					return tx.MarkNotificationSent(n.ID, now)
-				case n.Attempts+1 >= maxAttempts:
-					return tx.DropNotification(n.ID, now, fmt.Sprintf("gave up after %d attempts: %v", maxAttempts, derr))
+				case n.Attempts+1 >= settings.MaxAttempts:
+					return tx.DropNotification(n.ID, now, fmt.Sprintf("gave up after %d attempts: %v", settings.MaxAttempts, derr))
 				default:
-					d := time.Minute << n.Attempts
-					if d > maxBackoff {
-						d = maxBackoff
+					d := settings.InitialBackoff.Duration
+					for i := 0; i < n.Attempts && d < settings.MaxBackoff.Duration; i++ {
+						d = min(d*2, settings.MaxBackoff.Duration)
 					}
 					return tx.MarkNotificationFailed(n.ID, now, now.Add(d), derr.Error())
 				}

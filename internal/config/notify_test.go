@@ -77,3 +77,19 @@ func TestWebRemoteExposureRequirements(t *testing.T) {
 		}
 	}
 }
+
+func TestNotificationDeliveryBoundsAreConfigurable(t *testing.T) {
+	const raw = `
+version = 1
+[notifications]
+digest_threshold = 2
+max_attempts = 3
+max_age = "3h"
+initial_backoff = "2m"
+max_backoff = "10m"
+request_timeout = "5s"
+`
+	if _, _, err := Parse([]byte(raw), ""); err != nil {
+		t.Fatal(err)
+	}
+}

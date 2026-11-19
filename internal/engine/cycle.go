@@ -73,7 +73,7 @@ func (e *Engine) Cycle(ctx context.Context, next *time.Time) CycleReport {
 		}
 		res = r
 		// Notifications are queued with the changes they report.
-		if err := notify.Enqueue(tx, e.cfg.Notify, r, now); err != nil {
+		if err := notify.Enqueue(tx, e.cfg.Notify, e.cfg.Notifications, r, now); err != nil {
 			return err
 		}
 		if _, err := findings.ExpireSnoozes(tx, now); err != nil {
@@ -540,7 +540,7 @@ func (e *Engine) readMissing(ctx context.Context, results []*fetched) {
 			if err != nil {
 				return err
 			}
-			return notify.Enqueue(tx, e.cfg.Notify, changes, now)
+			return notify.Enqueue(tx, e.cfg.Notify, e.cfg.Notifications, changes, now)
 		}); err != nil {
 			e.log.Error("missing list not saved", "manager", m.ID(), "err", err)
 			continue
