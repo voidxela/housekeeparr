@@ -59,7 +59,7 @@ requests are accepted only when their `Origin` matches it; a proxy that
 rewrites `Host` to the upstream address gets every sign-in and form refused
 with a message naming the header. Housekeeparr reads no `X-Forwarded-*`
 header. A manual action is answered only once it has finished (up to about
-four times `action_timing.settle`), so the proxy's read timeout must be at
+six times `action_timing.settle`), so the proxy's read timeout must be at
 least `web.write_timeout` (default 2 minutes). For nginx:
 
 ```nginx
@@ -71,6 +71,6 @@ location / {
 ```
 
 Listener timeouts are `web.read_header_timeout` (5 s), `read_timeout`
-(15 s), `write_timeout` (2 min, at least four times `action_timing.settle`)
+(15 s), `write_timeout` (2 min, at least six times `action_timing.settle`)
 and `idle_timeout` (1 min). A manual action keeps running if the browser or
 proxy gives up; its outcome is on the finding and Activity pages.

@@ -93,6 +93,15 @@ type ActionTimingConfig struct {
 	Poll           Duration `toml:"poll"`
 	RefusalWindow  Duration `toml:"refusal_window"`
 	RefusalsToOpen int      `toml:"refusals_to_open"`
+	// Manager-native outcome windows after a recovery: how long the
+	// manager's replacement search is looked for and followed in its
+	// command list, how far the manager's clock may lag when that search
+	// is attributed by time, after how long without a replacement grab the
+	// outcome says so, and when tracking ends.
+	CommandFollow         Duration `toml:"command_follow"`
+	CommandClockTolerance Duration `toml:"command_clock_tolerance"`
+	NoGrabAfter           Duration `toml:"no_grab_after"`
+	OutcomeWindow         Duration `toml:"outcome_window"`
 }
 
 // SearchConfig controls pacing and observation of Housekeeparr searches.
@@ -484,6 +493,8 @@ func Defaults() Config {
 		ActionTiming: ActionTimingConfig{
 			PreviewTTL: Duration{5 * time.Minute}, Settle: Duration{15 * time.Second}, Poll: Duration{time.Second},
 			RefusalWindow: Duration{24 * time.Hour}, RefusalsToOpen: 2,
+			CommandFollow: Duration{time.Hour}, CommandClockTolerance: Duration{time.Minute}, NoGrabAfter: Duration{24 * time.Hour},
+			OutcomeWindow: Duration{7 * 24 * time.Hour},
 		},
 		Search: SearchConfig{
 			Spacing: Duration{15 * time.Minute}, MissingInterval: Duration{time.Hour},
@@ -587,6 +598,18 @@ func validate(cfg *Config, md toml.MetaData) []Problem {
 	if timing.RefusalsToOpen < 1 {
 		errf("action_timing.refusals_to_open", "must be positive")
 	}
+	if d := timing.CommandFollow.Duration; d < 10*time.Minute || d > 24*time.Hour {
+		errf("action_timing.command_follow", "must be between 10m and 24h")
+	}
+	if d := timing.CommandClockTolerance.Duration; d < 0 || d > 10*time.Minute {
+		errf("action_timing.command_clock_tolerance", "must be between 0s and 10m")
+	}
+	if d := timing.OutcomeWindow.Duration; d < 24*time.Hour || d > 30*24*time.Hour {
+		errf("action_timing.outcome_window", "must be between 24h and 720h")
+	}
+	if d := timing.NoGrabAfter.Duration; d < time.Hour || d > timing.OutcomeWindow.Duration {
+		errf("action_timing.no_grab_after", "must be at least 1h and at most action_timing.outcome_window")
+	}
 	search := cfg.Search
 	for _, field := range []struct {
 		name  string
@@ -630,8 +653,8 @@ func validate(cfg *Config, md toml.MetaData) []Problem {
 			errf("web."+t.name, "must be between 1s and 10m")
 		}
 	}
-	if min := 4 * cfg.ActionTiming.Settle.Duration; cfg.Web.WriteTimeout.Duration < min {
-		errf("web.write_timeout", "must be at least four times action_timing.settle (%s), or a manual action's answer is cut off before the action finishes", min)
+	if min := 6 * cfg.ActionTiming.Settle.Duration; cfg.Web.WriteTimeout.Duration < min {
+		errf("web.write_timeout", "must be at least six times action_timing.settle (%s), or a manual action's answer is cut off before the action finishes", min)
 	}
 	// Web interface: loopback unless authentication, an explicit host
 	// allowlist, and TLS (or a declared TLS-terminating proxy) are set.

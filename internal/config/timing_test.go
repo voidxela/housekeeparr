@@ -30,3 +30,12 @@ func TestCorrelatedProbeInterval(t *testing.T) {
 	}
 	expectProblem(t, minimal+"\n[automation.limits]\ncorrelated_probe_interval = \"5m\"\n", "automation.limits.correlated_probe_interval", "10m")
 }
+
+func TestOutcomeWindowSettings(t *testing.T) {
+	a := mustParse(t, minimal).ActionTiming
+	if a.CommandFollow.Duration != time.Hour || a.CommandClockTolerance.Duration != time.Minute || a.NoGrabAfter.Duration != 24*time.Hour || a.OutcomeWindow.Duration != 7*24*time.Hour {
+		t.Fatalf("defaults %+v", a)
+	}
+	expectProblem(t, minimal+"\n[action_timing]\nno_grab_after = \"200h\"\n", "action_timing.no_grab_after", "outcome_window")
+	expectProblem(t, minimal+"\n[action_timing]\ncommand_follow = \"1m\"\n", "action_timing.command_follow", "between")
+}

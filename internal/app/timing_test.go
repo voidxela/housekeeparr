@@ -1,8 +1,12 @@
 package app_test
 
 import (
+	"context"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/voidxela/housekeeparr/internal/store"
 )
 
 // The default timing boundaries of the worker loop, deterministically: a
@@ -40,5 +44,34 @@ func TestDefaultTimingBoundaries(t *testing.T) {
 				t.Fatalf("recovered %s after the grab was added, want %s", got, tc.want)
 			}
 		})
+	}
+}
+
+// The manager-native outcome windows come from [action_timing]: a shorter
+// no_grab_after reports the missing replacement grab sooner, and a shorter
+// outcome_window ends tracking.
+func TestConfiguredOutcomeWindows(t *testing.T) {
+	w := newWorldWith(t, "automatic", 20, "\n[action_timing]\nno_grab_after = \"2h\"\noutcome_window = \"24h\"\n")
+	w.stalled(hashA, 1, 1)
+	w.run(130 * time.Minute)
+	acts, _ := w.svc.Actions(context.Background(), 10)
+	if len(acts) != 1 {
+		t.Fatalf("actions %+v", acts)
+	}
+	state := func() string {
+		oc, _ := w.st.Outcomes(context.Background(), []int64{acts[0].ID})
+		return oc[acts[0].ID].State + ": " + oc[acts[0].ID].Note
+	}
+	w.run(110 * time.Minute)
+	if s := state(); !strings.HasPrefix(s, store.OutcomeAwaitingGrab) {
+		t.Fatalf("before no_grab_after: %s", s)
+	}
+	w.run(20 * time.Minute)
+	if s := state(); !strings.HasPrefix(s, store.OutcomeNoGrabYet) || !strings.Contains(s, "in 2h") {
+		t.Fatalf("after no_grab_after: %s", s)
+	}
+	w.run(22 * time.Hour)
+	if s := state(); !strings.HasPrefix(s, store.OutcomeUntracked) {
+		t.Fatalf("after outcome_window: %s", s)
 	}
 }

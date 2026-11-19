@@ -166,3 +166,22 @@ func TestMissingSearchReceiptIdentifiesTheObservedCommand(t *testing.T) {
 		t.Fatalf("ambiguous commands were attributed to a request without a receipt: %+v, %v", obs, err)
 	}
 }
+
+func TestConfiguredSearchWindows(t *testing.T) {
+	at := func(d time.Duration) time.Time { return time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC).Add(d) }
+	o := store.RecoveryOutcome{StartedAt: at(0), Content: []string{"episode:5"}}
+	w := SearchWindows{ClockTolerance: 0, Follow: 10 * time.Minute}
+	if w.Expire(&o, at(9*time.Minute)) {
+		t.Fatal("expired inside the configured follow window")
+	}
+	if !w.Expire(&o, at(11*time.Minute)) || o.Search.State != store.SearchNotObserved || !strings.Contains(o.Search.Note, "10m") {
+		t.Fatalf("configured follow window not applied: %+v", o.Search)
+	}
+	// Without a baseline, a command queued before the request by more than
+	// the configured tolerance is not attributed to it.
+	o = store.RecoveryOutcome{StartedAt: at(time.Minute), Content: []string{"episode:5"}}
+	w.Observe(&o, []arr.Command{{ID: 3, Name: "EpisodeSearch", Status: "queued", Trigger: "unspecified", Queued: at(30 * time.Second), EpisodeIDs: []int64{5}}}, at(2*time.Minute))
+	if o.Search.CommandID != nil {
+		t.Fatalf("attributed outside a zero clock tolerance: %+v", o.Search)
+	}
+}

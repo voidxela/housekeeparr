@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/voidxela/housekeeparr/internal/adapter/arr"
+	"github.com/voidxela/housekeeparr/internal/config"
 	"github.com/voidxela/housekeeparr/internal/domain"
 	"github.com/voidxela/housekeeparr/internal/redact"
 	"github.com/voidxela/housekeeparr/internal/store"
@@ -21,6 +22,28 @@ const (
 	SearchClockTolerance = time.Minute
 	SearchFollowWindow   = time.Hour
 )
+
+// SearchWindows are the configured replacement-search observation bounds
+// (action_timing.command_clock_tolerance and command_follow).
+type SearchWindows struct {
+	ClockTolerance, Follow time.Duration
+}
+
+// DefaultSearchWindows are the proposed defaults.
+var DefaultSearchWindows = SearchWindows{ClockTolerance: SearchClockTolerance, Follow: SearchFollowWindow}
+
+// WindowsFrom returns the configured windows.
+func WindowsFrom(timing config.ActionTimingConfig) SearchWindows {
+	return SearchWindows{ClockTolerance: timing.CommandClockTolerance.Duration, Follow: timing.CommandFollow.Duration}.orDefault()
+}
+
+// orDefault replaces unset windows (a zero Follow) with the defaults.
+func (w SearchWindows) orDefault() SearchWindows {
+	if w.Follow <= 0 {
+		return DefaultSearchWindows
+	}
+	return w
+}
 
 // CommandReader is a manager whose command list can be read.
 type CommandReader interface {
@@ -40,6 +63,12 @@ type CommandReader interface {
 // completed search says nothing about whether anything was grabbed (the
 // grab is a separate outcome). It reports whether anything changed.
 func ObserveSearch(o *store.RecoveryOutcome, cmds []arr.Command, now time.Time) bool {
+	return DefaultSearchWindows.Observe(o, cmds, now)
+}
+
+// Observe is ObserveSearch within these windows.
+func (w SearchWindows) Observe(o *store.RecoveryOutcome, cmds []arr.Command, now time.Time) bool {
+	w = w.orDefault()
 	s := &o.Search
 	if store.SearchTerminal(s.State) {
 		return false
@@ -66,7 +95,7 @@ func ObserveSearch(o *store.RecoveryOutcome, cmds []arr.Command, now time.Time) 
 			if c.ID <= *s.AfterID {
 				continue
 			}
-		} else if c.Trigger != "unspecified" || c.Queued.Before(since.Add(-SearchClockTolerance)) {
+		} else if c.Trigger != "unspecified" || c.Queued.Before(since.Add(-w.ClockTolerance)) {
 			continue
 		}
 		// Command IDs increase in the order commands are queued.
@@ -81,9 +110,9 @@ func ObserveSearch(o *store.RecoveryOutcome, cmds []arr.Command, now time.Time) 
 		s.State = store.SearchEndUnverified
 		s.Note = fmt.Sprintf("the manager's %s (command %d) was accepted but is no longer in its command list, and its end was not observed; "+
 			"the final search outcome is unverified (check the manager's history)", s.Name, *s.CommandID)
-	case match == nil && now.Sub(since) > SearchFollowWindow:
+	case match == nil && now.Sub(since) > w.Follow:
 		s.State = store.SearchNotObserved
-		s.Note = "no search for this content was seen in the manager's command list within " + SearchFollowWindow.String() +
+		s.Note = "no search for this content was seen in the manager's command list within " + w.Follow.String() +
 			"; managers eventually drop finished commands from that list, so this is not evidence that no search ran (check the manager's history)"
 	case match == nil:
 		s.State = store.SearchUnobserved
@@ -114,10 +143,10 @@ func ObserveSearch(o *store.RecoveryOutcome, cmds []arr.Command, now time.Time) 
 			s.State = store.SearchAccepted
 			s.Note = fmt.Sprintf("the manager has %s (command %d) for this content in an unrecognised status %q", match.Name, id, match.Status)
 		}
-		if !store.SearchTerminal(s.State) && now.Sub(since) > SearchFollowWindow {
+		if !store.SearchTerminal(s.State) && now.Sub(since) > w.Follow {
 			s.State = store.SearchEndUnverified
 			s.Note = fmt.Sprintf("the manager's %s (command %d) was still %s after %s; it is no longer followed and its outcome is unverified",
-				match.Name, id, match.Status, SearchFollowWindow)
+				match.Name, id, match.Status, w.Follow)
 		}
 	}
 	if s.CommandID != nil && s.AfterID == nil && !store.SearchTerminal(before.State) && before.CommandID == nil {
@@ -130,12 +159,18 @@ func ObserveSearch(o *store.RecoveryOutcome, cmds []arr.Command, now time.Time) 
 // command-list read settling it (for example while the manager's list
 // cannot be read). It reports whether anything changed.
 func ExpireSearch(o *store.RecoveryOutcome, now time.Time) bool {
+	return DefaultSearchWindows.Expire(o, now)
+}
+
+// Expire is ExpireSearch within these windows.
+func (w SearchWindows) Expire(o *store.RecoveryOutcome, now time.Time) bool {
+	w = w.orDefault()
 	s := &o.Search
 	since := o.StartedAt
 	if s.Since != nil {
 		since = *s.Since
 	}
-	if store.SearchTerminal(s.State) || now.Sub(since) <= SearchFollowWindow {
+	if store.SearchTerminal(s.State) || now.Sub(since) <= w.Follow {
 		return false
 	}
 	at := now
@@ -143,10 +178,10 @@ func ExpireSearch(o *store.RecoveryOutcome, now time.Time) bool {
 	if s.CommandID != nil {
 		s.State = store.SearchEndUnverified
 		s.Note = fmt.Sprintf("the manager's %s (command %d) was accepted, but its end was not observed within %s; the final search outcome is unverified",
-			s.Name, *s.CommandID, SearchFollowWindow)
+			s.Name, *s.CommandID, w.Follow)
 	} else {
 		s.State = store.SearchNotObserved
-		s.Note = "no search for this content could be observed within " + SearchFollowWindow.String() +
+		s.Note = "no search for this content could be observed within " + w.Follow.String() +
 			" (the manager's command list was not read successfully, or showed none); this is not evidence that no search ran"
 	}
 	return true
@@ -199,7 +234,7 @@ func (r *Recovery) ObserveOutcome(ctx context.Context, o *store.RecoveryOutcome,
 		if err != nil {
 			return changed, err
 		}
-		changed = ObserveSearch(o, cmds, now()) || changed
+		changed = r.Windows.Observe(o, cmds, now()) || changed
 		if store.SearchTerminal(o.Search.State) || time.Now().After(deadline) {
 			return changed, nil
 		}

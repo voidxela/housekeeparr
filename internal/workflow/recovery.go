@@ -50,12 +50,15 @@ type Recovery struct {
 	// Settle bounds how long Observe waits for an accepted change to
 	// become visible (default 15s), polling every Poll (default 1s).
 	Settle, Poll time.Duration
+	// Windows bound the replacement-search observation.
+	Windows SearchWindows
 }
 
 // FromConnections returns an executor over the connections that support
 // the recovery operations.
 func FromConnections(clients []adapter.DownloadClient, managers []adapter.MediaManager, timing config.ActionTimingConfig) *Recovery {
-	r := &Recovery{Managers: map[string]Manager{}, Clients: map[string]Client{}, Settle: timing.Settle.Duration, Poll: timing.Poll.Duration}
+	r := &Recovery{Managers: map[string]Manager{}, Clients: map[string]Client{}, Settle: timing.Settle.Duration, Poll: timing.Poll.Duration,
+		Windows: WindowsFrom(timing)}
 	for _, c := range clients {
 		if w, ok := c.(Client); ok {
 			r.Clients[c.ID()] = w

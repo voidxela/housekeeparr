@@ -6,17 +6,25 @@ import (
 
 	"github.com/voidxela/housekeeparr/internal/adapter/arr"
 	"github.com/voidxela/housekeeparr/internal/domain"
+	"github.com/voidxela/housekeeparr/internal/policy"
 	"github.com/voidxela/housekeeparr/internal/store"
 	"github.com/voidxela/housekeeparr/internal/workflow"
 )
 
-// Outcome tracking bounds (implementation proposals): after noGrabAfter
-// without an observed replacement grab the outcome says so; after
-// outcomeWindow tracking ends.
-const (
-	noGrabAfter   = 24 * time.Hour
-	outcomeWindow = 7 * 24 * time.Hour
-)
+// outcomeBounds returns the configured outcome-tracking bounds: after
+// noGrabAfter without an observed replacement grab the outcome says so;
+// after outcomeWindow tracking ends.
+func (e *Engine) outcomeBounds() (noGrabAfter, outcomeWindow time.Duration) {
+	t := e.cfg.ActionTiming
+	noGrabAfter, outcomeWindow = t.NoGrabAfter.Duration, t.OutcomeWindow.Duration
+	if outcomeWindow <= 0 {
+		outcomeWindow = 7 * 24 * time.Hour
+	}
+	if noGrabAfter <= 0 {
+		noGrabAfter = 24 * time.Hour
+	}
+	return noGrabAfter, outcomeWindow
+}
 
 // trackOutcomes updates what has been observed after verified recoveries
 // (SPEC §7 step 6): a replacement grab is a present queue row of the same
@@ -41,21 +49,23 @@ func (e *Engine) trackOutcomes(tx *store.Tx, freshManagers, freshClients map[str
 	if err != nil {
 		return err
 	}
+	_, outcomeWindow := e.outcomeBounds()
+	windows := workflow.WindowsFrom(e.cfg.ActionTiming)
 	rowsBy := map[string][]store.QueueRecord{}
 	for _, o := range open {
 		before := o
 		searchChanged := false
 		if cmds, ok := commands[o.ManagerID]; ok {
-			searchChanged = workflow.ObserveSearch(&o, cmds, now)
+			searchChanged = windows.Observe(&o, cmds, now)
 		} else {
-			searchChanged = workflow.ExpireSearch(&o, now)
+			searchChanged = windows.Expire(&o, now)
 		}
 		switch {
 		case o.State == store.OutcomeCompleted || o.State == store.OutcomeUntracked:
 			// Download outcome settled; only the search is still followed.
 		case now.Sub(o.StartedAt) > outcomeWindow:
 			o.State = store.OutcomeUntracked
-			o.Note = "tracking ended after " + outcomeWindow.String() + " without an observed completion; check the manager's activity"
+			o.Note = "tracking ended after " + policy.HumanDuration(outcomeWindow) + " without an observed completion; check the manager's activity"
 		case freshManagers[o.ManagerID]:
 			rows, ok := rowsBy[o.ManagerID]
 			if !ok {
@@ -100,9 +110,9 @@ func (e *Engine) advanceOutcome(tx *store.Tx, o *store.RecoveryOutcome, rows []s
 			break
 		}
 		if o.GrabbedAt == nil {
-			if o.State == store.OutcomeAwaitingGrab && now.Sub(o.StartedAt) > noGrabAfter {
+			if noGrabAfter, _ := e.outcomeBounds(); o.State == store.OutcomeAwaitingGrab && now.Sub(o.StartedAt) > noGrabAfter {
 				o.State = store.OutcomeNoGrabYet
-				o.Note = "no replacement grab observed in " + noGrabAfter.String() +
+				o.Note = "no replacement grab observed in " + policy.HumanDuration(noGrabAfter) +
 					"; this is not evidence that no release exists (the search may have found none acceptable, or indexers may have failed): check the manager's history"
 			}
 			return nil
