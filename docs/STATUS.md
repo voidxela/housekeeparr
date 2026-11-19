@@ -36,9 +36,10 @@ correlated hold did not engage in these runs: the unrelated fixtures were
 stopped, and two stalls are below the threshold of 3. Probes past an
 engaged hold are covered by the fixture tests above.
 
-Not established here: `go test -race`, because this aarch64 host's 39-bit
-address space is unsupported by ThreadSanitizer (it runs in the hosted
-workflow's `race` job), and a real browser engine (`TestWebDeployment`
+`go test -race` cannot run on this aarch64 host's 39-bit address space.
+It passed for every package in the hosted workflow's new `race` job at
+`f468c7e`. That run also passed qBittorrent 25/25 and Deluge 8/8.
+Not established: a real browser engine (`TestWebDeployment`
 drives signed sessions and CSRF over HTTP with a cookie jar).
 
 ## Review and remediation — 2026-11-19

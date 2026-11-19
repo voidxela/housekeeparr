@@ -50,13 +50,12 @@ and the last two run tables in [compatibility.md](compatibility.md).
 This workspace is aarch64 with a 39-bit user address space, so
 `go test -race` cannot run locally. The hosted workflow
 (`.github/workflows/qbittorrent-verification.yml`, `workflow_dispatch`)
-has a `race` job for that. `/tmp` is RAM-backed. Set `TMPDIR` to the
+has a `race` job for that; it passed at `f468c7e` (run 44613995480). `/tmp` is RAM-backed. Set `TMPDIR` to the
 workspace volume for fixture runs and keep runs serial. Run
 `go clean -cache` if the disk fills.
 
 ## Remaining
 
-- The `race` job's result on the pushed `dev` head (see STATUS).
 - No real browser engine has driven the web interface. The deployment
   test uses an HTTP client with a cookie jar.
 - The default-timing daemon run used one client with the correlated hold
