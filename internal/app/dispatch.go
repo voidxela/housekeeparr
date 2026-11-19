@@ -16,15 +16,8 @@ import (
 	"github.com/voidxela/housekeeparr/internal/store"
 )
 
-// Automatic dispatch bounds that are not operator policy: how many live
-// evaluations (each a few reads) one cycle may spend, and the window and
-// count for the repeated-refusal circuit breaker (implementation
-// proposals).
-const (
-	maxLiveEvaluations = 5
-	refusalWindow      = 24 * time.Hour
-	refusalsToOpen     = 2
-)
+// Limit the live reads spent evaluating recovery proposals in one cycle.
+const maxLiveEvaluations = 5
 
 // DispatchReport summarises one automatic dispatch pass.
 type DispatchReport struct {
@@ -274,16 +267,13 @@ func allPacing(cs []action.Check) bool {
 	return true
 }
 
-// breakers returns the scopes ("client:<id>", "manager:<id>") automation
+// actionBreakers returns the scopes ("client:<id>", "manager:<id>") automation
 // must not act in, with the reason:
 //   - an action involving the scope is uncertain: until it is reviewed;
 //   - automatic actions there were definitely refused repeatedly within
 //     the refusal window (for example a rejected credential), which would
 //     otherwise repeat every cycle because refusals return their budget;
-//   - many downloads on one client qualify as stalled together, which
-//     suggests a shared cause (network, tracker, VPN) rather than bad
-//     releases; failing them would only blocklist good releases.
-func (s *Service) breakers(ctx context.Context, now time.Time) (map[string]string, error) {
+func (s *Service) actionBreakers(ctx context.Context, now time.Time) (map[string]string, error) {
 	out := map[string]string{}
 	open := func(scope, why string) {
 		if _, ok := out[scope]; !ok {
@@ -299,22 +289,48 @@ func (s *Service) breakers(ctx context.Context, now time.Time) (map[string]strin
 			open(sc, fmt.Sprintf("action #%d is uncertain and needs review (housekeeparr review %d)", in.ID, in.ID))
 		}
 	}
-	recent, err := s.st.Intents(ctx, store.IntentFilter{States: []store.IntentState{store.IntentFailed}, Limit: 200})
+	timing := s.cfg.ActionTiming
+	recent, err := s.st.Intents(ctx, store.IntentFilter{States: []store.IntentState{store.IntentFailed},
+		Origin: string(action.OriginAutomatic), UpdatedSince: now.Add(-timing.RefusalWindow.Duration)})
 	if err != nil {
 		return nil, err
 	}
 	refusals := map[string]int{}
 	for _, in := range recent {
-		if in.Origin != string(action.OriginAutomatic) || now.Sub(in.UpdatedAt) > refusalWindow {
-			continue
-		}
-		for _, sc := range intentScopes(in) {
+		for _, step := range in.Steps {
+			if step.State != store.StepFailed {
+				continue
+			}
+			var target struct {
+				ManagerID string `json:"manager_id"`
+				ClientID  string `json:"client_id"`
+			}
+			if json.Unmarshal(step.Target, &target) != nil {
+				continue
+			}
+			sc := ""
+			switch {
+			case target.ManagerID != "":
+				sc = "manager:" + target.ManagerID
+			case target.ClientID != "":
+				sc = "client:" + target.ClientID
+			default:
+				continue
+			}
 			refusals[sc]++
-			if refusals[sc] >= refusalsToOpen {
-				open(sc, fmt.Sprintf("%d automatic actions were refused here in the last %s (latest #%d: %s)",
-					refusals[sc], policy.HumanDuration(refusalWindow), in.ID, in.Explanation))
+			if refusals[sc] == timing.RefusalsToOpen {
+				open(sc, fmt.Sprintf("%d automatic requests were refused here in the last %s (including action #%d: %s)",
+					refusals[sc], policy.HumanDuration(timing.RefusalWindow.Duration), in.ID, in.Explanation))
 			}
 		}
+	}
+	return out, nil
+}
+
+func (s *Service) breakers(ctx context.Context, now time.Time) (map[string]string, error) {
+	out, err := s.actionBreakers(ctx, now)
+	if err != nil {
+		return nil, err
 	}
 	ts, err := s.st.Transfers(ctx, store.TransferFilter{PresentOnly: true})
 	if err != nil {
@@ -357,10 +373,10 @@ func (s *Service) breakers(ctx context.Context, now time.Time) (map[string]strin
 	}
 	l := s.cfg.Limits()
 	for c, n := range stalled {
-		if n >= l.CorrelatedStalls && 100*n >= l.CorrelatedPercent*active[c] {
-			open("client:"+c, fmt.Sprintf("%d of %d active downloads on %s are stalled together (threshold %d and %d%%, from %s); that points to a shared "+
+		if out["client:"+c] == "" && n >= l.CorrelatedStalls && 100*n >= l.CorrelatedPercent*active[c] {
+			out["client:"+c] = fmt.Sprintf("%d of %d active downloads on %s are stalled together (threshold %d and %d%%, from %s); that points to a shared "+
 				"cause (network, tracker, VPN, or the client itself) rather than bad releases, so automatic recovery is held there until fewer are stalled "+
-				"(manual actions remain possible)", n, active[c], c, l.CorrelatedStalls, l.CorrelatedPercent, l.From("correlated_stalls")))
+				"(manual actions remain possible)", n, active[c], c, l.CorrelatedStalls, l.CorrelatedPercent, l.From("correlated_stalls"))
 		}
 	}
 	return out, nil

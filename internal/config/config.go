@@ -88,9 +88,11 @@ type Config struct {
 
 // ActionTimingConfig bounds preview and executor observation windows.
 type ActionTimingConfig struct {
-	PreviewTTL Duration `toml:"preview_ttl"`
-	Settle     Duration `toml:"settle"`
-	Poll       Duration `toml:"poll"`
+	PreviewTTL     Duration `toml:"preview_ttl"`
+	Settle         Duration `toml:"settle"`
+	Poll           Duration `toml:"poll"`
+	RefusalWindow  Duration `toml:"refusal_window"`
+	RefusalsToOpen int      `toml:"refusals_to_open"`
 }
 
 // SearchConfig controls pacing and observation of Housekeeparr searches.
@@ -454,6 +456,7 @@ func Defaults() Config {
 		},
 		ActionTiming: ActionTimingConfig{
 			PreviewTTL: Duration{5 * time.Minute}, Settle: Duration{15 * time.Second}, Poll: Duration{time.Second},
+			RefusalWindow: Duration{24 * time.Hour}, RefusalsToOpen: 2,
 		},
 		Search: SearchConfig{
 			Spacing: Duration{15 * time.Minute}, MissingInterval: Duration{time.Hour},
@@ -550,6 +553,12 @@ func validate(cfg *Config, md toml.MetaData) []Problem {
 	}
 	if timing.Poll.Duration <= 0 || timing.Poll.Duration > timing.Settle.Duration {
 		errf("action_timing.poll", "must be positive and at most action_timing.settle")
+	}
+	if timing.RefusalWindow.Duration <= 0 || timing.RefusalWindow.Duration > cfg.Retention.AuditEvents.Duration {
+		errf("action_timing.refusal_window", "must be positive and fit within retention.audit_events")
+	}
+	if timing.RefusalsToOpen < 1 {
+		errf("action_timing.refusals_to_open", "must be positive")
 	}
 	search := cfg.Search
 	for _, field := range []struct {

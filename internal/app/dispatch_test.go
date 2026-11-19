@@ -1743,3 +1743,63 @@ preview_ttl = "2m"
 		t.Fatalf("search preview TTL %s", got)
 	}
 }
+
+func TestRefusalBreakerUsesTheFailedDependencyAndCoversSearches(t *testing.T) {
+	w := newWorldWith(t, "automatic", 20, missingRule+`
+[[rule]]
+name = "movie searches"
+priority = 1
+[rule.automation]
+missing_search = true
+[rule.match]
+manager = "radarr"
+`)
+	action.Tested = append(action.Tested,
+		action.TestedWorkflow{Workflow: policy.WorkflowMissingSearch, Manager: adapter.KindSonarr, ManagerVersion: "0.0.0-fake"},
+		action.TestedWorkflow{Workflow: policy.WorkflowMissingSearch, Manager: adapter.KindRadarr, ManagerVersion: "0.0.0-fake"})
+	w.mgr.SetMissing(fake.MissingEpisode(102, 3, "Show S01E02", t0.Add(-48*time.Hour)))
+	w.radarr.SetMissing(fake.MissingMovie(5, "Available movie"))
+	ctx := context.Background()
+	if err := w.st.Write(ctx, func(tx *store.Tx) error {
+		// Unrelated manual failures must not push the recent automatic refusals out of view.
+		for i := range 203 {
+			origin := "manual"
+			if i < 2 {
+				origin = "automatic"
+			}
+			id, err := tx.CreateIntent(store.Intent{
+				Key: "refused-" + strconv.Itoa(i), Workflow: string(policy.WorkflowNoProgressRecovery), Origin: origin,
+				Subject: []byte(`{"client_id":"qbit","native_id":"aa"}`),
+				Steps:   []store.Step{{Op: "manager.queue.remove", Target: []byte(`{"manager_id":"sonarr"}`)}},
+			}, t0)
+			if err != nil {
+				return err
+			}
+			if err := tx.SetIntentState(id, store.IntentExecuting, "", t0); err != nil {
+				return err
+			}
+			if err := tx.BeginStep(id, 1, t0, nil); err != nil {
+				return err
+			}
+			if err := tx.FinishStep(id, 1, store.StepFailed, nil, "forbidden", t0); err != nil {
+				return err
+			}
+			if err := tx.SetIntentState(id, store.IntentFailed, "forbidden", t0); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if r := w.run(10 * time.Minute)[0]; r.Breakers["manager:sonarr"] == "" || r.Breakers["client:qbit"] != "" {
+		t.Errorf("wrong dependencies held: %v", r.Breakers)
+	}
+	w.runSearches(30 * time.Minute)
+	if got := w.mgr.Searches(); len(got) != 0 {
+		t.Errorf("searched with the held manager: %v", got)
+	}
+	if got := w.radarr.Searches(); len(got) != 1 || got[0][0] != 5 {
+		t.Errorf("healthy manager failed to search: %v", got)
+	}
+}

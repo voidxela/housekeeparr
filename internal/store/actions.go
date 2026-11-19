@@ -567,10 +567,12 @@ func (s *Store) LockHolder(ctx context.Context, subject string) (int64, error) {
 
 // IntentFilter selects intents.
 type IntentFilter struct {
-	ID        int64
-	States    []IntentState
-	FindingID int64
-	Limit     int
+	ID           int64
+	States       []IntentState
+	FindingID    int64
+	Origin       string
+	UpdatedSince time.Time
+	Limit        int
 }
 
 // Intents lists intents, newest first, with their steps and locks.
@@ -594,6 +596,14 @@ func (s *Store) Intents(ctx context.Context, f IntentFilter) ([]Intent, error) {
 	if f.FindingID != 0 {
 		where = append(where, "finding_id=?")
 		args = append(args, f.FindingID)
+	}
+	if f.Origin != "" {
+		where = append(where, "origin=?")
+		args = append(args, f.Origin)
+	}
+	if !f.UpdatedSince.IsZero() {
+		where = append(where, "updated_at>=?")
+		args = append(args, ms(f.UpdatedSince))
 	}
 	if len(where) > 0 {
 		q += " WHERE " + strings.Join(where, " AND ")

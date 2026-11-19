@@ -170,6 +170,10 @@ func (s *Service) DispatchSearches(ctx context.Context, fresh map[string]bool) (
 	if err := s.followSearches(ctx, s.now()); err != nil {
 		return rep, err
 	}
+	breakers, err := s.actionBreakers(ctx, s.now())
+	if err != nil {
+		return rep, err
+	}
 	items, err := s.st.MissingContent(ctx, store.MissingFilter{PresentOnly: true, Limit: 500})
 	if err != nil {
 		return rep, err
@@ -179,6 +183,12 @@ func (s *Service) DispatchSearches(ctx context.Context, fresh map[string]bool) (
 			break
 		}
 		if !fresh[it.ManagerID] {
+			continue
+		}
+		if why := breakers["manager:"+it.ManagerID]; why != "" {
+			if len(rep.Waiting) < 5 {
+				rep.Waiting = append(rep.Waiting, fmt.Sprintf("%s|%s: manager held — %s", it.ManagerID, it.ContentKey, why))
+			}
 			continue
 		}
 		pv, err := s.PreviewSearch(ctx, it.ManagerID, it.ContentKey, action.OriginAutomatic)
