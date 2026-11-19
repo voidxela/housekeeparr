@@ -678,3 +678,27 @@ libtorrent 2.0.11.0 produced `Operation not permitted` opening an
 explains the incomplete fixture evidence on the managed workspace.
 The hosted verification uses a disposable Debian 13 container for
 Deluge's Python 3.13 ABI and the harness's normal nested namespaces.
+
+## Default-timing and evidence-bound runs — 2026-11-19
+
+Linux aarch64 workspace (kernel 6.6, 39-bit user address space), Go
+**1.27.4**, qBittorrent **5.3.0** (WebUI 2.16.2), Sonarr **4.0.20.3014**,
+Radarr **6.4.4.10685**, checksum-pinned releases, synthetic fixtures, and
+one loopback-only namespace per run, run serially from a worktree pinned to
+the listed commit. `--daemon` adds `TestDaemonRecovery`: the production
+`housekeeparr run --headless` loop at the accepted default timing (10 min
+polling with jitter, 30 min grace, 90 min window, 3 observations,
+`actions_per_cycle` 1, correlated hold at 3 stalls and 50 %) with
+`no_progress_recovery` automatic. It stops the other fixture downloads,
+grabs one episode and one film that cannot progress, stops the worker at
+50 minutes, restarts it in paused mode until both qualify, and then
+restarts it in automatic mode.
+
+| Commit | Selection | Result |
+| --- | --- | --- |
+| `ab382a3` | `--daemon --only '^TestDaemonRecovery$'` | **Failed after 61 s, in the test.** It read the state directory before the worker's first cycle had created it. `7acdc14` waits up to 3 min for the store. |
+| `7acdc14` | Same | **Setup failed before tests.** qBittorrent did not stop the complete `errored` fixture before deletion (an existing harness readiness check). Nothing was sent; rerun unchanged. |
+| `7acdc14` | Same | **Product behaviour as expected; the test failed on two of its own assertions.** Grabs at 15:55Z. At 50 min: two observations, no qualification, no intents. SIGTERM stopped the worker cleanly. The paused restart 2 min later kept both streaks (no resets) and observed every 10 min. Both qualified at 17:59:36Z: 2 h 4 min after the client added them, from 10 observations covering 1 h 31 min. Grace ended 30 min after the client's added time, not after the first observation. The paused worker sent nothing and evaluated nothing. After the automatic restart, the film was recovered at 18:00:06Z (22 s, first cycle) and the episode at 18:10:17Z (next cycle; its evaluation said the pass had used its one action slot). Both blocklisted the grab with one `downloadFailed` and no new `grabbed`, left the payload unchanged, stopped the public torrents with data retained, and triggered the manager-native replacement search. The test computed the spacing with the intents in newest-first order (−10 min 11 s) and checked Radarr's command list 10 min after the film's recovery. By then Radarr had dropped the completed `MoviesSearch`; its log shows the search ran. The product had observed it during the action itself. `4a7bfa7` verifies each recovery as soon as it is dispatched and orders intents by time. |
+| `4a7bfa7` | Unselected, both managers | **25 of 25 passed**, including the new `TestWebDeployment` (direct TLS, and a trusted proxy that preserves or rewrites `Host`), Sonarr history paging on the released manager (5 records read page by page, reported incomplete at a 2-page bound), one-item wanted-list windows on both managers (15 and 10 items, in order, wrapping), all five tracker-dependent preserved-data cases, and both automatic tests. |
+| `4a7bfa7` | `--clients transmission --manager-client transmission --tr 4.0.6 --only 'PartialPackWorkflow\|ProactiveSearch\|PreservedDataFailure'`, Transmission 4.0.6 (38c164933e) | **8 of 8 passed**, including Sonarr history paging and one-item wanted-list windows on both managers (15 and 3 items), the Sonarr pack clearance across restart, and automatic preserved-data recovery. Fixture scratch was on the workspace volume (`TMPDIR`). |
+| `4a7bfa7` | `--daemon --only '^TestDaemonRecovery$'` | **Passed (2 h 16 min).** Grabs at 18:40Z. At 50 min: two observations and no intents. The paused restart kept both streaks with no resets. Both qualified at 20:43:14Z, 2 h 3–4 min after the client added them (10 observations over 1 h 31 min). The automatic restart recovered the episode 9 s after resuming (first cycle) and the film one cycle later, at 10 min 31 s. Each recovery was verified when dispatched: blocklisted grab, payload unchanged, public torrent stopped with data retained, and the manager-native `EpisodeSearch`/`MoviesSearch` seen in the command list. |

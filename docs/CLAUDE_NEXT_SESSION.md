@@ -1,9 +1,10 @@
 # Housekeeparr continuation
 
-Start from `review/remediation`, based on `origin/dev` at `3d08077`.
-The latest Go source checkpoint is `63cda18`. Read [AGENTS.md](../AGENTS.md),
-[SPEC.md](SPEC.md), the latest review section in [STATUS.md](STATUS.md), and
-the continuation table in [compatibility.md](compatibility.md).
+Work on `dev`. `review/remediation` (`21638d8`) was fast-forwarded into it.
+Read [AGENTS.md](../AGENTS.md), [SPEC.md](SPEC.md), the
+"Default-timing validation" section at the top of [STATUS.md](STATUS.md),
+and the last two run tables in [compatibility.md](compatibility.md).
+`main`, releases and deployments were out of scope and are unchanged.
 
 ## Preserve the workflow contracts
 
@@ -12,56 +13,54 @@ the continuation table in [compatibility.md](compatibility.md).
   redownloads in v1.
 - Journal each external workflow request and hold ambiguous outcomes for
   review. Require current positive evidence and keep unknown privacy,
-  sizes, and availability intact.
+  sizes, and availability intact. Incomplete evidence (truncated history,
+  a partial wanted-list read) never authorizes a write.
 - Apply the scoped `private_recovery` mode to private and unknown-privacy
   transfers. The default keeps the torrent running and accounts for it as
-  retained. Metadata recovery accepts unknown privacy only while the
-  client can positively establish that metadata is still absent.
+  retained.
 - Keep exact-version write registrations tied to released-instance runs.
-  Both Transmission lines use legacy RPC. Use a new migration and a
-  previous-schema upgrade test for database changes.
-- Use focused, subject-only conventional commits. Exercise released
-  fixtures serially and record versions, commit, selection, outcomes, and
-  mechanisms for failures in compatibility.md.
+  Use a new migration and a previous-schema upgrade test for database
+  changes.
+- Use focused, subject-only conventional commits. Run released fixtures
+  serially from a worktree pinned to the tested commit and record
+  versions, commit, selection, outcomes and failure mechanisms in
+  compatibility.md.
 
-## Current behavior
+## What this session established
 
-Proactive searches use fresh, available, due missing content across
-managers. They revalidate file, availability, and queue state, respect
-scoped holds, and follow the receipt of the manager's actual command.
-Search pacing and a verified clearance's targeted follow-ups are
-durable. Pack follow-ups recover the original transfer permission from
-retained evidence and use the partial-pack workflow's policy.
+- The production daemon loop at the accepted default timing recovers two
+  genuinely stalled grabs on released Sonarr/Radarr with qBittorrent
+  5.3.0. Both qualified about 2 h after the client added them. A paused
+  restart kept the streaks and sent nothing. The automatic restart
+  recovered one download per cycle (`scripts/it/run.sh --daemon`, about
+  2¼ h).
+- The correlated-stall hold now lets one spaced probe through while the
+  client shows verified progress elsewhere (`correlated_probe_interval`,
+  1 h). A hold with no progress anywhere notifies daily.
+- Manager history is paged, and incomplete history refuses pack clearance.
+  Wanted lists beyond the read bound are read in rotating windows.
+- Web actions outlive the request. Listener timeouts and the
+  manager-native outcome windows are configurable; their defaults are
+  unchanged, except the write timeout, which went from 30 s to 2 min.
+- `TestWebDeployment` covers signed sessions and CSRF over direct TLS and
+  behind a trusted proxy, inside the namespace.
 
-Tracker results with missing or malformed evidence stay unknown.
-Clients report cap-limited tracker coverage in Attention with a
-per-client setting. Repeated definite refusals hold the dependency
-that rejected the write. An ambiguous outcome retains its journal
-review hold.
+## Host notes
 
-The outbox expires undelivered events when a destination is unavailable
-or removed. Schema 19 tracks per-target webhook attempts before sending
-and preserves the hourly usage of verified deliveries from schema 18.
-Web session and sign-in bounds, request timing, and outbox settings have
-trial defaults in the example configuration.
+This workspace is aarch64 with a 39-bit user address space, so
+`go test -race` cannot run locally. The hosted workflow
+(`.github/workflows/qbittorrent-verification.yml`, `workflow_dispatch`)
+has a `race` job for that. `/tmp` is RAM-backed. Set `TMPDIR` to the
+workspace volume for fixture runs and keep runs serial. Run
+`go clean -cache` if the disk fills.
 
-## Validation and remaining work
+## Remaining
 
-The compatibility table tracks the exact test runs. Build, vet, gofmt,
-uncached unit tests, the static Linux build, and the full race suite
-passed on the latest Go source. Focused race checks also passed five
-times across app, engine, action, web and notify. GitHub-hosted
-Ubuntu 24.04 ran the complete qBittorrent 5.3.0 suite with both managers
-in the normal loopback-only namespace. On the managed workspace,
-libtorrent's denied `AF_NETLINK` socket can prevent qBittorrent tracker
-announces and pause Deluge's session. The final-source hosted Linux workflow passed 24 unselected qBittorrent
-checks and eight selected Deluge checks in serial. Its Deluge step
-uses a pinned Debian 13 container for the Python 3.13 packages and
-constructs the harness's nested loopback-only namespace. Put `TMPDIR`
-on the larger workspace volume for batches that retain fixture
-directories.
-
-Continue default-length daemon-loop and production-trial verification
-from SPEC. Prioritize broad pack histories, wanted queues beyond the
-configured observation bound, and real reverse-proxy/TLS browser
-checks. Use released-instance evidence for changes to assertions.
+- The `race` job's result on the pushed `dev` head (see STATUS).
+- No real browser engine has driven the web interface. The deployment
+  test uses an HTTP client with a cookie jar.
+- The default-timing daemon run used one client with the correlated hold
+  below threshold. A longer production trial with representative
+  installations should measure probes past an engaged hold and recovery
+  latency with real swarms.
+- The remaining v1 scope in STATUS.md.

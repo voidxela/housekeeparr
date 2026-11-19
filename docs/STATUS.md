@@ -10,6 +10,37 @@ repository · **unverified** = implemented, but behaviour against real
 released applications has not been established · **remaining** = not
 implemented.
 
+## Default-timing validation — 2026-11-19 (continuation)
+
+`review/remediation` (`21638d8`, tested as `63cda18`) was fast-forwarded
+into `dev`. The work below follows it on `dev`. The
+[run record](compatibility.md#default-timing-and-evidence-bound-runs--2026-11-19)
+lists the exact runs. Each fix has a regression test that failed before it.
+
+| Finding and fix | Commits |
+| --- | --- |
+| No real daemon-loop evidence existed at default timing. `TestDaemonRecovery` (`scripts/it/run.sh --daemon`) runs `housekeeparr run` against released instances through a stop, a paused restart and an automatic restart. | `ab382a3`, `7acdc14`, `4a7bfa7` |
+| The correlated-stall hold could keep independently recoverable downloads waiting indefinitely beside long-standing stalls the user does not manage. While another download on the client made verified progress within its window, one held recovery now passes per `correlated_probe_interval` (default 1 h, 0 disables). A hold with no progress anywhere notifies once per client per day. | `a77a086` |
+| Deterministic clock tests pin the default boundaries. Recovery comes at 120 min with every poll, 130 min after one missed poll, and 120 min across a worker restart within the gap bound. After a 30-minute outage the streak restarts and recovery comes at 170 min. | `a021d77`, `d8e3101` |
+| Pack import evidence read one 200-record history page, so a long history could hide imports. History now pages (bounded by `HistoryMaxPages`), requires `totalRecords`, and reports a truncated or shifting read as incomplete. Pack clearance refuses with an explanation and the baseline fails closed. Recovery and observation tolerate incomplete reads because they need only recent records. | `2178f9d` |
+| Wanted items beyond the 500-item read bound were never read, so they were never searched. Reads now rotate through the list in bounded windows, with a cursor kept in `meta`. Only a read from page 1 to the end counts as complete. The finding explains the rotation and needs no operator action. | `3ec58f6`, `1bbee8d` |
+| A manual web action ran on the request context, and the 30 s write timeout was shorter than an action can take, so a successful action could reach the browser as an error. Actions now outlive the request. The listener timeouts are configurable (`[web]`, write timeout at least 6 × settle). A cross-origin refusal behind a trusted proxy names the `Host` header. | `3043136`, `7dd669c` |
+| The manager-native outcome windows were compiled constants. They are configurable under `[action_timing]` with the same defaults. | `92cf63e` |
+
+Default-timing daemon runs (`7acdc14`, and `4a7bfa7` with every fix above): both stalled grabs qualified about 2 h 4
+min after the client added them. Restarting the worker in paused mode kept
+both streaks and sent nothing. The automatic restart recovered one stalled
+download in its first cycle and the other one cycle later (the one-action
+pacing), with all effects verified on the managers and the client. The
+correlated hold did not engage in these runs: the unrelated fixtures were
+stopped, and two stalls are below the threshold of 3. Probes past an
+engaged hold are covered by the fixture tests above.
+
+Not established here: `go test -race`, because this aarch64 host's 39-bit
+address space is unsupported by ThreadSanitizer (it runs in the hosted
+workflow's `race` job), and a real browser engine (`TestWebDeployment`
+drives signed sessions and CSRF over HTTP with a cookie jar).
+
 ## Review and remediation — 2026-11-19
 
 The continuation uses the branch based on `origin/dev` at `3d08077`.
