@@ -645,3 +645,27 @@ received no announces throughout the run. The preserved-data cases failed
 while collecting the prerequisite tracker rejection, before Housekeeparr
 sent a workflow mutation. The harness recognizes that reported client
 session failure and surfaces it instead of waiting out the tracker deadline.
+
+
+## Review continuation runs
+
+The two-manager runs use Sonarr **4.0.20.3014** and Radarr
+**6.4.4.10685**, Go **1.27.4**, and disposable loopback-only namespaces.
+The checked-out commit is listed for each run. A local commit followed by
+a published commit in parentheses identifies the same Git tree.
+
+| Date | Commit | Runner, client, and selection | Result |
+| --- | --- | --- | --- |
+| 2026-11-17 | `f4cbfac` | GitHub-hosted Ubuntu 24.04 amd64, unselected qBittorrent 5.3.0 with both managers | Setup stopped before instances started. The isolated process could not access the runner-home fixture paths. |
+| 2026-11-17 | `a3c3037` | GitHub-hosted Ubuntu 24.04 amd64, unselected qBittorrent 5.3.0 with both managers | **24 of 24 passed**, including all five tracker-dependent cases, automatic no-progress and preserved-data recovery, both proactive searches, and the Sonarr pack clearance and restart. [Run 44201215456](https://github.com/voidxela/housekeeparr/actions/runs/44201215456) |
+| 2026-11-19 | `12475e3` | Linux amd64 workspace, selected rTorrent 0.9.8 / libtorrent 0.13.8 via lighttpd 1.4.79 | Fixtures started. The unprimed Go module cache blocked compilation inside the namespace. All eight required tests failed to run. |
+| 2026-11-19 | `12475e3` | Linux amd64 workspace, selected Deluge 2.2.0 / libtorrent 2.0.11.0 | **2 of 8 passed.** Both managers accepted the proactive searches and produced grabs. Deluge reported the new torrents paused at zero verified bytes, which prevented tracker rejection observations and the pack's imports. |
+
+The eight-test selection above is
+`--only 'PartialPackWorkflow|ProactiveSearch|PreservedDataFailure'`.
+For Deluge, a separate loopback-namespace probe with the same pinned
+libtorrent 2.0.11.0 produced `Operation not permitted` opening an
+`AF_NETLINK` socket, a session-paused alert, and no listening socket. This
+explains the incomplete fixture evidence on the managed workspace.
+The hosted verification uses a disposable Debian 13 container for
+Deluge's Python 3.13 ABI and the harness's normal nested namespaces.
