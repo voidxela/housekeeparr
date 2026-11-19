@@ -300,18 +300,16 @@ func cmdRun(args []string, out, errOut io.Writer) int {
 		}
 		// Notifications go out after the cycle and dispatch; a failing
 		// notification path only affects notifications.
-		if len(cfg.Notify) > 0 {
-			urls := map[string]string{}
-			for _, n := range cfg.Notify {
-				urls[n.ID] = secrets["notify."+n.ID+".url"]
-			}
-			nr, err := notify.Deliver(ctx, st, cfg.Notify, urls, nil, time.Now())
-			switch {
-			case err != nil:
-				log.Error("notification delivery stopped", "err", err)
-			case nr.Sent+nr.Failed+nr.Dropped+nr.Held > 0:
-				log.Info("notifications", "sent", nr.Sent, "failed", nr.Failed, "dropped", nr.Dropped, "held_by_rate_limit", nr.Held)
-			}
+		urls := make(map[string]string, len(cfg.Notify))
+		for _, n := range cfg.Notify {
+			urls[n.ID] = secrets["notify."+n.ID+".url"]
+		}
+		nr, err := notify.Deliver(ctx, st, cfg.Notify, urls, nil, time.Now())
+		switch {
+		case err != nil:
+			log.Error("notification delivery stopped", "err", err)
+		case nr.Sent+nr.Failed+nr.Dropped+nr.Held > 0:
+			log.Info("notifications", "sent", nr.Sent, "failed", nr.Failed, "dropped", nr.Dropped, "held_by_rate_limit", nr.Held)
 		}
 	}
 	eng.OnCycle(dispatch)

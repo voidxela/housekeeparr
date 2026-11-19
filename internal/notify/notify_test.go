@@ -99,6 +99,33 @@ func TestOpenedAndResolvedFindingsAreDelivered(t *testing.T) {
 }
 
 // Many findings at once (a shared outage) become one digest.
+func TestNotificationsExpireWhenTargetIsUnavailableOrRemoved(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		targets []config.NotifyConfig
+	}{
+		{name: "no webhook URL", targets: []config.NotifyConfig{target(10)}},
+		{name: "target removed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			st := open(t, t.TempDir())
+			defer st.Close()
+			enqueue(t, st, []config.NotifyConfig{target(10)}, findings.Result{Opened: []domain.Finding{finding(1, domain.SeverityWarning)}}, t0)
+			if r, err := Deliver(ctx, st, tc.targets, nil, nil, t0.Add(23*time.Hour)); err != nil || r.Dropped != 0 {
+				t.Fatalf("event dropped early: %+v, %v", r, err)
+			}
+			if r, err := Deliver(ctx, st, tc.targets, nil, nil, t0.Add(25*time.Hour)); err != nil || r.Dropped != 1 {
+				t.Fatalf("old event was not recorded as expired: %+v, %v", r, err)
+			}
+			rows, err := st.RecentNotifications(ctx, 1)
+			if err != nil || len(rows) != 1 || rows[0].DroppedAt == nil || rows[0].Attempts != 0 {
+				t.Fatalf("outbox after expiry: %+v, %v", rows, err)
+			}
+		})
+	}
+}
+
 func TestBurstBecomesDigest(t *testing.T) {
 	st := open(t, t.TempDir())
 	defer st.Close()

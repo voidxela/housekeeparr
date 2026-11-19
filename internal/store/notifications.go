@@ -121,3 +121,15 @@ func (t *Tx) DropNotification(id int64, now time.Time, reason string) error {
 	_, err := t.exec(`UPDATE notification_events SET dropped_at=?, last_error=? WHERE id=? AND sent_at IS NULL`, ms(now), reason, id)
 	return err
 }
+
+// ExpireNotifications records undelivered events that have exceeded their age limit.
+func (t *Tx) ExpireNotifications(now time.Time, maxAge time.Duration) (int, error) {
+	res, err := t.exec(`UPDATE notification_events SET dropped_at=?, last_error=?
+		WHERE sent_at IS NULL AND dropped_at IS NULL AND created_at < ?`, ms(now),
+		"not delivered within "+maxAge.String(), ms(now.Add(-maxAge)))
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	return int(n), err
+}

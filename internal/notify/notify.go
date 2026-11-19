@@ -139,6 +139,13 @@ type Report struct {
 // skipped (its events age out).
 func Deliver(ctx context.Context, st *store.Store, targets []config.NotifyConfig, urls map[string]string, client *http.Client, now time.Time) (Report, error) {
 	var rep Report
+	if err := st.Write(ctx, func(tx *store.Tx) error {
+		var err error
+		rep.Dropped, err = tx.ExpireNotifications(now, maxAge)
+		return err
+	}); err != nil {
+		return Report{}, err
+	}
 	webhookClient := http.Client{Timeout: timeout}
 	if client != nil {
 		webhookClient = *client
@@ -158,15 +165,6 @@ func Deliver(ctx context.Context, st *store.Store, targets []config.NotifyConfig
 			return rep, err
 		}
 		for _, n := range due {
-			if now.Sub(n.CreatedAt) > maxAge {
-				if err := st.Write(ctx, func(tx *store.Tx) error {
-					return tx.DropNotification(n.ID, now, "not delivered within "+maxAge.String())
-				}); err != nil {
-					return rep, err
-				}
-				rep.Dropped++
-				continue
-			}
 			if sent >= tg.MaxPerHour {
 				rep.Held++
 				continue
