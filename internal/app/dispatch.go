@@ -71,7 +71,7 @@ func (s *Service) DispatchAutomatic(ctx context.Context, fresh map[string]bool) 
 		return rep, nil
 	}
 	now := s.now()
-	breakers, err := s.breakers(ctx, now)
+	breakers, corr, err := s.breakers(ctx, now)
 	if err != nil {
 		return rep, err
 	}
@@ -92,13 +92,25 @@ func (s *Service) DispatchAutomatic(ctx context.Context, fresh map[string]bool) 
 		if err != nil {
 			return rep, err
 		}
+		held, probe := "", ""
+		if pv.Proposal != nil {
+			held = heldBy(breakers, pv.Proposal)
+			// A correlated hold refuted by progress elsewhere on the client
+			// lets one probe through; any other breaker still holds.
+			if c := "client:" + pv.Proposal.Planned.ClientID; held != "" && corr[c].probe && breakers["manager:"+pv.Proposal.Planned.ManagerID] == "" {
+				held, probe = "", c
+			}
+		}
 		switch {
 		case pv.Proposal == nil:
 			ev.Result, ev.Detail = store.EvalIneligible, pv.NoAction
 		case !pv.Proposal.Eligible():
 			ev.Result, ev.Detail, ev.NextAt = s.classify(ctx, pv.Proposal, now)
-		case heldBy(breakers, pv.Proposal) != "":
-			ev.Result, ev.Detail = store.EvalHeld, heldBy(breakers, pv.Proposal)
+		case held != "":
+			ev.Result, ev.Detail = store.EvalHeld, held
+			if h, ok := corr["client:"+pv.Proposal.Planned.ClientID]; ok {
+				ev.NextAt = h.next
+			}
 		case dispatched >= limit || live >= maxLiveEvaluations:
 			ev.Result = store.EvalWaiting
 			ev.Detail = fmt.Sprintf("eligible; this pass already used its %d action slot(s) or live-evaluation bound; it is considered again next cycle", limit)
@@ -116,18 +128,37 @@ func (s *Service) DispatchAutomatic(ctx context.Context, fresh map[string]bool) 
 				dispatched++
 				ev.Result, ev.IntentID, outcome = store.EvalDispatched, res.IntentID, res.State
 				ev.Detail = fmt.Sprintf("action #%d %s: %s", res.IntentID, res.State, res.Detail)
+				if probe != "" {
+					// The probe is used: the rest of the client stays held.
+					ev.Detail = "correlated-stall probe (" + corr[probe].reason + "): " + ev.Detail
+					h := corr[probe]
+					h.probe = false
+					next := now.Add(s.cfg.Limits().CorrelatedProbeInterval)
+					h.next = &next
+					corr[probe] = h
+				}
 				if err != nil {
 					ev.Detail += " (" + err.Error() + ")"
 				}
 			}
 		}
-		note, notifyIt := automationNotice(f, ev, outcome, now)
+		notes := []notify.Event{}
+		if note, ok := automationNotice(f, ev, outcome, now); ok {
+			notes = append(notes, note)
+		}
+		if ev.Result == store.EvalHeld && pv.Proposal != nil {
+			if h, ok := corr["client:"+pv.Proposal.Planned.ClientID]; ok && !h.probing {
+				notes = append(notes, correlatedHoldNotice(pv.Proposal.Planned.ClientID, h.reason, now))
+			}
+		}
 		if err := s.st.Write(ctx, func(tx *store.Tx) error {
 			if err := tx.SaveEvaluation(ev); err != nil {
 				return err
 			}
-			if notifyIt {
-				return notify.EnqueueEvent(tx, s.cfg.Notify, note, now)
+			for _, n := range notes {
+				if err := notify.EnqueueEvent(tx, s.cfg.Notify, n, now); err != nil {
+					return err
+				}
 			}
 			return nil
 		}); err != nil {
@@ -327,14 +358,27 @@ func (s *Service) actionBreakers(ctx context.Context, now time.Time) (map[string
 	return out, nil
 }
 
-func (s *Service) breakers(ctx context.Context, now time.Time) (map[string]string, error) {
+// correlatedHold is a correlated-stall hold on one client. probing means
+// another download there made verified progress within its own no-progress
+// window, refuting a client-wide cause (network, VPN, the client itself):
+// one recovery may then pass per probe interval (probe), and next is when
+// the following one may. A tracker-wide outage is not refuted by progress
+// on other trackers, which is why probes are spaced rather than unlimited.
+type correlatedHold struct {
+	reason  string
+	probing bool
+	probe   bool
+	next    *time.Time
+}
+
+func (s *Service) breakers(ctx context.Context, now time.Time) (map[string]string, map[string]correlatedHold, error) {
 	out, err := s.actionBreakers(ctx, now)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	ts, err := s.st.Transfers(ctx, store.TransferFilter{PresentOnly: true})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	// A transfer whose grab an earlier recovery already failed (for example
 	// a private one left running) is no longer a recovery candidate: it is
@@ -344,11 +388,11 @@ func (s *Service) breakers(ctx context.Context, now time.Time) (map[string]strin
 	// release makes it a candidate like any other.
 	recovered, err := s.st.RecoveredDownloads(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	qs, err := s.st.QueueItems(ctx, store.QueueFilter{PresentOnly: true})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	associated := map[string]bool{}
 	for _, q := range qs {
@@ -356,7 +400,7 @@ func (s *Service) breakers(ctx context.Context, now time.Time) (map[string]strin
 			associated[store.HandledKey(q.MatchClientID, q.MatchNativeID)] = true
 		}
 	}
-	active, stalled := map[string]int{}, map[string]int{}
+	active, stalled, progressing := map[string]int{}, map[string]int{}, map[string]int{}
 	for _, t := range ts {
 		// Metadata acquisition counts too: magnets stalling together on
 		// one client point to DHT, network or VPN trouble.
@@ -367,16 +411,68 @@ func (s *Service) breakers(ctx context.Context, now time.Time) (map[string]strin
 			continue
 		}
 		active[t.ClientID]++
-		if t.Assessment != nil && t.Assessment.Status == policy.StatusQualified {
+		a := t.Assessment
+		switch {
+		case a == nil:
+		case a.Status == policy.StatusQualified:
 			stalled[t.ClientID]++
+		case a.LastProgressAt != nil && a.Window > 0 && now.Sub(*a.LastProgressAt) <= a.Window:
+			progressing[t.ClientID]++
 		}
 	}
 	l := s.cfg.Limits()
+	corr := map[string]correlatedHold{}
+	var lastProbe map[string]time.Time
 	for c, n := range stalled {
-		if out["client:"+c] == "" && n >= l.CorrelatedStalls && 100*n >= l.CorrelatedPercent*active[c] {
-			out["client:"+c] = fmt.Sprintf("%d of %d active downloads on %s are stalled together (threshold %d and %d%%, from %s); that points to a shared "+
-				"cause (network, tracker, VPN, or the client itself) rather than bad releases, so automatic recovery is held there until fewer are stalled "+
-				"(manual actions remain possible)", n, active[c], c, l.CorrelatedStalls, l.CorrelatedPercent, l.From("correlated_stalls"))
+		sc := "client:" + c
+		if out[sc] != "" || n < l.CorrelatedStalls || 100*n < l.CorrelatedPercent*active[c] {
+			continue
+		}
+		why := fmt.Sprintf("%d of %d active downloads on %s are stalled together (threshold %d and %d%%, from %s); that points to a shared "+
+			"cause (network, tracker, VPN, or the client itself) rather than bad releases, so automatic recovery is held there until fewer are stalled "+
+			"(manual actions remain possible)", n, active[c], c, l.CorrelatedStalls, l.CorrelatedPercent, l.From("correlated_stalls"))
+		h := correlatedHold{reason: why}
+		if p := progressing[c]; p > 0 && l.CorrelatedProbeInterval > 0 {
+			if lastProbe == nil {
+				if lastProbe, err = s.lastAutomaticByClient(ctx, now.Add(-l.CorrelatedProbeInterval)); err != nil {
+					return nil, nil, err
+				}
+			}
+			h.probing = true
+			h.reason = fmt.Sprintf("%d of %d active downloads on %s are stalled together, but %d other download(s) there made verified progress within "+
+				"their window, so the client is downloading", n, active[c], c, p)
+			if at, ok := lastProbe[c]; ok {
+				next := at.Add(l.CorrelatedProbeInterval)
+				h.next = &next
+				why = h.reason + fmt.Sprintf("; one recovery there passes as a probe every %s (%s), next after %s",
+					policy.HumanDuration(l.CorrelatedProbeInterval), l.From("correlated_probe_interval"), next.UTC().Format(time.RFC3339))
+			} else {
+				h.probe = true
+				why = h.reason
+			}
+		}
+		out[sc] = why
+		corr[sc] = h
+	}
+	return out, corr, nil
+}
+
+// lastAutomaticByClient returns, per client, the newest automatic action
+// created since the given time.
+func (s *Service) lastAutomaticByClient(ctx context.Context, since time.Time) (map[string]time.Time, error) {
+	ins, err := s.st.Intents(ctx, store.IntentFilter{Origin: string(action.OriginAutomatic), UpdatedSince: since})
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]time.Time{}
+	for _, in := range ins {
+		if in.CreatedAt.Before(since) {
+			continue
+		}
+		for _, sc := range intentScopes(in) {
+			if c, ok := strings.CutPrefix(sc, "client:"); ok && in.CreatedAt.After(out[c]) {
+				out[c] = in.CreatedAt
+			}
 		}
 	}
 	return out, nil
@@ -415,6 +511,16 @@ func heldBy(breakers map[string]string, p *action.Proposal) string {
 // AutomationEvaluation returns a finding's latest automatic evaluation.
 func (s *Service) AutomationEvaluation(ctx context.Context, findingID int64) (*store.AutomationEvaluation, error) {
 	return s.st.Evaluation(ctx, findingID)
+}
+
+// correlatedHoldNotice tells the user, once a day per client, that
+// recovery there is held with no evidence that the client can download:
+// only they can check the network, VPN, tracker or client.
+func correlatedHoldNotice(clientID, reason string, now time.Time) notify.Event {
+	return notify.Event{DedupKey: "correlated_hold|" + clientID + "|" + now.UTC().Format("2006-01-02"), Kind: notify.KindAttention,
+		Severity: domain.SeverityWarning, Title: "Automatic recovery held on " + clientID + ": downloads stalled together",
+		Body: reason + "\nNo download there made verified progress within its window. Check the client's network, VPN and trackers; " +
+			"recovery resumes by itself once fewer downloads are stalled or one makes progress."}
 }
 
 // automationNotice is the notification, if any, for an automatic

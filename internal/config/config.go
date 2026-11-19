@@ -145,6 +145,7 @@ type LimitsConfig struct {
 	ActionsPerCycle     *int      `toml:"actions_per_cycle"`
 	CorrelatedStalls    *int      `toml:"correlated_stalls"`
 	CorrelatedPercent   *int      `toml:"correlated_percent"`
+	CorrelatedProbe     *Duration `toml:"correlated_probe_interval"`
 }
 
 // Limits returns the effective acquisition limits with provenance.
@@ -190,6 +191,10 @@ func (c *Config) Limits() policy.Limits {
 		l.CorrelatedPercent = *c2.CorrelatedPercent
 		set("correlated_percent", strconv.Itoa(l.CorrelatedPercent))
 	}
+	if c2.CorrelatedProbe != nil {
+		l.CorrelatedProbeInterval = c2.CorrelatedProbe.Duration
+		set("correlated_probe_interval", l.CorrelatedProbeInterval.String())
+	}
 	if c2.RetainedGiB != nil {
 		l.RetainedBytes = *c2.RetainedGiB << 30
 		set("retained_gib", strconv.FormatInt(*c2.RetainedGiB, 10))
@@ -216,6 +221,9 @@ func validateLimits(errf errFunc, cfg *Config) {
 	intIn("actions_per_cycle", l.ActionsPerCycle, 1, 10)
 	intIn("correlated_stalls", l.CorrelatedStalls, 2, 10000)
 	intIn("correlated_percent", l.CorrelatedPercent, 1, 100)
+	if p := l.CorrelatedProbeInterval; p != 0 && (p < 10*time.Minute || p > 24*time.Hour) {
+		errf("automation.limits.correlated_probe_interval", "must be 0s (no probes) or between 10m and 24h")
+	}
 	if g := cfg.Automation.Limits.RetainedGiB; g != nil && (*g < 0 || *g > 1<<20) {
 		errf("automation.limits.retained_gib", "must be between 0 (no byte ceiling) and 1048576")
 	}

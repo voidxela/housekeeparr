@@ -99,6 +99,11 @@ missing_search = false
 # correlated_stalls = 3
 # correlated_percent = 50
 #
+# While such a hold is open but another download on that client made verified
+# progress within its window (so the client itself can download), one recovery
+# there passes as a probe per interval. "0s" keeps the hold closed instead.
+# correlated_probe_interval = "1h"
+#
 # After a verified recovery, the transfer and its content are not acted on
 # again for this long.
 # success_cooldown = "24h"

@@ -144,15 +144,20 @@ type Limits struct {
 	// client when at least that many downloads, making up at least that
 	// share of its active downloads, are stalled together (a shared cause
 	// rather than bad releases).
-	CorrelatedStalls  int      `json:"correlated_stalls"`
-	CorrelatedPercent int      `json:"correlated_percent"`
-	Sources           []Source `json:"sources"`
+	CorrelatedStalls  int `json:"correlated_stalls"`
+	CorrelatedPercent int `json:"correlated_percent"`
+	// CorrelatedProbeInterval lets one automatic recovery per interval
+	// through a correlated-stall hold on a client while another download
+	// there makes verified progress (the client itself is downloading, so
+	// a client-wide cause is refuted); zero disables probes.
+	CorrelatedProbeInterval time.Duration `json:"correlated_probe_interval"`
+	Sources                 []Source      `json:"sources"`
 }
 
 // DefaultLimits returns the proposed limits.
 func DefaultLimits() Limits {
 	return Limits{Acquisitions: 20, AcquisitionWindow: 24 * time.Hour, ManagerAcquisitions: 20, ContentAttempts: 3, SuccessCooldown: 24 * time.Hour,
-		RetainedTransfers: 25, ActionsPerCycle: 1, CorrelatedStalls: 3, CorrelatedPercent: 50}
+		RetainedTransfers: 25, ActionsPerCycle: 1, CorrelatedStalls: 3, CorrelatedPercent: 50, CorrelatedProbeInterval: time.Hour}
 }
 
 // From returns where a limit setting came from.
