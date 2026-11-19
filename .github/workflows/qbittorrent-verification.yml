@@ -55,3 +55,29 @@ jobs:
               go version
               scripts/it/run.sh --clients deluge --manager-client deluge --managers sonarr,radarr --only "PartialPackWorkflow|ProactiveSearch|PreservedDataFailure"
             '
+
+  race:
+    # ThreadSanitizer needs a 47-bit or larger user address space, which
+    # some development hosts lack.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out the tested commit
+        run: |
+          git init .
+          git fetch --depth 1 "https://github.com/${GITHUB_REPOSITORY}.git" "$GITHUB_SHA"
+          git -c advice.detachedHead=false checkout FETCH_HEAD
+      - name: Prepare Go
+        run: |
+          curl -fsSL --retry 3 https://go.dev/dl/go1.27.4.linux-amd64.tar.gz -o "$RUNNER_TEMP/go.tar.gz"
+          printf '%s  %s\n' 7226736c2339719cda28fbf3a54d71aa63bcefe376e98cef00034268dab24840 "$RUNNER_TEMP/go.tar.gz" | sha256sum -c
+          tar -xzf "$RUNNER_TEMP/go.tar.gz" -C "$RUNNER_TEMP"
+          printf '%s\n' "$RUNNER_TEMP/go/bin" >> "$GITHUB_PATH"
+      - name: Build, vet, format, and race-test
+        run: |
+          go version
+          go build ./...
+          go vet ./...
+          test -z "$(gofmt -l .)"
+          CGO_ENABLED=0 go build -trimpath -o /dev/null ./cmd/housekeeparr
+          go test -race -count=1 ./...
