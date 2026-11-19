@@ -1,65 +1,62 @@
 # Housekeeparr continuation
 
-Resume from `review/remediation`, based on `dev` at `3d08077`. Read
-[AGENTS.md](../AGENTS.md), the full [SPEC.md](SPEC.md), the dated review
-section in [STATUS.md](STATUS.md), and the exact run table in
-[compatibility.md](compatibility.md). The Go source checkpoint is
-`9fe5f3f`. Use released instances for compatibility claims. Treat the
-Sonarr research note as design input.
+Start from `review/remediation`, based on `origin/dev` at `3d08077`.
+The latest Go source checkpoint is `1dd05f1`. Read [AGENTS.md](../AGENTS.md),
+[SPEC.md](SPEC.md), the latest review section in [STATUS.md](STATUS.md), and
+the continuation table in [compatibility.md](compatibility.md).
 
-## Preserve operational rules
+## Preserve the workflow contracts
 
-- Preserve all download and library files. Send all four manager removal
-  flags explicitly with `removeFromClient=false`. Managers own recovery
-  redownloads. Housekeeparr-owned replacement searches belong to the post-v1
-  roadmap.
-- Journal every external workflow write. Keep ambiguous outcomes held for
-  review and preserve unknown privacy, sizes and availability. Use the
-  shared planner, gate and executor for manual and automatic work.
-- Keep the approved private and unknown-privacy `private_recovery` default.
-  The kept-running torrent is retained. The metadata exception relies on
-  positive evidence that metadata is still absent.
-- Keep exact-version evidence aligned with `action.Tested` and support both
-  Transmission 4.0 and 4.1 using the tested legacy RPC contract. Put schema
-  changes in a new migration with a previous-schema upgrade test.
-- Use focused, subject-only conventional commits. Run heavy suites
-  serially and retain failed fixture artifacts. Record commits, selections,
-  versions and results. A required skip is a failed run.
+- Preserve every download and library file. Send all four manager-removal
+  flags explicitly with `removeFromClient=false`. Managers own replacement
+  redownloads in v1.
+- Journal each external workflow request and hold ambiguous outcomes for
+  review. Require current positive evidence and keep unknown privacy,
+  sizes, and availability intact.
+- Apply the scoped `private_recovery` mode to private and unknown-privacy
+  transfers. The default keeps the torrent running and accounts for it as
+  retained. Metadata recovery accepts unknown privacy only while the
+  client can positively establish that metadata is still absent.
+- Keep exact-version write registrations tied to released-instance runs.
+  Both Transmission lines use legacy RPC. Use a new migration and a
+  previous-schema upgrade test for database changes.
+- Use focused, subject-only conventional commits. Exercise released
+  fixtures serially and record versions, commit, selection, outcomes, and
+  mechanisms for failures in compatibility.md.
 
-## Resume validation
+## Current behavior
 
-1. Run build, vet, repository-wide gofmt, uncached tests and the full race
-   suite. Repeat focused concurrency tests for app, engine, action, web and
-   notify. The prior amd64 host ran the baseline full race suite, then
-   disconnected during the final verification sequence.
-2. Run qBittorrent 5.3.0 with both managers on an isolated runner that can
-   send tracker announces. The amd64 review host reached the Web API and
-   reproduced the manager workflows, but qBittorrent reported a denied
-   socket operation and the stand-in received no tracker announces. Record
-   a clean unselected run and exercise the latest search and pack live
-   checks. Run selected rTorrent, Deluge and Transmission combinations for
-   the affected shared contracts. The repository has verified amd64
-   fixture pins for rTorrent and Deluge and build dependencies for
-   Transmission. Use Debian trixie's Python for its Deluge packages.
-3. Continue the remaining timing and evidence items in STATUS. Keep
-   actionable findings for work held by evidence or bounds, and validate
-   the daemon loop and trial-length windows. Follow SPEC for outstanding
-   release readiness and product work.
+Proactive searches use fresh, available, due missing content across
+managers. They revalidate file, availability, and queue state, respect
+scoped holds, and follow the receipt of the manager's actual command.
+Search pacing and a verified clearance's targeted follow-ups are
+durable. Pack follow-ups recover the original transfer permission from
+retained evidence and use the partial-pack workflow's policy.
 
-## Current changes
+Tracker results with missing or malformed evidence stay unknown.
+Clients report cap-limited tracker coverage in Attention with a
+per-client setting. Repeated definite refusals hold the dependency
+that rejected the write. An ambiguous outcome retains its journal
+review hold.
 
-Missing searches revalidate monitoring, availability, queue state and file
-absence. They retain pacing across restart and follow the manager's
-specific command. An incomplete listing has a visible finding. Search
-timings live in `[search]`.
+The outbox expires undelivered events when a destination is unavailable
+or removed. Schema 19 tracks per-target webhook attempts before sending
+and preserves the hourly usage of verified deliveries from schema 18.
+Web session and sign-in bounds, request timing, and outbox settings have
+trial defaults in the example configuration.
 
-Sonarr pack clearance checks the live row and content set, the tracked
-diagnostic, client and manager state, and affected permissions. It records
-targeted follow-ups alongside verified clearance under the pack's governing
-permission. Import settling restarts on evidence gaps or changes.
+## Validation and remaining work
 
-Recovery persists verified manager effects before later steps.
-Reconciliation holds skipped or ambiguous steps. Web form and Basic
-authentication share atomic failure accounting. Webhook redirects fail
-delivery and notification titles and URL fragments are sanitized. Current
-schema remains v18.
+The compatibility table tracks the exact test runs. GitHub-hosted
+Ubuntu 24.04 ran the complete qBittorrent 5.3.0 suite with both managers
+in the normal loopback-only namespace. On the managed workspace,
+libtorrent's denied `AF_NETLINK` socket can prevent qBittorrent tracker
+announces and pause Deluge's session. The hosted Linux workflow runs
+qBittorrent and a Deluge selection in serial. Its Deluge step uses a
+pinned Debian 13 container for the Python 3.13 packages and constructs
+the harness's nested loopback-only namespace.
+
+Continue default-length daemon-loop and production-trial verification
+from SPEC. Prioritize broad pack histories, wanted queues beyond the
+configured observation bound, and real reverse-proxy/TLS browser
+checks. Use released-instance evidence for changes to assertions.
