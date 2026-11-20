@@ -57,7 +57,7 @@ incomplete (SPEC §5). The audit:
 | Rule | Before | Now | Why it remains |
 | --- | --- | --- | --- |
 | Correlated-stall hold | Opened on stall share alone; probes only with progress or peers elsewhere | Opens only when no transfer on the client (seeding included) has a peer, a rate or recent progress; one probe per hour even then | Recovering on a client that reaches no swarm only blocklists healthy releases. Any working transfer refutes that |
-| Success cooldown | 24 h on the transfer and its content | 1 h | Lets the manager's own replacement search and grab settle. The replacement's diagnosis window already gives it time; 24 h held dead replacements for a day (seen on the host: 37 findings in cooldown) |
+| Success cooldown | 24 h on the transfer and its content | 1 h, applied to cooldowns already recorded (migration 0020 records each start; `30ab743`) | Lets the manager's own replacement search and grab settle. The replacement's diagnosis window already gives it time; 24 h held dead replacements for a day (seen on the host: 37 findings in cooldown) |
 | Content attempts | 3, then review and a manual reset | 3 per rolling 24 h; `content_attempt_window = "0s"` restores the reset | Spaces repeated replacement of one item, bounding damage from a misdiagnosis of that item, without stopping it |
 | Acquisition pacing | 20 a day, all managers and each | 100 a day | Bounds a systematic misdiagnosis and indexer load (each replacement is a manager search) |
 | Actions per cycle | 1 | 5, one at a time; an uncertain or failed result stops further writes to the same applications for the rest of the pass | Each write is verified before the next |
@@ -68,7 +68,10 @@ incomplete (SPEC §5). The audit:
 
 `2a61ae4` passed `TestAutomaticRecovery` on released Sonarr, Radarr and
 Transmission 4.0.5, and runs on the host with the built-in limits (the
-trial's limit overrides were removed).
+trial's limit overrides were removed). In the first cycle after `30ab743`
+the hold did not engage and nothing waited on a cooldown: 5 recoveries were
+dispatched and verified, 67 eligible findings waited for the next cycles'
+slots, and the only refusals were 6 unmanaged Lidarr torrents.
 
 ### Results after three hours of automatic operation
 

@@ -61,7 +61,7 @@ Housekeeparr runs in automatic mode on the user's Ultra.cc host "eclipse"
 (see STATUS.md, "Production trial", and AGENTS.md in `~/eclipse`). It is
 installed in `~/.apps/housekeeparr` as a user systemd service, and the web
 interface is behind the account's nginx at `/housekeeparr/`. The deployed
-binary is `c2b5835`, and the previous one is kept as `bin/housekeeparr.prev`.
+binary is `30ab743` (built-in limits after the blocking-rule audit in STATUS.md), and the previous one is kept as `bin/housekeeparr.prev`.
 `trial/coverage.py` snapshots coverage against the baseline taken when the
 trial started (917/1330 files, 413 missing). The open feature proposal is
 `docs/proposals/feature-expansion-2026-11.md`.
@@ -74,4 +74,6 @@ trial started (917/1330 files, 413 missing). The open feature proposal is
   below threshold. A longer production trial with representative
   installations should measure probes past an engaged hold and recovery
   latency with real swarms.
+- Multi-episode pack recovery is still observation-only: add a released-instance
+  test for failing a stalled pack row, then enable it.
 - The remaining v1 scope in STATUS.md.
