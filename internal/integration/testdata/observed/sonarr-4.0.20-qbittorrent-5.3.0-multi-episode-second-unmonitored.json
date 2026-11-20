@@ -1,0 +1,139 @@
+{
+ "scenario": "second-unmonitored",
+ "sonarr_version": "4.0.20.3014",
+ "episodes_before": [
+  {
+   "id": 18,
+   "episodeNumber": 3,
+   "seasonNumber": 3,
+   "monitored": true,
+   "hasFile": false
+  },
+  {
+   "id": 19,
+   "episodeNumber": 4,
+   "seasonNumber": 3,
+   "monitored": false,
+   "hasFile": false
+  }
+ ],
+ "grab_release_source": "UserInvokedSearch",
+ "queue_rows_before": [
+  {
+   "id": 1030807830,
+   "episodeId": 18,
+   "seriesId": 1,
+   "downloadId": "2720AD0748C3EA5052E8301148814F3EE4E83482",
+   "title": "Housekeeparr.Fixture.Show.S03E03E04.1080p.WEB-DL.x264-HKFIX",
+   "status": "warning",
+   "trackedDownloadState": "downloading",
+   "trackedDownloadStatus": "ok"
+  },
+  {
+   "id": 2053906258,
+   "episodeId": 19,
+   "seriesId": 1,
+   "downloadId": "2720AD0748C3EA5052E8301148814F3EE4E83482",
+   "title": "Housekeeparr.Fixture.Show.S03E03E04.1080p.WEB-DL.x264-HKFIX",
+   "status": "warning",
+   "trackedDownloadState": "downloading",
+   "trackedDownloadStatus": "ok"
+  }
+ ],
+ "deleted_queue_id": 1030807830,
+ "delete_flags": "blocklist=true\u0026changeCategory=false\u0026removeFromClient=false\u0026skipRedownload=false",
+ "delete_http_status": 200,
+ "queue_rows_immediately_after": null,
+ "queue_rows_after_two_refreshes": null,
+ "blocklist_records_for_release": [
+  {
+   "id": 2,
+   "episodeIds": [
+    19,
+    18
+   ],
+   "sourceTitle": "Housekeeparr.Fixture.Show.S03E03E04.1080p.WEB-DL.x264-HKFIX",
+   "protocol": "torrent",
+   "indexer": "Housekeeparr stand-in"
+  }
+ ],
+ "history_for_download": [
+  {
+   "id": 8,
+   "episodeId": 18,
+   "eventType": "downloadFailed",
+   "downloadId": "2720AD0748C3EA5052E8301148814F3EE4E83482",
+   "data": {
+    "downloadClient": "qBittorrent",
+    "downloadClientName": "qBittorrent",
+    "message": "Manually marked as failed",
+    "releaseGroup": "HKFIX",
+    "size": "4194304"
+   }
+  },
+  {
+   "id": 7,
+   "episodeId": 19,
+   "eventType": "downloadFailed",
+   "downloadId": "2720AD0748C3EA5052E8301148814F3EE4E83482",
+   "data": {
+    "downloadClient": "qBittorrent",
+    "downloadClientName": "qBittorrent",
+    "message": "Manually marked as failed",
+    "releaseGroup": "HKFIX",
+    "size": "4194304"
+   }
+  },
+  {
+   "id": 6,
+   "episodeId": 19,
+   "eventType": "grabbed",
+   "downloadId": "2720AD0748C3EA5052E8301148814F3EE4E83482",
+   "data": {
+    "downloadClient": "qBittorrent",
+    "downloadClientName": "qBittorrent",
+    "indexer": "Housekeeparr stand-in",
+    "protocol": "2",
+    "releaseGroup": "HKFIX",
+    "releaseSource": "UserInvokedSearch",
+    "size": "4194304"
+   }
+  },
+  {
+   "id": 5,
+   "episodeId": 18,
+   "eventType": "grabbed",
+   "downloadId": "2720AD0748C3EA5052E8301148814F3EE4E83482",
+   "data": {
+    "downloadClient": "qBittorrent",
+    "downloadClientName": "qBittorrent",
+    "indexer": "Housekeeparr stand-in",
+    "protocol": "2",
+    "releaseGroup": "HKFIX",
+    "releaseSource": "UserInvokedSearch",
+    "size": "4194304"
+   }
+  }
+ ],
+ "search_commands_after": [
+  {
+   "id": 18,
+   "name": "EpisodeSearch",
+   "trigger": "unspecified",
+   "status": "completed",
+   "queued": "2026-11-20T07:51:58Z",
+   "message": "Episode search completed. 0 reports downloaded.",
+   "body": {
+    "episodeIds": [
+     19,
+     18
+    ],
+    "seriesId": 0,
+    "seasonNumber": null
+   }
+  }
+ ],
+ "client_before": "stalledDL/downloading cat=tv-sonarr",
+ "client_after": "present=true stalledDL/downloading cat=tv-sonarr",
+ "payload_byte_identical": true
+}

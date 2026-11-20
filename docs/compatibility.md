@@ -740,3 +740,31 @@ Interpretation: attribution uses the `grabbed` record's indexer only (as the sco
 | Documented `location /housekeeparr/` with `proxy_set_header Host $http_host`, HTTPS on a free nonstandard port | sign-in with nested return; session cookie `Path=/housekeeparr/`, Secure, HttpOnly, SameSite=Strict; acknowledge POST accepted; foreign Host 421 with security headers; nginx itself answers `/housekeeparr` (301 to `https://host:port/housekeeparr/`) and outside paths (404) without Housekeeparr's headers |
 | Documented `location /` in front of the mounted interface | Housekeeparr's bare-mount 301 to `/housekeeparr/` and outside 404, both with security headers; foreign Host 421 on both |
 | `$host` in place of `$http_host` | sign-in refused with 403 naming `proxy_set_header Host $http_host` |
+
+## Multi-episode queue semantics — 2026-11-20
+
+`TestSonarrMultiEpisodeQueueSemantics` (probe) on Sonarr 4.0.20.3014, one release (one file) covering two episodes of the fictional season 3, in three cases. Sanitized observations: `internal/integration/testdata/observed/sonarr-4.0.20-qbittorrent-5.3.0-multi-episode-*.json` (`--capture`, worktree at `0679095`).
+
+| Case | Grab | Observed after `DELETE /api/v3/queue/{id}` on **one** episode's row, `removeFromClient=false&blocklist=true&skipRedownload=false&changeCategory=false` |
+| --- | --- | --- |
+| Both episodes monitored, no files | episode search | HTTP 200; both rows gone at once and after two `RefreshMonitoredDownloads`; one blocklist entry with both episode IDs; one `downloadFailed` per episode, no new grab; exactly one `EpisodeSearch` (trigger `unspecified`) for both episode IDs |
+| Second episode unmonitored | episode search for the monitored one (Sonarr grabs the release for both) | as above; the replacement `EpisodeSearch` **includes the unmonitored episode** |
+| First episode already has a library file | interactive ("download anyway"; an episode search rejects it: existing file meets cutoff) | as above; the replacement search includes the episode with a file; Sonarr's own cutoff rules then grab nothing for it |
+
+In every case the torrent stayed registered in the same state and category with a byte-identical payload. Interpretation: one manager request fails the whole download; a release with an unmonitored episode is left to the operator (its replacement search would cover that episode).
+
+## Multi-episode recovery runs — 2026-11-20
+
+Selected runs (`--only '^TestSonarrMultiEpisode(QueueSemantics|RecoveryWorkflow)$'`, `--managers sonarr`), not full matrices, from a worktree at `0679095`. `TestSonarrMultiEpisodeRecoveryWorkflow` runs Housekeeparr's planner, coordinator, executor and adapters: both monitored (recovered; torrent stopped), private (recovered; left running under `keep_running`), second episode unmonitored (refused live before anything was sent, explaining the replacement search would cover it), first episode with a file (recovered). Each recovered case verified: rows gone, one blocklist entry for both episodes, exactly one `EpisodeSearch` for both, payload byte-identical, a released lock, a cooldown and an attempt per episode, and an outcome per episode.
+
+| Client (`--manager-client`) | Result |
+| --- | --- |
+| qBittorrent 5.3.0 | both tests **passed** |
+| Deluge 2.2.0 | both tests **passed** |
+| rTorrent 0.9.8 | both tests **passed** |
+| Transmission 4.1.4 | both tests **passed** |
+| Transmission 4.0.6 | both tests **passed** |
+| Transmission 4.0.5 | both tests **passed** |
+| qBittorrent 4.6.7 | **not run**: the harness's fixture setup failed before any test ("qBittorrent did not stop the complete errored fixture before deletion"); not registered for multi-episode recovery |
+
+Radarr has no multi-episode releases; the tested combinations are registered with `MultiEpisode: true` in `internal/action/plan.go`.
