@@ -719,3 +719,14 @@ loopback-only namespaces.
 | `bc06af1` | `--clients transmission --manager-client transmission --tr 4.0.5 --managers sonarr,radarr`, unselected | **23 of 24 passed**: observation, correlation, removal semantics, manual no-progress, metadata and private recovery, public and private preserved-data failure, proactive searches, Sonarr pack clearance across restart, and automatic preserved-data recovery on both managers. `TestAutomaticRecovery` refused to run: its precondition still required an exact `action.Tested` entry, which line support (SPEC §4.1) no longer needs. |
 | `146c187` | Same, `--only '^TestAutomaticRecovery$'` | **Passed.** With no exact 4.0.5 entry, the production binary planned through line support: one recovery per pass, both verified on the real instances. |
 | `2a61ae4` | Same, `--only '^TestAutomaticRecovery$'` | **Passed** with the blocking-rule audit's defaults: both stalled grabs were dispatched in one pass (actions_per_cycle 5), one at a time, and every step was verified on the real instances. |
+
+## Manager history feed (release-source scorecard) — 2026-11-20
+
+Selected run (`--only '^Test(Sonarr|Radarr)(RecoveryWorkflow|HistoryFeed)$'`), not a full matrix, from a worktree at `fe8d645`: `scripts/it/run.sh --clients qbittorrent --managers sonarr,radarr`, Sonarr 4.0.20.3014 and Radarr 6.4.4.10685 with qBittorrent 5.3.0, in the loopback network namespace. All four selected tests **passed**.
+
+| Manager | Read | Observed |
+| --- | --- | --- |
+| Sonarr 4.0.20.3014 | `GET /api/v3/history?page=N&pageSize=5&sortKey=id&sortDirection=descending` after one recovery | ids strictly descending across pages, `totalRecords` stable; the `grabbed` record carries `data.indexer` = the configured indexer name and `data.releaseSource`; the `downloadFailed` record carries the release group but **no indexer and no release source** |
+| Radarr 6.4.4.10685 | same | as Sonarr, except that the `downloadFailed` record also carries `data.indexer` |
+
+Interpretation: attribution uses the `grabbed` record's indexer only (as the scorecard does); a failure record's indexer is not relied on. No URL-like field was kept by the adapter.
