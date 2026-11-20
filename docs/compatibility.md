@@ -730,3 +730,13 @@ Selected run (`--only '^Test(Sonarr|Radarr)(RecoveryWorkflow|HistoryFeed)$'`), n
 | Radarr 6.4.4.10685 | same | as Sonarr, except that the `downloadFailed` record also carries `data.indexer` |
 
 Interpretation: attribution uses the `grabbed` record's indexer only (as the scorecard does); a failure record's indexer is not relied on. No URL-like field was kept by the adapter.
+
+## Reverse proxy (nginx) — 2026-11-20
+
+`scripts/it/nginx.sh` from a worktree at `9cd564a`: Debian trixie `nginx 1.26.3-3+deb13u7` (aarch64, sha256 `7f16b949…` matching the archive's Packages index; extracted under the cache, run as the user on loopback, never installed) in front of Housekeeparr serving synthetic demo data. `TestNginxProxy` **passed** (3 of 3 subtests).
+
+| nginx configuration | Observed |
+| --- | --- |
+| Documented `location /housekeeparr/` with `proxy_set_header Host $http_host`, HTTPS on a free nonstandard port | sign-in with nested return; session cookie `Path=/housekeeparr/`, Secure, HttpOnly, SameSite=Strict; acknowledge POST accepted; foreign Host 421 with security headers; nginx itself answers `/housekeeparr` (301 to `https://host:port/housekeeparr/`) and outside paths (404) without Housekeeparr's headers |
+| Documented `location /` in front of the mounted interface | Housekeeparr's bare-mount 301 to `/housekeeparr/` and outside 404, both with security headers; foreign Host 421 on both |
+| `$host` in place of `$http_host` | sign-in refused with 403 naming `proxy_set_header Host $http_host` |

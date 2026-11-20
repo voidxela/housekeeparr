@@ -100,6 +100,11 @@ location /housekeeparr/ {
 }
 ```
 
+With only this location, nginx itself answers `/housekeeparr` (a 301 to
+`/housekeeparr/`) and paths outside the prefix (its own 404); Housekeeparr's
+Host check and security headers apply to what nginx forwards. Both blocks
+are exercised behind nginx 1.26.3 by `scripts/it/nginx.sh`.
+
 Listener timeouts are `web.read_header_timeout` (5 s), `read_timeout`
 (15 s), `write_timeout` (2 min, at least six times `action_timing.settle`)
 and `idle_timeout` (1 min). A manual action keeps running if the browser or
