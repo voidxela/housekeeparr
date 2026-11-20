@@ -23,7 +23,7 @@ func TestVersionSupportFollowsAPILines(t *testing.T) {
 	}{
 		{"exact tested pair", np, son("4.0.20.3014"), tr("4.0.6 (38c164933e)"), false, "tested"},
 		{"another build of a tested release", np, son("4.0.20.3014"), tr("4.0.6 (deadbeef00)"), false, "line"},
-		{"older patch in the same lines", np, son("4.0.20.3014"), tr("4.0.5 (a6fe2a64aa)"), false, "line"},
+		{"older patch in the same lines", np, son("4.0.20.3014"), tr("4.0.4 (24adbb24dd)"), false, "line"},
 		{"newer manager patch", np, son("4.0.15.2941"), qb("5.1.2"), false, "line"},
 		{"leading v", np, son("v4.0.20.3014"), qb("v5.0.0"), false, "line"},
 		{"qBittorrent 4 line above its floor", np, son("4.0.20.3014"), qb("4.3.9"), false, "line"},

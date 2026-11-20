@@ -152,7 +152,7 @@ const MinimumRPCVersion = 15
 //
 // 4.0.6 and 4.1.4 (built from release tarballs, linux aarch64) passed on
 // 2026-11-15 using the legacy protocol; see docs/compatibility.md.
-var TestedVersions = []string{"4.0.6", "4.1.4"}
+var TestedVersions = []string{"4.0.5", "4.0.6", "4.1.4"}
 
 // Probe detects version and capabilities.
 func (c *Client) Probe(ctx context.Context) (adapter.Probe, error) {

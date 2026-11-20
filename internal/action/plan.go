@@ -83,6 +83,14 @@ var Tested = []TestedWorkflow{
 	{Workflow: policy.WorkflowPreservedDataFailure, Manager: adapter.KindRadarr, ManagerVersion: "6.4.4.10685", Client: adapter.KindTransmission, ClientVersion: "4.0.6 (38c164933e)"},
 	{Workflow: policy.WorkflowPreservedDataFailure, Manager: adapter.KindSonarr, ManagerVersion: "4.0.20.3014", Client: adapter.KindTransmission, ClientVersion: "4.1.4 (a6d907d9ea)"},
 	{Workflow: policy.WorkflowPreservedDataFailure, Manager: adapter.KindRadarr, ManagerVersion: "6.4.4.10685", Client: adapter.KindTransmission, ClientVersion: "4.1.4 (a6d907d9ea)"},
+	// Transmission 4.0.5 (docs/compatibility.md, "Production trial runs").
+	{Workflow: policy.WorkflowNoProgressRecovery, Manager: adapter.KindSonarr, ManagerVersion: "4.0.20.3014", Client: adapter.KindTransmission, ClientVersion: "4.0.5 (a6fe2a64aa)"},
+	{Workflow: policy.WorkflowNoProgressRecovery, Manager: adapter.KindRadarr, ManagerVersion: "6.4.4.10685", Client: adapter.KindTransmission, ClientVersion: "4.0.5 (a6fe2a64aa)"},
+	{Workflow: policy.WorkflowMetadataRecovery, Manager: adapter.KindSonarr, ManagerVersion: "4.0.20.3014", Client: adapter.KindTransmission, ClientVersion: "4.0.5 (a6fe2a64aa)"},
+	{Workflow: policy.WorkflowMetadataRecovery, Manager: adapter.KindRadarr, ManagerVersion: "6.4.4.10685", Client: adapter.KindTransmission, ClientVersion: "4.0.5 (a6fe2a64aa)"},
+	{Workflow: policy.WorkflowPreservedDataFailure, Manager: adapter.KindSonarr, ManagerVersion: "4.0.20.3014", Client: adapter.KindTransmission, ClientVersion: "4.0.5 (a6fe2a64aa)"},
+	{Workflow: policy.WorkflowPreservedDataFailure, Manager: adapter.KindRadarr, ManagerVersion: "6.4.4.10685", Client: adapter.KindTransmission, ClientVersion: "4.0.5 (a6fe2a64aa)"},
+	{Workflow: policy.WorkflowPartialPack, Manager: adapter.KindSonarr, ManagerVersion: "4.0.20.3014", Client: adapter.KindTransmission, ClientVersion: "4.0.5 (a6fe2a64aa)"},
 }
 
 // diagnosesFor lists the qualified diagnoses each workflow addresses.

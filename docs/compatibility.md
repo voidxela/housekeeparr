@@ -703,3 +703,18 @@ restarts it in automatic mode.
 | `4a7bfa7` | `--clients transmission --manager-client transmission --tr 4.0.6 --only 'PartialPackWorkflow\|ProactiveSearch\|PreservedDataFailure'`, Transmission 4.0.6 (38c164933e) | **8 of 8 passed**, including Sonarr history paging and one-item wanted-list windows on both managers (15 and 3 items), the Sonarr pack clearance across restart, and automatic preserved-data recovery. Fixture scratch was on the workspace volume (`TMPDIR`). |
 | `4a7bfa7` | `--daemon --only '^TestDaemonRecovery$'` | **Passed (2 h 16 min).** Grabs at 18:40Z. At 50 min: two observations and no intents. The paused restart kept both streaks with no resets. Both qualified at 20:43:14Z, 2 h 3–4 min after the client added them (10 observations over 1 h 31 min). The automatic restart recovered the episode 9 s after resuming (first cycle) and the film one cycle later, at 10 min 31 s. Each recovery was verified when dispatched: blocklisted grab, payload unchanged, public torrent stopped with data retained, and the manager-native `EpisodeSearch`/`MoviesSearch` seen in the command list. |
 | `f468c7e` | GitHub-hosted Ubuntu 24.04 amd64: unselected qBittorrent 5.3.0 with both managers, then Deluge 2.2.0 / libtorrent 2.0.11.0 with the eight-test selection in the pinned Debian 13 container, plus the new `race` job | **25 of 25 and 8 of 8 passed.** Build, vet, gofmt, the static build and `go test -race -count=1 ./...` passed for every package. [Run 44613995480](https://github.com/voidxela/housekeeparr/actions/runs/44613995480) |
+
+## Production trial runs
+
+The production trial on a shared Ultra.cc host (Sonarr 4.0.20.3014, Radarr
+6.4.4.10685, Transmission 4.0.5 (a6fe2a64aa), started 2026-11-20) needed
+released-instance evidence for Transmission 4.0.5. Its tarball's SHA-256
+matched the GitHub release, Ubuntu's `transmission_4.0.5-1build5.dsc` and
+Arch's 4.0.5-1 PKGBUILD. The locally built daemon reports the same build
+revision as the trial host. Linux aarch64 workspace, Go 1.27.4, serial
+loopback-only namespaces.
+
+| Commit | Selection | Result |
+| --- | --- | --- |
+| `bc06af1` | `--clients transmission --manager-client transmission --tr 4.0.5 --managers sonarr,radarr`, unselected | **23 of 24 passed**: observation, correlation, removal semantics, manual no-progress, metadata and private recovery, public and private preserved-data failure, proactive searches, Sonarr pack clearance across restart, and automatic preserved-data recovery on both managers. `TestAutomaticRecovery` refused to run: its precondition still required an exact `action.Tested` entry, which line support (SPEC §4.1) no longer needs. |
+| `146c187` | Same, `--only '^TestAutomaticRecovery$'` | **Passed.** With no exact 4.0.5 entry, the production binary planned through line support: one recovery per pass, both verified on the real instances. |
