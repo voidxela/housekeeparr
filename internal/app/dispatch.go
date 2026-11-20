@@ -92,12 +92,17 @@ func (s *Service) DispatchAutomatic(ctx context.Context, fresh map[string]bool) 
 		if err != nil {
 			return rep, err
 		}
-		held, probe := "", ""
+		held, probe, exempt := "", "", false
 		if pv.Proposal != nil {
 			held = heldBy(breakers, pv.Proposal)
 			// A correlated hold refuted by progress elsewhere on the client
 			// lets one probe through; any other breaker still holds.
-			if c := "client:" + pv.Proposal.Planned.ClientID; held != "" && corr[c].probe && breakers["manager:"+pv.Proposal.Planned.ManagerID] == "" {
+			c := "client:" + pv.Proposal.Planned.ClientID
+			switch h, ok := corr[c]; {
+			case held == "" || !ok || breakers["manager:"+pv.Proposal.Planned.ManagerID] != "":
+			case h.reached[pv.Proposal.Planned.NativeID]:
+				held, exempt = "", true
+			case h.probe:
 				held, probe = "", c
 			}
 		}
@@ -128,6 +133,10 @@ func (s *Service) DispatchAutomatic(ctx context.Context, fresh map[string]bool) 
 				dispatched++
 				ev.Result, ev.IntentID, outcome = store.EvalDispatched, res.IntentID, res.State
 				ev.Detail = fmt.Sprintf("action #%d %s: %s", res.IntentID, res.State, res.Detail)
+				if exempt {
+					ev.Detail = "the correlated-stall hold does not apply: this download's connected peers lack its missing pieces, so its swarm " +
+						"was reached and its stall is its own: " + ev.Detail
+				}
 				if probe != "" {
 					// The probe is used: the rest of the client stays held.
 					ev.Detail = "correlated-stall probe (" + corr[probe].reason + "): " + ev.Detail
@@ -369,6 +378,9 @@ type correlatedHold struct {
 	probing bool
 	probe   bool
 	next    *time.Time
+	// reached holds the native IDs of stalls whose connected peers lack
+	// their pieces; the hold does not apply to them.
+	reached map[string]bool
 }
 
 func (s *Service) breakers(ctx context.Context, now time.Time) (map[string]string, map[string]correlatedHold, error) {
@@ -400,7 +412,8 @@ func (s *Service) breakers(ctx context.Context, now time.Time) (map[string]strin
 			associated[store.HandledKey(q.MatchClientID, q.MatchNativeID)] = true
 		}
 	}
-	active, stalled, progressing := map[string]int{}, map[string]int{}, map[string]int{}
+	active, stalled, progressing, contact := map[string]int{}, map[string]int{}, map[string]int{}, map[string]int{}
+	reached := map[string]map[string]bool{}
 	for _, t := range ts {
 		// Metadata acquisition counts too: magnets stalling together on
 		// one client point to DHT, network or VPN trouble.
@@ -411,9 +424,21 @@ func (s *Service) breakers(ctx context.Context, now time.Time) (map[string]strin
 			continue
 		}
 		active[t.ClientID]++
+		peers, _ := t.Latest.ConnectedPeers.Get()
+		if peers > 0 {
+			contact[t.ClientID]++
+		}
 		a := t.Assessment
 		switch {
 		case a == nil:
+		case a.Status == policy.StatusQualified && a.Diagnosis == policy.DiagnosisNoProgressUnavailable && peers > 0:
+			// Its connected peers lack its pieces: the network, client
+			// and tracker reached its swarm, so its stall is its own and
+			// is no evidence of a shared cause.
+			if reached[t.ClientID] == nil {
+				reached[t.ClientID] = map[string]bool{}
+			}
+			reached[t.ClientID][t.NativeID] = true
 		case a.Status == policy.StatusQualified:
 			stalled[t.ClientID]++
 		case a.LastProgressAt != nil && a.Window > 0 && now.Sub(*a.LastProgressAt) <= a.Window:
@@ -431,16 +456,21 @@ func (s *Service) breakers(ctx context.Context, now time.Time) (map[string]strin
 		why := fmt.Sprintf("%d of %d active downloads on %s are stalled together (threshold %d and %d%%, from %s); that points to a shared "+
 			"cause (network, tracker, VPN, or the client itself) rather than bad releases, so automatic recovery is held there until fewer are stalled "+
 			"(manual actions remain possible)", n, active[c], c, l.CorrelatedStalls, l.CorrelatedPercent, l.From("correlated_stalls"))
-		h := correlatedHold{reason: why}
-		if p := progressing[c]; p > 0 && l.CorrelatedProbeInterval > 0 {
+		h := correlatedHold{reason: why, reached: reached[c]}
+		if p, k := progressing[c], contact[c]; (p > 0 || k > 0) && l.CorrelatedProbeInterval > 0 {
 			if lastProbe == nil {
 				if lastProbe, err = s.lastAutomaticByClient(ctx, now.Add(-l.CorrelatedProbeInterval)); err != nil {
 					return nil, nil, err
 				}
 			}
 			h.probing = true
-			h.reason = fmt.Sprintf("%d of %d active downloads on %s are stalled together, but %d other download(s) there made verified progress within "+
-				"their window, so the client is downloading", n, active[c], c, p)
+			if p > 0 {
+				h.reason = fmt.Sprintf("%d of %d active downloads on %s are stalled together, but %d other download(s) there made verified progress within "+
+					"their window, so the client is downloading", n, active[c], c, p)
+			} else {
+				h.reason = fmt.Sprintf("%d of %d active downloads on %s are stalled together, but %d active download(s) there are connected to peers, "+
+					"so the client and its network work", n, active[c], c, k)
+			}
 			if at, ok := lastProbe[c]; ok {
 				next := at.Add(l.CorrelatedProbeInterval)
 				h.next = &next

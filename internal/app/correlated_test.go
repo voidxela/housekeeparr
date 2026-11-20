@@ -2,6 +2,7 @@ package app_test
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -97,5 +98,76 @@ func TestCorrelatedHoldWithoutProgressHoldsAndNotifies(t *testing.T) {
 	}
 	if held != 2 { // 30 hours from 08:00 spans two calendar days
 		t.Fatalf("hold notifications %d, want one per day: %+v", held, ns)
+	}
+}
+
+// metadataStalls adds unmanaged magnets that never obtain metadata.
+func (w *world) metadataStalls(hashes ...string) {
+	ts, _ := w.client.ListTransfers(context.Background())
+	all := ts.Transfers
+	for _, h := range hashes {
+		all = append(all, fake.Transfer(h, "Magnet."+h[:4], domain.StateMetadata, 0, 0, t0))
+	}
+	w.client.SetTransfers(all...)
+}
+
+// reachedSwarm makes a transfer's connected peers demonstrably lack its
+// missing pieces: its swarm was reached, so its stall is its own.
+func (w *world) reachedSwarm(hash string) {
+	w.client.Update(hash, func(tr *domain.Transfer) {
+		tr.ConnectedPeers = domain.KnownValue[int64](4)
+		tr.Availability = domain.KnownValue(0.4)
+	})
+}
+
+// Production trial, 2026-11-20: every incomplete download on the client was
+// a dead release, half of them magnets without metadata, and nothing was
+// downloading. A stall whose connected peers lack its pieces was reached
+// through the network, so it is not evidence of a shared outage: it does
+// not count toward the hold and is recovered despite it. Its connected
+// peers also show the network works, so the remaining held stalls pass as
+// spaced probes rather than waiting indefinitely.
+func TestCorrelatedHoldExemptsReachedSwarms(t *testing.T) {
+	w := newWorld(t, "automatic", 20)
+	w.metadataStalls(hashB, hashC, hashE)
+	w.stalled(hashA, 1, 1)
+	w.reachedSwarm(hashA)
+	w.stalled(hashD, 2, 2) // no peers: could be a shared cause
+	reps := w.run(150 * time.Minute)
+	if s := w.client.Stops(); !slices.Contains(s, hashA) {
+		t.Fatalf("stops %v, want the reached swarm %s recovered despite the hold", s, hashA)
+	}
+	a, _ := w.svc.Finding(context.Background(), w.finding(hashA).ID)
+	if !strings.Contains(a.Automation.Detail, "connected peers lack its missing pieces") {
+		t.Fatalf("dispatch detail does not explain the exemption: %s", a.Automation.Detail)
+	}
+	held := false
+	for _, r := range reps {
+		held = held || r.Breakers["client:qbit"] != ""
+	}
+	if !held {
+		t.Fatal("the client was never held: the reached swarm alone should not lift the hold")
+	}
+	w.run(3 * time.Hour)
+	if s := w.client.Stops(); len(s) != 2 {
+		t.Fatalf("stops %v, want D recovered as a probe", s)
+	}
+	d, _ := w.svc.Finding(context.Background(), w.finding(hashD).ID)
+	if !strings.Contains(d.Automation.Detail, "correlated-stall probe") || !strings.Contains(d.Automation.Detail, "connected to peers") {
+		t.Fatalf("D's dispatch detail: %s", d.Automation.Detail)
+	}
+}
+
+// Connected peers on any active download show the client and its network
+// work, as verified progress does, so a held client passes spaced probes.
+func TestCorrelatedHoldProbesWhenPeersAreConnected(t *testing.T) {
+	w := newWorld(t, "automatic", 20)
+	w.unmanagedStalls(hashB, hashC)
+	w.client.Update(hashB, func(tr *domain.Transfer) { tr.ConnectedPeers = domain.KnownValue[int64](2) })
+	w.stalled(hashA, 1, 1)
+	w.run(6 * time.Hour)
+	if s := w.client.Stops(); len(s) != 1 || s[0] != hashA {
+		d, _ := w.svc.Finding(context.Background(), w.finding(hashA).ID)
+		t.Fatalf("stops %v: %+v", s, d.Automation)
 	}
 }
