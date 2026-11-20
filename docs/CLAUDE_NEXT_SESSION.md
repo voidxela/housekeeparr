@@ -55,6 +55,17 @@ has a `race` job for that; it passed at `f468c7e` (run 44613995480). `/tmp` is R
 workspace volume for fixture runs and keep runs serial. Run
 `go clean -cache` if the disk fills.
 
+## Production trial (2026-11-20, running)
+
+Housekeeparr runs in automatic mode on the user's Ultra.cc host "eclipse"
+(see STATUS.md, "Production trial", and AGENTS.md in `~/eclipse`). It is
+installed in `~/.apps/housekeeparr` as a user systemd service, and the web
+interface is behind the account's nginx at `/housekeeparr/`. The deployed
+binary is `c2b5835`, and the previous one is kept as `bin/housekeeparr.prev`.
+`trial/coverage.py` snapshots coverage against the baseline taken when the
+trial started (917/1330 files, 413 missing). The open feature proposal is
+`docs/proposals/feature-expansion-2026-11.md`.
+
 ## Remaining
 
 - No real browser engine has driven the web interface. The deployment
