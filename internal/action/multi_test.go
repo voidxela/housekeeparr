@@ -194,3 +194,33 @@ func TestRevalidateMultiEpisode(t *testing.T) {
 		t.Fatalf("an unmonitored episode accepted or unexplained: %+v", c)
 	}
 }
+
+// A verified multi-episode recovery follows every episode's replacement,
+// not only the episode whose queue item carried the request.
+func TestMultiEpisodeRecoveryTracksEveryEpisode(t *testing.T) {
+	c, f, _ := setup(t)
+	p := proposal("qbit|aa")
+	p.Operations[0].Target = json.RawMessage(`{"manager_id":"sonarr","queue_id":7,"download_id":"aa","episode_id":1,"episode_ids":[1,2]}`)
+	p.Planned.Content = []string{"episode:1", "episode:2"}
+	f.live = func(p Proposal) Live {
+		failed := false
+		for _, s := range f.sent {
+			failed = failed || s == "manager.queue.fail"
+		}
+		live := matching(p, failed)
+		if !failed {
+			live.Associations = append(live.Associations, domain.QueueItem{ManagerID: "sonarr", QueueID: 8, DownloadID: "aa", ContentKind: "episode", EpisodeID: 2})
+		}
+		live.Content = append(live.Content, ContentState{Key: "episode:2", Exists: true, Monitored: true, Detail: "monitored"})
+		return live
+	}
+	res, err := c.Execute(ctx, p)
+	if err != nil || res.State != store.IntentSucceeded {
+		t.Fatalf("execute: %+v %v", res, err)
+	}
+	oc, _ := c.Store.Outcomes(ctx, []int64{res.IntentID})
+	o := oc[res.IntentID]
+	if !slices.Equal(o.Content, []string{"episode:1", "episode:2"}) || len(o.PerContent) != 2 {
+		t.Fatalf("outcome %+v, want both episodes followed", o)
+	}
+}

@@ -1016,16 +1016,23 @@ func trackOutcome(tx *store.Tx, id int64, subject json.RawMessage, steps []store
 			continue
 		}
 		var tg struct {
-			ManagerID  string `json:"manager_id"`
-			DownloadID string `json:"download_id"`
-			EpisodeID  int64  `json:"episode_id"`
-			MovieID    int64  `json:"movie_id"`
+			ManagerID  string  `json:"manager_id"`
+			DownloadID string  `json:"download_id"`
+			EpisodeID  int64   `json:"episode_id"`
+			EpisodeIDs []int64 `json:"episode_ids"`
+			MovieID    int64   `json:"movie_id"`
 		}
 		if err := json.Unmarshal(st.Target, &tg); err != nil || tg.ManagerID == "" {
 			return nil
 		}
 		var content []string
 		switch {
+		case len(tg.EpisodeIDs) > 1:
+			// A multi-episode release: every episode's replacement is
+			// followed.
+			for _, e := range tg.EpisodeIDs {
+				content = append(content, fmt.Sprintf("episode:%d", e))
+			}
 		case tg.MovieID > 0:
 			content = []string{fmt.Sprintf("movie:%d", tg.MovieID)}
 		case tg.EpisodeID > 0:
