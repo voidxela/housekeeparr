@@ -512,7 +512,7 @@ func (c *Coordinator) run(ctx context.Context, id int64, p Proposal) (Result, er
 		}
 		if p.Cooldown > 0 {
 			for _, l := range p.Locks {
-				if err := tx.SetCooldown(l, now.Add(p.Cooldown), fmt.Sprintf("action #%d (%s)", id, p.Workflow)); err != nil {
+				if err := tx.SetCooldown(l, now, now.Add(p.Cooldown), fmt.Sprintf("action #%d (%s)", id, p.Workflow)); err != nil {
 					return err
 				}
 			}

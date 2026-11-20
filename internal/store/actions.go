@@ -499,9 +499,9 @@ func (s *Store) Attempts(ctx context.Context, scopePrefix string, limit int) ([]
 }
 
 // SetCooldown records that subject must not be acted on before until.
-func (t *Tx) SetCooldown(subject string, until time.Time, reason string) error {
-	_, err := t.exec(`INSERT INTO action_cooldowns(subject, until, reason) VALUES(?, ?, ?)
-		ON CONFLICT(subject) DO UPDATE SET until=excluded.until, reason=excluded.reason`, subject, ms(until), reason)
+func (t *Tx) SetCooldown(subject string, since, until time.Time, reason string) error {
+	_, err := t.exec(`INSERT INTO action_cooldowns(subject, since, until, reason) VALUES(?, ?, ?, ?)
+		ON CONFLICT(subject) DO UPDATE SET since=excluded.since, until=excluded.until, reason=excluded.reason`, subject, ms(since), ms(until), reason)
 	return err
 }
 
@@ -542,9 +542,18 @@ func (s *Store) HeldLocks(ctx context.Context) (map[string]int64, error) {
 	return out, rows.Err()
 }
 
-// ActiveCooldowns returns every cooldown that has not expired at now.
-func (s *Store) ActiveCooldowns(ctx context.Context, now time.Time) (map[string]CooldownRecord, error) {
-	rows, err := s.r.QueryContext(ctx, "SELECT subject, until, reason FROM action_cooldowns WHERE until > ?", ms(now))
+// ActiveCooldowns returns every cooldown that has not expired at now. With
+// limit > 0, a cooldown ends no later than its start plus limit (the
+// currently configured duration), so shortening the setting applies to
+// cooldowns already recorded; limit 0 keeps each recorded end.
+func (s *Store) ActiveCooldowns(ctx context.Context, now time.Time, limit time.Duration) (map[string]CooldownRecord, error) {
+	q := "SELECT subject, until, reason FROM action_cooldowns WHERE until > ?"
+	args := []any{ms(now)}
+	if limit > 0 {
+		q = "SELECT subject, min(until, coalesce(since, until) + ?), reason FROM action_cooldowns WHERE min(until, coalesce(since, until) + ?) > ?"
+		args = []any{limit.Milliseconds(), limit.Milliseconds(), ms(now)}
+	}
+	rows, err := s.r.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"github.com/voidxela/housekeeparr/internal/domain"
 	"path/filepath"
 	"testing"
@@ -435,5 +436,65 @@ func TestForwardMigrationV18NotificationRateUsage(t *testing.T) {
 		return nil
 	}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Schema 20: cooldowns recorded by schema 19 take their start from the
+// action that set them, so a shorter configured cooldown ends them early.
+func TestForwardMigrationV19CooldownSince(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(dir, dbFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := migrationFS.ReadDir("migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Name() >= "0020" {
+			break
+		}
+		body, err := migrationFS.ReadFile("migrations/" + e.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(string(body)); err != nil {
+			t.Fatalf("%s: %v", e.Name(), err)
+		}
+	}
+	set := time.Unix(100000, 0)
+	for _, q := range []string{
+		"INSERT INTO meta(key, value) VALUES('schema_version','19'),('data_origin','live'),('instance_id','v19inst'),('created_at','0')",
+		fmt.Sprintf(`INSERT INTO action_intents(id, idem_key, workflow, origin, subject_json, state, policy_revision, config_revision, instance_id, fingerprint,
+		  evidence_json, plan_json, review_required, created_at, updated_at) VALUES
+		 (45,'k45','no_progress_recovery','automatic','{}','succeeded','p','c','v19inst','f','{}','{}',0,%d,%d)`, ms(set), ms(set)),
+		fmt.Sprintf(`INSERT INTO action_cooldowns(subject, until, reason) VALUES
+		 ('content:sonarr|episode:1',%d,'action #45 (no_progress_recovery)'),
+		 ('content:sonarr|episode:2',%d,'something else')`, ms(set.Add(24*time.Hour)), ms(set.Add(24*time.Hour))),
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(ctx, dir, Options{})
+	if err != nil {
+		t.Fatalf("open v19 database: %v", err)
+	}
+	defer s.Close()
+	at := set.Add(2 * time.Hour)
+	if cs, err := s.ActiveCooldowns(ctx, at, time.Hour); err != nil || len(cs) != 0 {
+		t.Fatalf("with a 1h cooldown both have ended 2h after the action: %+v %v", cs, err)
+	}
+	cs, err := s.ActiveCooldowns(ctx, at, 0)
+	if err != nil || len(cs) != 2 {
+		t.Fatalf("recorded ends: %+v %v", cs, err)
+	}
+	if cs, _ := s.ActiveCooldowns(ctx, at, 23*time.Hour); len(cs) != 2 || !cs["content:sonarr|episode:1"].Until.Equal(set.Add(23*time.Hour)) {
+		t.Fatalf("capped end: %+v", cs)
 	}
 }

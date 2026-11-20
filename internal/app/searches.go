@@ -90,7 +90,7 @@ func (s *Service) PreviewSearch(ctx context.Context, managerID, key string, orig
 	if in.Locks, err = s.st.HeldLocks(ctx); err != nil {
 		return nil, err
 	}
-	if in.Cooldowns, err = s.st.ActiveCooldowns(ctx, now); err != nil {
+	if in.Cooldowns, err = s.st.ActiveCooldowns(ctx, now, s.cfg.Limits().SuccessCooldown); err != nil {
 		return nil, err
 	}
 	if pending, err := s.st.MissingContent(ctx, store.MissingFilter{State: store.MissingSearched, Limit: 1}); err != nil {
@@ -463,7 +463,7 @@ func (s *Service) previewPack(ctx context.Context, f *domain.Finding, origin act
 	if in.Locks, err = s.st.HeldLocks(ctx); err != nil {
 		return nil, err
 	}
-	if in.Cooldowns, err = s.st.ActiveCooldowns(ctx, now); err != nil {
+	if in.Cooldowns, err = s.st.ActiveCooldowns(ctx, now, s.cfg.Limits().SuccessCooldown); err != nil {
 		return nil, err
 	}
 	// An association that returns after verified clearance requires review.

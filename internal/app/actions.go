@@ -134,7 +134,7 @@ func (s *Service) Preview(ctx context.Context, findingID int64, origin action.Or
 	if in.Locks, err = s.st.HeldLocks(ctx); err != nil {
 		return nil, err
 	}
-	if in.Cooldowns, err = s.st.ActiveCooldowns(ctx, in.Now); err != nil {
+	if in.Cooldowns, err = s.st.ActiveCooldowns(ctx, in.Now, s.cfg.Limits().SuccessCooldown); err != nil {
 		return nil, err
 	}
 	p, np := action.Plan(in)
