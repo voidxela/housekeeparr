@@ -277,23 +277,11 @@ func cmdRun(args []string, out, errOut io.Writer) int {
 	svc := app.New(st, cfg, nil, eng)
 	svc.SetExecutor(workflow.FromConnections(conns.Clients, conns.Managers, cfg.ActionTiming))
 	var passErr error
+	passLog := newPassLogger(log)
 	dispatch := func(ctx context.Context, rep engine.CycleReport) {
 		pr := svc.DispatchPass(ctx, rep.Fresh())
 		passErr = pr.Err()
-		r := pr.Recovery
-		for _, e := range r.Evaluations {
-			log.Info("automatic evaluation", "finding", e.FindingID, "result", e.Result, "action", e.IntentID, "detail", e.Detail)
-		}
-		switch {
-		case pr.RecoveryErr != nil:
-			logWriteFailure(log, "automatic dispatch", pr.RecoveryErr)
-		case r.Skipped != "":
-			log.Debug("automatic dispatch skipped", "reason", r.Skipped)
-		default:
-			for scope, why := range r.Breakers {
-				log.Warn("automation held", "scope", scope, "reason", why)
-			}
-		}
+		passLog.recovery(pr)
 		// At most one proactive search per pass (SPEC §9.1), and none after
 		// a recovery pass that stopped on an error.
 		switch sr := pr.Search; {
@@ -724,4 +712,73 @@ func logWriteFailure(log *slog.Logger, phase string, err error) {
 		return
 	}
 	log.Error(phase+" stopped before sending anything further; no further acquisition is started until the journal is reconciled", "err", err)
+}
+
+// passLogger keeps the worker's log proportional to change: one summary
+// per pass, each evaluation at Info only when an action was taken or its
+// result changed since the previous pass (Debug otherwise), and breakers
+// when they open or close. Actions, errors and their records are never
+// suppressed.
+type passLogger struct {
+	log      *slog.Logger
+	results  map[int64]string
+	breakers map[string]bool
+}
+
+func newPassLogger(log *slog.Logger) *passLogger {
+	return &passLogger{log: log, results: map[int64]string{}, breakers: map[string]bool{}}
+}
+
+func (p *passLogger) recovery(pr app.PassReport) {
+	r := pr.Recovery
+	counts := map[string]int{}
+	results := make(map[int64]string, len(r.Evaluations))
+	changed := 0
+	for _, e := range r.Evaluations {
+		counts[e.Result]++
+		results[e.FindingID] = e.Result
+		level := slog.LevelDebug
+		if e.Result == store.EvalDispatched || p.results[e.FindingID] != e.Result {
+			level = slog.LevelInfo
+			changed++
+		}
+		p.log.Log(context.Background(), level, "automatic evaluation", "finding", e.FindingID, "result", e.Result, "action", e.IntentID, "detail", e.Detail)
+	}
+	p.results = results
+	switch {
+	case pr.RecoveryErr != nil:
+		logWriteFailure(p.log, "automatic dispatch", pr.RecoveryErr)
+	case r.Skipped != "":
+		p.log.Debug("automatic dispatch skipped", "reason", r.Skipped)
+	default:
+		open := make(map[string]bool, len(r.Breakers))
+		for scope, why := range r.Breakers {
+			open[scope] = true
+			if !p.breakers[scope] {
+				p.log.Warn("automation held", "scope", scope, "reason", why)
+			} else {
+				p.log.Debug("automation still held", "scope", scope, "reason", why)
+			}
+		}
+		for scope := range p.breakers {
+			if !open[scope] {
+				p.log.Info("automation hold lifted", "scope", scope)
+			}
+		}
+		p.breakers = open
+	}
+	if len(r.Evaluations) > 0 {
+		level := slog.LevelDebug
+		if changed > 0 {
+			level = slog.LevelInfo
+		}
+		args := []any{"evaluated", len(r.Evaluations), "changed", changed}
+		for _, k := range []string{store.EvalDispatched, store.EvalRefused, store.EvalHeld, store.EvalDeferred, store.EvalWaiting,
+			store.EvalNotPermitted, store.EvalAtCeiling, store.EvalNeedsReview, store.EvalIneligible} {
+			if counts[k] > 0 {
+				args = append(args, k, counts[k])
+			}
+		}
+		p.log.Log(context.Background(), level, "automatic pass", args...)
+	}
 }
