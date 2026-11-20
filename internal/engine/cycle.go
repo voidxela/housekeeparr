@@ -81,7 +81,8 @@ func (e *Engine) Cycle(ctx context.Context, next *time.Time) CycleReport {
 		}
 		ret := e.cfg.Retention
 		if _, err := tx.Prune(now, store.Retention{Observations: ret.Observations.Duration, ConnectionChecks: ret.ConnectionChecks.Duration,
-			ResolvedFindings: ret.ResolvedFindings.Duration, AuditEvents: ret.AuditEvents.Duration}); err != nil {
+			ResolvedFindings: ret.ResolvedFindings.Duration, AuditEvents: ret.AuditEvents.Duration,
+			ContentAttemptWindow: e.cfg.Limits().ContentAttemptWindow}); err != nil {
 			return err
 		}
 		return tx.CycleFinished(e.runID, now, next)

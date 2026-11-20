@@ -331,7 +331,8 @@ func TestActivityListsAttemptsAndResetsThemWithReview(t *testing.T) {
 		t.Fatal(err)
 	}
 	page := e.get(t, "/activity").Body.String()
-	for _, want := range []string{"demo-sonarr|episode:42", "3 of 3", "needs review", "does not mean no release exists"} {
+	// The default rolling window: exhausted attempts return by themselves.
+	for _, want := range []string{"demo-sonarr|episode:42", "3 of 3", "deferred</strong> until", "returns by itself", "does not mean no release exists"} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("activity lacks %q", want)
 		}

@@ -15,9 +15,16 @@ import (
 	"github.com/voidxela/housekeeparr/internal/config"
 	"github.com/voidxela/housekeeparr/internal/demo"
 	"github.com/voidxela/housekeeparr/internal/domain"
+	"github.com/voidxela/housekeeparr/internal/store"
 )
 
 func demoService(t *testing.T, mutate func(*config.Config)) *app.Service {
+	t.Helper()
+	svc, _ := demoServiceStore(t, mutate)
+	return svc
+}
+
+func demoServiceStore(t *testing.T, mutate func(*config.Config)) (*app.Service, *store.Store) {
 	t.Helper()
 	d, err := demo.Generate(context.Background(), t.TempDir(), time.Date(2026, 11, 1, 16, 0, 0, 0, time.UTC))
 	if err != nil {
@@ -28,7 +35,7 @@ func demoService(t *testing.T, mutate func(*config.Config)) *app.Service {
 	if mutate != nil {
 		mutate(&cfg)
 	}
-	return app.New(d.Store, &cfg, d.Clock.Now, d.Engine)
+	return app.New(d.Store, &cfg, d.Clock.Now, d.Engine), d.Store
 }
 
 // A declared reverse proxy exposes even a loopback listener: the server
@@ -275,5 +282,37 @@ func TestModeIsReportedFromCurrentConfiguration(t *testing.T) {
 				t.Fatalf("finding page mode for %s", name)
 			}
 		})
+	}
+}
+
+// Reset-only attempts say that a reset is needed; the retained count
+// against the ceiling excludes no-payload transfers.
+func TestActivityAttemptsResetOnly(t *testing.T) {
+	svc, st := demoServiceStore(t, func(c *config.Config) { c.Automation.Limits.ContentAttemptWin = &config.Duration{} })
+	s, err := New(svc, Options{Listen: "127.0.0.1:0", Logger: slog.New(slog.NewTextHandler(testWriter{t}, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := &env{h: s.Handler(), svc: svc}
+	now := svc.Now()
+	if err := st.Write(context.Background(), func(tx *store.Tx) error {
+		for i := 0; i < 3; i++ {
+			id, err := tx.CreateIntent(store.Intent{Key: "reset-only-" + itoa(int64(i)), Workflow: "no_progress_recovery", Origin: "automatic"}, now)
+			if err != nil {
+				return err
+			}
+			if err := tx.ReserveBudget(id, store.Budget{Kind: store.BudgetAttempts, Scope: "attempts:demo-sonarr|episode:42", Limit: 3}, 1, now); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	page := e.get(t, "/activity").Body.String()
+	for _, want := range []string{"3 of 3 <strong>needs review</strong>", "needs a reset"} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("activity lacks %q", want)
+		}
 	}
 }

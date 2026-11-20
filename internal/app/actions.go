@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -205,7 +204,7 @@ func (s *Service) Reconcile(ctx context.Context) (action.ReconcileReport, error)
 	if s.executor == nil {
 		return action.ReconcileReport{}, nil
 	}
-	c := &action.Coordinator{Store: s.st, Executor: s.executor, Now: s.now, Actor: "reconcile"}
+	c := &action.Coordinator{Store: s.st, Executor: s.executor, Now: s.now, Actor: "reconcile", LegacyCooldown: s.cfg.Limits().SuccessCooldown}
 	return c.Reconcile(ctx)
 }
 
@@ -325,56 +324,69 @@ func (s *Service) AttemptHistory(ctx context.Context, prefix string, limit int) 
 	return s.st.Attempts(ctx, prefix, limit)
 }
 
-// AttemptSummary is one episode's or movie's recovery attempts since its
-// latest reset, against the per-content limit.
+// AttemptSummary is one episode's or movie's counted recovery attempts,
+// against the per-content limit, with the same boundaries dispatch uses.
 type AttemptSummary struct {
 	// Ref is "<manager-id>|episode:<id>" or "<manager-id>|movie:<id>".
-	Ref       string             `json:"ref"`
-	Used      int                `json:"used"`
-	Limit     int                `json:"limit"`
-	Exhausted bool               `json:"exhausted"`
-	LastAt    time.Time          `json:"last_at"`
-	LastReset *store.BudgetReset `json:"last_reset,omitempty"`
+	Ref       string    `json:"ref"`
+	Used      int       `json:"used"`
+	Limit     int       `json:"limit"`
+	Exhausted bool      `json:"exhausted"`
+	LastAt    time.Time `json:"last_at"`
+	// Window is the rolling window attempts count within (0: until reset).
+	Window time.Duration `json:"window"`
+	// NextAt is when an exhausted windowed allowance returns.
+	NextAt *time.Time `json:"next_at,omitempty"`
+	// NeedsReview: exhausted with no window, so only a reset allows more.
+	NeedsReview bool               `json:"needs_review"`
+	LastReset   *store.BudgetReset `json:"last_reset,omitempty"`
 }
 
-// AttemptSummaries lists content with counted recovery attempts since its
-// latest reset, exhausted first, then most recent. An exhausted allowance
-// needs review and a reset; it is not evidence that no release exists.
-func (s *Service) AttemptSummaries(ctx context.Context) ([]AttemptSummary, error) {
-	atts, resets, err := s.st.Attempts(ctx, "attempts:", 500)
-	if err != nil {
-		return nil, err
-	}
+// AttemptPage is one page of attempt summaries.
+type AttemptPage struct {
+	Summaries []AttemptSummary `json:"summaries"`
+	// Total is the number of content items with counted attempts.
+	Total  int `json:"total"`
+	Offset int `json:"offset"`
+}
+
+// AttemptSummaries lists content with counted recovery attempts,
+// exhausted first, then most recent, grouped before paging so no counted
+// scope is left out. An exhausted allowance is not evidence that no
+// release exists; with a rolling window it returns by itself.
+func (s *Service) AttemptSummaries(ctx context.Context, offset, page int) (AttemptPage, error) {
 	limit, window := s.cfg.Limits().ContentAttempts, s.cfg.Limits().ContentAttemptWindow
-	last := map[string]time.Time{}
-	var order []string
-	for _, a := range atts {
-		if _, ok := last[a.Scope]; !ok {
-			order = append(order, a.Scope)
-			last[a.Scope] = a.At
-		}
-	}
-	latestReset := map[string]*store.BudgetReset{}
-	for i := range resets {
-		r := &resets[i]
-		if cur := latestReset[r.Scope]; cur == nil || r.At.After(cur.At) {
-			latestReset[r.Scope] = r
-		}
-	}
 	now := s.now()
-	var out []AttemptSummary
-	for _, scope := range order {
-		u, err := s.st.BudgetUsage(ctx, store.Budget{Kind: store.BudgetAttempts, Scope: scope, Window: window, Limit: limit}, 1, now)
-		if err != nil {
-			return nil, err
-		}
-		if u.Used == 0 {
-			continue
-		}
-		out = append(out, AttemptSummary{Ref: strings.TrimPrefix(scope, "attempts:"), Used: u.Used, Limit: limit,
-			Exhausted: u.Used >= limit, LastAt: last[scope], LastReset: latestReset[scope]})
+	counts, total, err := s.st.AttemptCounts(ctx, "attempts:", window, limit, now, offset, page)
+	if err != nil {
+		return AttemptPage{}, err
 	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].Exhausted && !out[j].Exhausted })
+	scopes := make([]string, 0, len(counts))
+	for _, c := range counts {
+		scopes = append(scopes, c.Scope)
+	}
+	resets, err := s.st.LatestResets(ctx, scopes)
+	if err != nil {
+		return AttemptPage{}, err
+	}
+	out := AttemptPage{Total: total, Offset: offset}
+	for _, c := range counts {
+		sum := AttemptSummary{Ref: strings.TrimPrefix(c.Scope, "attempts:"), Used: c.Used, Limit: limit, Exhausted: c.Used >= limit,
+			LastAt: c.LastAt, Window: window}
+		if r, ok := resets[c.Scope]; ok {
+			sum.LastReset = &r
+		}
+		if sum.Exhausted {
+			if window == 0 {
+				sum.NeedsReview = true
+			} else if u, err := s.st.BudgetUsage(ctx, store.Budget{Kind: store.BudgetAttempts, Scope: c.Scope, Window: window, Limit: limit}, 1, now); err != nil {
+				return AttemptPage{}, err
+			} else {
+				sum.NextAt = u.NextAt
+			}
+		}
+		out.Summaries = append(out.Summaries, sum)
+	}
 	return out, nil
 }
 

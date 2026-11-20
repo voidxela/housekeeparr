@@ -343,9 +343,18 @@ func cmdAttempts(args []string, out, errOut io.Writer) int {
 	}
 	o := newFlags("attempts", errOut)
 	limit := o.fs.Int("limit", 50, "maximum rows to list")
+	summary := o.fs.Bool("summary", false, "list every content item with counted attempts, its limit, window and next eligible time")
 	pos, err := o.parse(args)
 	if err != nil {
 		return exitUsage
+	}
+	if *summary {
+		svc, done, code := readService(o)
+		if svc == nil {
+			return code
+		}
+		defer done()
+		return printAttemptSummaries(svc, o.json, out, errOut)
 	}
 	prefix := ""
 	if len(pos) == 1 {
@@ -384,6 +393,58 @@ func cmdAttempts(args []string, out, errOut io.Writer) int {
 	return exitOK
 }
 
+// printAttemptSummaries lists every content item with counted attempts,
+// with the same boundaries dispatch applies.
+func printAttemptSummaries(svc *app.Service, asJSON bool, out, errOut io.Writer) int {
+	var all []app.AttemptSummary
+	total := 0
+	for off := 0; ; {
+		pg, err := svc.AttemptSummaries(context.Background(), off, 500)
+		if err != nil {
+			fmt.Fprintln(errOut, err)
+			return exitFailure
+		}
+		all, total = append(all, pg.Summaries...), pg.Total
+		off += len(pg.Summaries)
+		if len(pg.Summaries) == 0 || off >= pg.Total {
+			break
+		}
+	}
+	if asJSON {
+		return writeJSON(out, map[string]any{"summaries": all, "total": total})
+	}
+	l := svc.Limits()
+	if l.ContentAttemptWindow > 0 {
+		fmt.Fprintf(out, "%d attempts per content within any rolling %s; an exhausted allowance returns by itself.\n", l.ContentAttempts, policy.HumanDuration(l.ContentAttemptWindow))
+	} else {
+		fmt.Fprintf(out, "%d attempts per content until reset; an exhausted allowance needs review and a reset.\n", l.ContentAttempts)
+	}
+	if len(all) == 0 {
+		fmt.Fprintln(out, "No recovery attempts are counted for any content.")
+		return exitOK
+	}
+	w := tw(out)
+	fmt.Fprintln(w, "CONTENT\tCOUNTED\tLATEST\tSTATE\tLAST RESET")
+	for _, a := range all {
+		state := "eligible"
+		switch {
+		case a.NeedsReview:
+			state = "needs review (housekeeparr attempts reset)"
+		case a.Exhausted && a.NextAt != nil:
+			state = "deferred until " + ts(a.NextAt)
+		case a.Exhausted:
+			state = "deferred"
+		}
+		reset := "never"
+		if a.LastReset != nil {
+			reset = ts(&a.LastReset.At) + " by " + a.LastReset.Actor
+		}
+		fmt.Fprintf(w, "%s\t%d of %d\t%s\t%s\t%s\n", a.Ref, a.Used, a.Limit, ts(&a.LastAt), state, reset)
+	}
+	w.Flush()
+	return exitOK
+}
+
 func validContentKey(k string) bool {
 	_, _, ok := domain.ParseContentKey(k)
 	return ok
@@ -412,9 +473,9 @@ func cmdRetained(args []string, out, errOut io.Writer) int {
 		return writeJSON(out, map[string]any{"retained": list, "usage": u, "limits": l})
 	}
 	if l.RetainedTransfers > 0 {
-		fmt.Fprintf(out, "%d of %d retained transfers", u.Count, l.RetainedTransfers)
+		fmt.Fprintf(out, "%d of %d retained transfers with a payload", u.Count-u.NoPayload, l.RetainedTransfers)
 	} else {
-		fmt.Fprintf(out, "%d retained transfers (no count ceiling)", u.Count)
+		fmt.Fprintf(out, "%d retained transfers with a payload (no count ceiling)", u.Count-u.NoPayload)
 	}
 	if u.Running > 0 {
 		fmt.Fprintf(out, " (%d left running)", u.Running)
@@ -424,7 +485,7 @@ func cmdRetained(args []string, out, errOut io.Writer) int {
 		fmt.Fprintf(out, " (%d of unknown size)", u.UnknownSize)
 	}
 	if u.NoPayload > 0 {
-		fmt.Fprintf(out, " (%d stopped before metadata, no payload)", u.NoPayload)
+		fmt.Fprintf(out, "; %d more stopped before metadata (no payload, not counted against any ceiling)", u.NoPayload)
 	}
 	if l.RetainedBytes > 0 {
 		fmt.Fprintf(out, "; byte ceiling %.1f GiB", float64(l.RetainedBytes)/(1<<30))

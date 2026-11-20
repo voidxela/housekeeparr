@@ -128,6 +128,8 @@ func (s *Server) funcs() template.FuncMap {
 		"join":        strings.Join,
 		"sevcount":    func(m map[domain.Severity]int, s string) int { return m[domain.Severity(s)] },
 		"add":         func(a, b int) int { return a + b },
+		"sub":         func(a, b int) int { return a - b },
+		"human":       policy.HumanDuration,
 		"title": func(s string) string {
 			if s == "" {
 				return s

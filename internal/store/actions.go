@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -449,6 +450,74 @@ type BudgetReset struct {
 	Note  string    `json:"note"`
 }
 
+// AttemptCount is one attempts scope's counted usage.
+type AttemptCount struct {
+	Scope  string    `json:"scope"`
+	Used   int       `json:"used"`
+	LastAt time.Time `json:"last_at"`
+}
+
+// AttemptCounts groups the attempts scopes with the given prefix by their
+// counted usage, with exactly the boundaries budget usage applies
+// (unreleased rows after the scope's latest reset and, with a window,
+// inside it), then pages the groups: scopes at or over limit first, then
+// the most recently used. total is the number of such scopes.
+func (s *Store) AttemptCounts(ctx context.Context, prefix string, window time.Duration, limit int, now time.Time, offset, page int) ([]AttemptCount, int, error) {
+	like := strings.NewReplacer("%", "\\%", "_", "\\_").Replace(prefix) + "%"
+	start := int64(math.MinInt64)
+	if window > 0 {
+		start = ms(now.Add(-window))
+	}
+	grouped := `SELECT a.scope AS scope, sum(a.units) AS used, max(a.at) AS last_at FROM action_attempts a
+		LEFT JOIN (SELECT scope, max(at) AS reset_at FROM action_budget_resets GROUP BY scope) r ON r.scope = a.scope
+		WHERE a.scope LIKE ? ESCAPE '\' AND a.released_at IS NULL AND a.at > max(coalesce(r.reset_at, ?), ?)
+		GROUP BY a.scope`
+	var total int
+	if err := s.r.QueryRowContext(ctx, "SELECT count(*) FROM ("+grouped+")", like, int64(math.MinInt64), start).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	if page <= 0 {
+		page = 100
+	}
+	rows, err := s.r.QueryContext(ctx, "SELECT scope, used, last_at FROM ("+grouped+") ORDER BY used >= ? DESC, last_at DESC, scope LIMIT ? OFFSET ?",
+		like, int64(math.MinInt64), start, limit, page, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var out []AttemptCount
+	for rows.Next() {
+		var c AttemptCount
+		var at int64
+		if err := rows.Scan(&c.Scope, &c.Used, &at); err != nil {
+			return nil, 0, err
+		}
+		c.LastAt = fromMS(at)
+		out = append(out, c)
+	}
+	return out, total, rows.Err()
+}
+
+// LatestResets returns each listed scope's latest reset.
+func (s *Store) LatestResets(ctx context.Context, scopes []string) (map[string]BudgetReset, error) {
+	out := map[string]BudgetReset{}
+	for _, sc := range scopes {
+		var r BudgetReset
+		var at int64
+		err := s.r.QueryRowContext(ctx, "SELECT scope, at, actor, note FROM action_budget_resets WHERE scope=? ORDER BY at DESC LIMIT 1", sc).
+			Scan(&r.Scope, &at, &r.Actor, &r.Note)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		r.At = fromMS(at)
+		out[sc] = r
+	}
+	return out, nil
+}
+
 // Attempts lists ledger rows for scopes with the given prefix, newest
 // first, with the resets recorded for them.
 func (s *Store) Attempts(ctx context.Context, scopePrefix string, limit int) ([]Attempt, []BudgetReset, error) {
@@ -542,17 +611,17 @@ func (s *Store) HeldLocks(ctx context.Context) (map[string]int64, error) {
 	return out, rows.Err()
 }
 
-// ActiveCooldowns returns every cooldown that has not expired at now. With
-// limit > 0, a cooldown ends no later than its start plus limit (the
-// currently configured duration), so shortening the setting applies to
-// cooldowns already recorded; limit 0 keeps each recorded end.
+// ActiveCooldowns returns every cooldown in effect at now under the
+// currently configured duration limit: a cooldown ends at the earlier of
+// its recorded end and its start plus limit, so a shorter setting applies
+// to cooldowns already recorded, and limit 0 (cooldowns disabled) ends
+// them all.
 func (s *Store) ActiveCooldowns(ctx context.Context, now time.Time, limit time.Duration) (map[string]CooldownRecord, error) {
-	q := "SELECT subject, until, reason FROM action_cooldowns WHERE until > ?"
-	args := []any{ms(now)}
-	if limit > 0 {
-		q = "SELECT subject, min(until, coalesce(since, until) + ?), reason FROM action_cooldowns WHERE min(until, coalesce(since, until) + ?) > ?"
-		args = []any{limit.Milliseconds(), limit.Milliseconds(), ms(now)}
+	if limit <= 0 {
+		return map[string]CooldownRecord{}, nil
 	}
+	q := "SELECT subject, min(until, coalesce(since, until) + ?), reason FROM action_cooldowns WHERE min(until, coalesce(since, until) + ?) > ?"
+	args := []any{limit.Milliseconds(), limit.Milliseconds(), ms(now)}
 	rows, err := s.r.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err

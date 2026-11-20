@@ -9,6 +9,9 @@ type Retention struct {
 	ConnectionChecks time.Duration
 	ResolvedFindings time.Duration
 	AuditEvents      time.Duration
+	// ContentAttemptWindow is the effective content_attempt_window; 0 means
+	// attempts count until reset.
+	ContentAttemptWindow time.Duration
 }
 
 // PruneResult counts removed rows.
@@ -71,7 +74,7 @@ func (t *Tx) Prune(now time.Time, r Retention) (PruneResult, error) {
 		},
 		func() error {
 			var n int64
-			if err := pruneAttempts(run, &n, now, r.AuditEvents); err != nil {
+			if err := pruneAttempts(run, &n, now, r.AuditEvents, r.ContentAttemptWindow); err != nil {
 				return err
 			}
 			return run(&n, "DELETE FROM action_cooldowns WHERE until < ?", ms(now))
@@ -103,14 +106,31 @@ func (t *Tx) Prune(now time.Time, r Retention) (PruneResult, error) {
 	return out, nil
 }
 
-// pruneAttempts removes pacing reservations older than the retention
-// period (which validation keeps longer than any pacing window) and
-// attempt rows that predate their scope's latest reset. Attempts since the
-// latest reset are durable: they are the per-content retry history.
-func pruneAttempts(run func(*int64, string, ...any) error, n *int64, now time.Time, keep time.Duration) error {
-	if err := run(n, "DELETE FROM action_attempts WHERE scope LIKE 'pacing:%' AND at < ?", ms(now.Add(-keep))); err != nil {
+// pruneAttempts removes ledger rows that no longer count and are older
+// than the audit horizon, using the same boundaries as budget usage:
+//   - pacing reservations, whose windows validation keeps within the
+//     horizon;
+//   - released attempt rows (a refusal or an unsent action; never counted);
+//   - with a rolling attempt window, attempt rows older than both the
+//     horizon and the window (they have aged out of the allowance);
+//   - without one (reset-only), attempt rows at or before their scope's
+//     latest reset. Attempts since the latest reset are durable: they are
+//     the outstanding count, kept across pruning and restarts.
+//
+// Switching from a window back to reset-only therefore counts what is
+// still recorded since the latest reset: attempts pruned while the window
+// applied (older than the horizon) no longer count.
+func pruneAttempts(run func(*int64, string, ...any) error, n *int64, now time.Time, keep, window time.Duration) error {
+	cut := ms(now.Add(-keep))
+	if err := run(n, "DELETE FROM action_attempts WHERE scope LIKE 'pacing:%' AND at < ?", cut); err != nil {
 		return err
 	}
+	if err := run(n, "DELETE FROM action_attempts WHERE scope LIKE 'attempts:%' AND released_at IS NOT NULL AND at < ?", cut); err != nil {
+		return err
+	}
+	if window > 0 {
+		return run(n, "DELETE FROM action_attempts WHERE scope LIKE 'attempts:%' AND at < ?", ms(now.Add(-max(keep, window))))
+	}
 	return run(n, `DELETE FROM action_attempts WHERE scope LIKE 'attempts:%' AND at < ?
-		AND at < (SELECT max(r.at) FROM action_budget_resets r WHERE r.scope = action_attempts.scope)`, ms(now.Add(-keep)))
+		AND at <= (SELECT max(r.at) FROM action_budget_resets r WHERE r.scope = action_attempts.scope)`, cut)
 }

@@ -581,7 +581,7 @@ type Activity struct {
 	Limits        policy.Limits            `json:"limits"`
 	Journal       JournalStatus            `json:"journal"`
 	// Attempts are per-content recovery attempts since their latest reset.
-	Attempts []AttemptSummary `json:"attempts,omitempty"`
+	Attempts AttemptPage `json:"attempts"`
 	// Notifications are the latest notification events and their delivery.
 	Notifications     []store.Notification `json:"notifications,omitempty"`
 	NotifyTargets     int                  `json:"notify_targets"`
@@ -616,7 +616,7 @@ func (s *Service) Activity(ctx context.Context, limit int) (*Activity, error) {
 		return nil, err
 	}
 	a.Limits = s.cfg.Limits()
-	if a.Attempts, err = s.AttemptSummaries(ctx); err != nil {
+	if a.Attempts, err = s.AttemptSummaries(ctx, 0, 200); err != nil {
 		return nil, err
 	}
 	if a.Notifications, err = s.st.RecentNotifications(ctx, 20); err != nil {

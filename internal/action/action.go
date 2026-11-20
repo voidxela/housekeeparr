@@ -190,6 +190,10 @@ type Coordinator struct {
 	Gate     Gate
 	Now      func() time.Time
 	Actor    string
+	// LegacyCooldown is the success cooldown reconciliation applies to an
+	// intent journaled before cooldowns were recorded with it (the
+	// currently configured success_cooldown).
+	LegacyCooldown time.Duration
 }
 
 // Errors returned by Execute. Each leaves external state untouched unless
@@ -340,11 +344,9 @@ func (c *Coordinator) Execute(ctx context.Context, p Proposal) (Result, error) {
 	in := store.Intent{Key: p.Key(), Workflow: p.Workflow, Origin: string(p.Origin), FindingID: p.FindingID, Subject: p.Subject,
 		PolicyRevision: p.PolicyRevision, ConfigRevision: p.ConfigRevision, InstanceID: c.Store.InstanceID(), Fingerprint: p.Fingerprint,
 		Evidence: p.Evidence, Locks: p.Locks}
-	plan, _ := json.Marshal(struct {
-		Operations  []Operation `json:"operations"`
-		Effects     []string    `json:"effects"`
-		SideEffects []string    `json:"side_effects"`
-	}{p.Operations, p.Effects, p.SideEffects})
+	cooldown := p.Cooldown.Milliseconds()
+	plan, _ := json.Marshal(journaledPlan{Operations: p.Operations, Effects: p.Effects, SideEffects: p.SideEffects,
+		CooldownMS: &cooldown, Planned: &p.Planned})
 	in.Plan = plan
 	for _, op := range p.Operations {
 		in.Steps = append(in.Steps, store.Step{Op: op.Op, Target: op.Target, Request: op.Request, Expect: op.Expect})
@@ -569,17 +571,7 @@ func (c *Coordinator) run(ctx context.Context, id int64, p Proposal) (Result, er
 	}
 	now := c.now()
 	err = c.Store.Write(jctx, func(tx *store.Tx) error {
-		if err := tx.SetIntentState(id, store.IntentSucceeded, "every step verified", now); err != nil {
-			return err
-		}
-		if p.Cooldown > 0 {
-			for _, l := range p.Locks {
-				if err := tx.SetCooldown(l, now, now.Add(p.Cooldown), fmt.Sprintf("action #%d (%s)", id, p.Workflow)); err != nil {
-					return err
-				}
-			}
-		}
-		return tx.Audit(now, c.actor(), "action.succeeded", fmt.Sprintf("#%d %s", id, p.Workflow))
+		return c.succeed(tx, id, p.Workflow, p.Locks, completion{cooldown: p.Cooldown, recorded: true}, "every step verified", now, now)
 	})
 	if err != nil {
 		return Result{IntentID: id, State: durable, Detail: "every step verified; completion not recorded"},
@@ -736,7 +728,7 @@ func (c *Coordinator) Reconcile(ctx context.Context) (ReconcileReport, error) {
 						return err
 					}
 					if to == store.StepSucceeded {
-						return recordVerifiedStep(tx, in.ID, in.Subject, s, nil, c.now())
+						return recordVerifiedStep(tx, in.ID, in.Subject, s, plannedOf(in), c.now())
 					}
 					return nil
 				}); err != nil {
@@ -759,15 +751,13 @@ func (c *Coordinator) Reconcile(ctx context.Context) (ReconcileReport, error) {
 		switch {
 		case !uncertain && allDone:
 			why := "verified by reconciliation after interruption"
+			done := c.completionOf(in)
 			if err := c.Store.Write(ctx, func(tx *store.Tx) error {
 				now := c.now()
-				if err := tx.SetIntentState(in.ID, store.IntentSucceeded, why, now); err != nil {
+				if err := c.succeed(tx, in.ID, in.Workflow, in.Locks, done, why, lastDispatch(in.Steps, now), now); err != nil {
 					return err
 				}
-				if err := trackOutcome(tx, in.ID, in.Subject, in.Steps, now); err != nil {
-					return err
-				}
-				return tx.Audit(now, c.actor(), "action."+string(store.IntentSucceeded), fmt.Sprintf("#%d: %s", in.ID, why))
+				return trackOutcome(tx, in.ID, in.Subject, in.Steps, now)
 			}); err != nil {
 				return rep, err
 			}
@@ -788,6 +778,91 @@ func (c *Coordinator) Reconcile(ctx context.Context) (ReconcileReport, error) {
 		}
 	}
 	return rep, nil
+}
+
+// journaledPlan is the intent's plan as journaled: the operations and
+// effects shown to the operator, and the facts needed to finish the action
+// identically whether it completes normally or is settled by
+// reconciliation after an interruption.
+type journaledPlan struct {
+	Operations  []Operation `json:"operations"`
+	Effects     []string    `json:"effects"`
+	SideEffects []string    `json:"side_effects"`
+	// CooldownMS is the success cooldown applied to every lock subject; nil
+	// for intents journaled before it was recorded.
+	CooldownMS *int64 `json:"cooldown_ms,omitempty"`
+	// Planned is the external state planned against (retained sizes).
+	Planned *Planned `json:"planned,omitempty"`
+}
+
+func planOf(in store.Intent) journaledPlan {
+	var jp journaledPlan
+	_ = json.Unmarshal(in.Plan, &jp)
+	return jp
+}
+
+func plannedOf(in store.Intent) *Planned { return planOf(in).Planned }
+
+// completion is how a succeeded intent is finished.
+type completion struct {
+	cooldown time.Duration
+	// recorded: the cooldown was journaled with the intent; otherwise it
+	// is the legacy fallback and the reason says so.
+	recorded bool
+}
+
+// cooldownWorkflows set a success cooldown (recovery plans; searches and
+// pack clearances intentionally do not).
+var cooldownWorkflows = map[string]bool{"no_progress_recovery": true, "metadata_recovery": true, "preserved_data_failure": true}
+
+// completionOf recovers an intent's completion facts. An intent journaled
+// before cooldowns were recorded takes the currently configured cooldown
+// (LegacyCooldown) when its workflow sets one.
+func (c *Coordinator) completionOf(in store.Intent) completion {
+	if ms := planOf(in).CooldownMS; ms != nil {
+		return completion{cooldown: time.Duration(*ms) * time.Millisecond, recorded: true}
+	}
+	if cooldownWorkflows[in.Workflow] {
+		return completion{cooldown: c.LegacyCooldown}
+	}
+	return completion{recorded: true}
+}
+
+// succeed is the one success finalization, for normal completion and for
+// reconciliation: the intent's state, a cooldown from since on each of its
+// original lock subjects, and the audit record, in the caller's
+// transaction.
+func (c *Coordinator) succeed(tx *store.Tx, id int64, workflow string, locks []string, done completion, why string, since, now time.Time) error {
+	if err := tx.SetIntentState(id, store.IntentSucceeded, why, now); err != nil {
+		return err
+	}
+	if done.cooldown > 0 {
+		reason := fmt.Sprintf("action #%d (%s)", id, workflow)
+		if !done.recorded {
+			reason = fmt.Sprintf("action #%d (%s; cooldown from current settings: the action predates recorded cooldowns)", id, workflow)
+		}
+		for _, l := range locks {
+			if err := tx.SetCooldown(l, since, since.Add(done.cooldown), reason); err != nil {
+				return err
+			}
+		}
+	}
+	return tx.Audit(now, c.actor(), "action.succeeded", fmt.Sprintf("#%d %s: %s", id, workflow, why))
+}
+
+// lastDispatch is when the last dispatched step was sent: the time the
+// action's effect started, for a cooldown settled after interruption.
+func lastDispatch(steps []store.Step, fallback time.Time) time.Time {
+	var at *time.Time
+	for _, s := range steps {
+		if s.DispatchedAt != nil && (at == nil || s.DispatchedAt.After(*at)) {
+			at = s.DispatchedAt
+		}
+	}
+	if at == nil {
+		return fallback
+	}
+	return *at
 }
 
 func pendingSteps(steps []store.Step) []store.Step {
