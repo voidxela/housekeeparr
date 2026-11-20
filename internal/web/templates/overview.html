@@ -6,7 +6,7 @@
     <div class="tile-value worker-{{.Worker.State}}"><span class="dot" aria-hidden="true"></span>{{title (printf "%s" .Worker.State)}}</div>
     <div class="tile-note">{{.Worker.Explanation}}</div>
   </div>
-  <a class="tile tile-link" href="/attention">
+  <a class="tile tile-link" href="{{base}}/attention">
     <div class="tile-label">Needs attention</div>
     <div class="tile-value">{{add .Counts.Open .Counts.Acknowledged}}</div>
     <div class="tile-note">
@@ -17,12 +17,12 @@
       {{if not (add .Counts.Open .Counts.Acknowledged)}}Nothing needs attention.{{end}}
     </div>
   </a>
-  <a class="tile tile-link" href="/downloads">
+  <a class="tile tile-link" href="{{base}}/downloads">
     <div class="tile-label">Incomplete downloads</div>
     <div class="tile-value">{{.Transfers.Incomplete}}</div>
     <div class="tile-note">{{.Transfers.Observing}} accumulating evidence · {{.Transfers.Diagnosed}} diagnosed</div>
   </a>
-  <a class="tile tile-link" href="/connections">
+  <a class="tile tile-link" href="{{base}}/connections">
     <div class="tile-label">Mode</div>
     <div class="tile-value">{{if eq (printf "%s" .Mode) "paused"}}Paused{{else}}Observe-only{{end}}</div>
     <div class="tile-note">No changes are made to managers or clients.</div>
@@ -31,13 +31,13 @@
 
 <div class="grid-2">
 <section class="card" aria-labelledby="h-top">
-  <div class="card-head"><h2 id="h-top">Most important</h2><a href="/attention" class="small">All findings →</a></div>
+  <div class="card-head"><h2 id="h-top">Most important</h2><a href="{{base}}/attention" class="small">All findings →</a></div>
   {{if .Top}}<ul class="findings">{{range .Top}}{{template "findingrow" .}}{{end}}</ul>
   {{else}}{{template "empty" "No unresolved findings."}}<p class="muted small">Findings appear when evidence establishes a condition — for example sustained lack of verified progress, an import Sonarr reports as blocked, or a connection that keeps failing.</p>{{end}}
 </section>
 
 <section class="card" aria-labelledby="h-conn">
-  <div class="card-head"><h2 id="h-conn">Connections</h2><a href="/connections" class="small">Details →</a></div>
+  <div class="card-head"><h2 id="h-conn">Connections</h2><a href="{{base}}/connections" class="small">Details →</a></div>
   {{if .Connections}}
   <ul class="conn-list">
   {{range .Connections}}
@@ -54,10 +54,10 @@
 </div>
 
 <section class="card" aria-labelledby="h-recent">
-  <div class="card-head"><h2 id="h-recent">Recent changes</h2><a href="/activity" class="small">Activity →</a></div>
+  <div class="card-head"><h2 id="h-recent">Recent changes</h2><a href="{{base}}/activity" class="small">Activity →</a></div>
   {{if .Recent}}
   <ol class="timeline">
-    {{range .Recent}}<li><time datetime="{{iso .At}}" title="{{clock .At}}">{{since .At}}</time> <a href="/findings/{{.FindingID}}">#{{.FindingID}}</a> <span class="event event-{{.Kind}}">{{.Kind}}</span> <span class="muted">{{.Detail}}</span></li>{{end}}
+    {{range .Recent}}<li><time datetime="{{iso .At}}" title="{{clock .At}}">{{since .At}}</time> <a href="{{base}}/findings/{{.FindingID}}">#{{.FindingID}}</a> <span class="event event-{{.Kind}}">{{.Kind}}</span> <span class="muted">{{.Detail}}</span></li>{{end}}
   </ol>
   {{else}}{{template "empty" "Nothing has happened yet."}}{{end}}
 </section>

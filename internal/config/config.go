@@ -316,9 +316,13 @@ type WebConfig struct {
 	// TLSCert and TLSKey serve HTTPS directly. TrustedProxy instead
 	// declares that a reverse proxy terminates TLS in front of a private
 	// listener. A non-loopback listener requires one of them.
-	TLSCert        string   `toml:"tls_cert"`
-	TLSKey         string   `toml:"tls_key"`
-	TrustedProxy   bool     `toml:"trusted_proxy"`
+	TLSCert      string `toml:"tls_cert"`
+	TLSKey       string `toml:"tls_key"`
+	TrustedProxy bool   `toml:"trusted_proxy"`
+	// BasePath serves the interface under a path prefix (for example
+	// "/housekeeparr" behind a reverse proxy that shares one host name
+	// between applications). Empty serves it at the root.
+	BasePath       string   `toml:"base_path"`
 	SessionTTL     Duration `toml:"session_ttl"`
 	SignInWindow   Duration `toml:"sign_in_window"`
 	SignInFailures int      `toml:"sign_in_failures"`
@@ -687,6 +691,10 @@ func validate(cfg *Config, md toml.MetaData) []Problem {
 		}
 		if w.TLSCert != "" && w.TrustedProxy {
 			errf("web.trusted_proxy", "choose either TLS files or a trusted proxy, not both")
+		}
+		if b := w.BasePath; b != "" && (!strings.HasPrefix(b, "/") || strings.HasSuffix(b, "/") || strings.Contains(b, "//") ||
+			strings.Trim(b, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~/") != "") {
+			errf("web.base_path", "%q must start with / and have no trailing slash, e.g. \"/housekeeparr\" (letters, digits, - . _ ~ and /)", b)
 		}
 		for _, h := range w.AllowedHosts {
 			if h == "" || strings.ContainsAny(h, ":/ ") {

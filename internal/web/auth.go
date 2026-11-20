@@ -34,6 +34,7 @@ type authState struct {
 	user, pass     [32]byte // digests, compared in constant time
 	key            []byte   // signs session cookies (per process)
 	secure         bool     // Secure cookies (TLS here or at a trusted proxy)
+	path           string   // cookie path: the base path with a trailing slash
 	sessionTTL     time.Duration
 	signInWindow   time.Duration
 	signInFailures int
@@ -42,7 +43,7 @@ type authState struct {
 	failures []time.Time
 }
 
-func newAuthState(a *Auth, secure bool) (*authState, error) {
+func newAuthState(a *Auth, secure bool, path string) (*authState, error) {
 	if a == nil {
 		return nil, nil
 	}
@@ -51,7 +52,7 @@ func newAuthState(a *Auth, secure bool) (*authState, error) {
 		return nil, err
 	}
 	defaults := config.Defaults().Web
-	s := &authState{user: sha256.Sum256([]byte(a.Username)), pass: sha256.Sum256([]byte(a.Password)), key: k, secure: secure,
+	s := &authState{user: sha256.Sum256([]byte(a.Username)), pass: sha256.Sum256([]byte(a.Password)), key: k, secure: secure, path: path,
 		sessionTTL: a.SessionTTL, signInWindow: a.SignInWindow, signInFailures: a.SignInFailures}
 	if s.sessionTTL <= 0 {
 		s.sessionTTL = defaults.SessionTTL.Duration
@@ -129,7 +130,7 @@ func (a *authState) session(r *http.Request, now time.Time) (string, bool) {
 }
 
 func (a *authState) cookie(value string, maxAge int) *http.Cookie {
-	return &http.Cookie{Name: sessionCookie, Value: value, Path: "/", MaxAge: maxAge, HttpOnly: true, Secure: a.secure, SameSite: http.SameSiteStrictMode}
+	return &http.Cookie{Name: sessionCookie, Value: value, Path: a.path, MaxAge: maxAge, HttpOnly: true, Secure: a.secure, SameSite: http.SameSiteStrictMode}
 }
 
 // public paths need no session.
@@ -178,12 +179,12 @@ func localNext(n string) string {
 var loginPage = template.Must(template.New("login").Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark"><title>Sign in · Housekeeparr</title>
-<link rel="stylesheet" href="/static/app.css"><link rel="icon" href="/static/icon.svg" type="image/svg+xml"></head>
+<link rel="stylesheet" href="{{.Base}}/static/app.css"><link rel="icon" href="{{.Base}}/static/icon.svg" type="image/svg+xml"></head>
 <body><main id="main" class="login">
 <section class="card" aria-labelledby="h-login">
-<h1 id="h-login"><img src="/static/icon.svg" alt="" width="22" height="22"> Housekeeparr</h1>
+<h1 id="h-login"><img src="{{.Base}}/static/icon.svg" alt="" width="22" height="22"> Housekeeparr</h1>
 {{if .Error}}<div class="banner banner-error" role="alert"><span class="glyph" aria-hidden="true">■</span> <span>{{.Error}}</span></div>{{end}}
-<form method="post" action="/login">
+<form method="post" action="{{.Base}}/login">
 <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="next" value="{{.Next}}">
 <p><label for="user">Username</label><br><input id="user" name="username" autocomplete="username" required></p>
 <p><label for="pass">Password</label><br><input id="pass" name="password" type="password" autocomplete="current-password" required></p>
@@ -204,7 +205,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	render := func(status int, msg, next string) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(status)
-		_ = loginPage.Execute(w, map[string]string{"CSRF": s.loginToken(), "Next": localNext(next), "Error": msg})
+		_ = loginPage.Execute(w, map[string]string{"CSRF": s.loginToken(), "Next": localNext(next), "Error": msg, "Base": s.base})
 	}
 	if r.Method == http.MethodGet {
 		render(http.StatusOK, "", r.URL.Query().Get("next"))

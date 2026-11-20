@@ -15,7 +15,7 @@
   <p>Each episode or movie may be recovered {{.Limits.ContentAttempts}} times until someone reviews it (<code>content_attempts</code>, from {{.Limits.From "content_attempts"}}). When the allowance is used up, its finding stays open and automation leaves it alone; that does not mean no release exists. Check the manager's history and blocklist, then reset to allow more attempts. A reset sends nothing.</p>
   {{if .Attempts}}<table class="table compact"><thead><tr><th scope="col">Content</th><th scope="col">Attempts</th><th scope="col">Latest</th><th scope="col">Last reset</th><th scope="col">Reset</th></tr></thead><tbody>
   {{range .Attempts}}<tr><td><code>{{.Ref}}</code></td><td>{{.Used}} of {{.Limit}}{{if .Exhausted}} <strong>needs review</strong>{{end}}</td><td>{{clock .LastAt}}</td><td>{{with .LastReset}}{{clock .At}} <span class="muted small">{{.Actor}}: {{.Note}}</span>{{else}}never{{end}}</td>
-  <td><form method="post" action="/attempts/reset"><input type="hidden" name="csrf" value="{{$csrf}}"><input type="hidden" name="ref" value="{{.Ref}}">
+  <td><form method="post" action="{{base}}/attempts/reset"><input type="hidden" name="csrf" value="{{$csrf}}"><input type="hidden" name="ref" value="{{.Ref}}">
   <label class="small">What you reviewed <input type="text" name="note" required maxlength="500"></label>
   <label class="small"><input type="checkbox" name="confirm" value="yes" required> I reviewed why earlier replacements did not resolve it</label>
   <button type="submit" class="secondary">Reset attempts</button></form></td></tr>{{end}}
@@ -40,12 +40,12 @@
   <h2 id="h-notify">Notifications</h2>
   {{if .NotifyTargets}}<p class="muted small">{{.NotifyTargets}} target(s) configured. Each target has an hourly request limit. Failed deliveries can retry for up to {{.NotifyMaxAttempts}} attempts within {{.NotifyMaxAge}}.</p>{{else}}<p class="muted small">No notification targets are configured (<code>[[notify]]</code>).</p>{{end}}
   {{if .Notifications}}<table class="table compact"><thead><tr><th scope="col">Queued</th><th scope="col">Target</th><th scope="col">Event</th><th scope="col">Delivery</th></tr></thead><tbody>
-  {{range .Notifications}}<tr><td>{{clock .CreatedAt}}</td><td>{{.Target}}</td><td>{{if .FindingID}}<a href="/findings/{{.FindingID}}">{{.Title}}</a>{{else}}{{.Title}}{{end}} <span class="muted small">{{.Kind}}, {{.Severity}}</span></td><td>{{if .SentAt}}sent {{clockp .SentAt}}{{else if .DroppedAt}}dropped: {{.LastError}}{{else}}pending ({{.Attempts}} attempts){{if .LastError}}; last: {{.LastError}}{{end}}{{end}}</td></tr>{{end}}
+  {{range .Notifications}}<tr><td>{{clock .CreatedAt}}</td><td>{{.Target}}</td><td>{{if .FindingID}}<a href="{{base}}/findings/{{.FindingID}}">{{.Title}}</a>{{else}}{{.Title}}{{end}} <span class="muted small">{{.Kind}}, {{.Severity}}</span></td><td>{{if .SentAt}}sent {{clockp .SentAt}}{{else if .DroppedAt}}dropped: {{.LastError}}{{else}}pending ({{.Attempts}} attempts){{if .LastError}}; last: {{.LastError}}{{end}}{{end}}</td></tr>{{end}}
   </tbody></table>{{end}}
 </section>
 <section class="card" aria-labelledby="h-ev">
   <h2 id="h-ev">Finding lifecycle</h2>
-  {{if .Events}}<ol class="timeline">{{range .Events}}<li><time datetime="{{iso .At}}">{{clock .At}}</time> <a href="/findings/{{.FindingID}}">#{{.FindingID}}</a> <span class="event event-{{.Kind}}">{{.Kind}}</span> <span class="muted small">{{.Actor}}</span> {{.Detail}}</li>{{end}}</ol>
+  {{if .Events}}<ol class="timeline">{{range .Events}}<li><time datetime="{{iso .At}}">{{clock .At}}</time> <a href="{{base}}/findings/{{.FindingID}}">#{{.FindingID}}</a> <span class="event event-{{.Kind}}">{{.Kind}}</span> <span class="muted small">{{.Actor}}</span> {{.Detail}}</li>{{end}}</ol>
   {{else}}{{template "empty" "No finding events yet."}}{{end}}
 </section>
 <section class="card" aria-labelledby="h-audit">

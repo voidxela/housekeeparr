@@ -6,7 +6,7 @@
 {{range .Transfers}}{{$t := .Transfer}}
   <li class="dl{{if .Findings}} dl-flagged{{end}}">
     <div class="dl-main">
-      <a class="dl-name" href="/downloads/{{$t.ClientID}}/{{$t.NativeID}}">{{$t.Name}}</a>
+      <a class="dl-name" href="{{base}}/downloads/{{$t.ClientID}}/{{$t.NativeID}}">{{$t.Name}}</a>
       <div class="dl-meta muted small">
         <span>{{$t.ClientID}}</span> ·
         <span class="state state-{{$t.StateClass}}">{{$t.StateClass.Describe}}</span> <span title="Native client state">({{$t.Latest.NativeState}})</span> ·
@@ -25,7 +25,7 @@
         <span class="assess assess-{{.Status}}">{{assessLabel .Status}}</span>
         <p class="small">{{.Headline}}</p>
       {{else}}<span class="muted small">{{if eq (printf "%s" $t.StateClass) "complete"}}Complete — no diagnosis applies.{{else}}Not yet evaluated.{{end}}</span>{{end}}
-      {{range .Findings}}<a class="small finding-chip" href="/findings/{{.ID}}">{{template "sev" .Severity}} #{{.ID}}</a>{{end}}
+      {{range .Findings}}<a class="small finding-chip" href="{{base}}/findings/{{.ID}}">{{template "sev" .Severity}} #{{.ID}}</a>{{end}}
     </div>
   </li>
 {{end}}

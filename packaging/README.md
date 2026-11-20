@@ -70,6 +70,21 @@ location / {
 }
 ```
 
+**Shared host name under a path** (for example Ultra.cc, where each
+application has its own `location` on one HTTPS host): set
+`base_path = "/housekeeparr"`, `trusted_proxy = true` and the shared host in
+`allowed_hosts`, keep `listen` on loopback, and proxy the path without
+rewriting it. Links, assets, redirects and the session cookie's path all
+use the prefix.
+
+```nginx
+location /housekeeparr/ {
+    proxy_pass http://127.0.0.1:8484;
+    proxy_set_header Host $host;
+    proxy_read_timeout 150s;
+}
+```
+
 Listener timeouts are `web.read_header_timeout` (5 s), `read_timeout`
 (15 s), `write_timeout` (2 min, at least six times `action_timing.settle`)
 and `idle_timeout` (1 min). A manual action keeps running if the browser or

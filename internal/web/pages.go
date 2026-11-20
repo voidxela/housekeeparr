@@ -23,6 +23,8 @@ var pageNames = []string{"overview", "attention", "finding", "downloads", "downl
 func (s *Server) funcs() template.FuncMap {
 	now := s.svc.Now
 	return template.FuncMap{
+		// base is the configured path prefix for every local link.
+		"base":        func() string { return s.base },
 		"searchLabel": app.SearchLabel,
 		"since": func(t time.Time) string {
 			if t.IsZero() {

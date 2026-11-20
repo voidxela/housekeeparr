@@ -4,7 +4,7 @@
 
 {{define "findingrow"}}
 <li class="finding sev-border-{{.Severity}}">
-  <a href="/findings/{{.ID}}" class="finding-link">
+  <a href="{{base}}/findings/{{.ID}}" class="finding-link">
     <div class="finding-head">
       {{template "sev" .Severity}}
       {{if ne (printf "%s" .State) "open"}}<span class="pill">{{stateLabel .State}}</span>{{end}}

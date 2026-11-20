@@ -1,9 +1,9 @@
 {{define "content"}}{{with .Page}}
 <h1>Needs attention</h1>
 <nav class="tabs" aria-label="Finding state">
-  <a href="/attention" {{if eq .Tab "active"}}aria-current="page"{{end}}>Open &amp; acknowledged</a>
-  <a href="/attention?state=snoozed" {{if eq .Tab "snoozed"}}aria-current="page"{{end}}>Snoozed</a>
-  <a href="/attention?state=resolved" {{if eq .Tab "resolved"}}aria-current="page"{{end}}>Resolved</a>
+  <a href="{{base}}/attention" {{if eq .Tab "active"}}aria-current="page"{{end}}>Open &amp; acknowledged</a>
+  <a href="{{base}}/attention?state=snoozed" {{if eq .Tab "snoozed"}}aria-current="page"{{end}}>Snoozed</a>
+  <a href="{{base}}/attention?state=resolved" {{if eq .Tab "resolved"}}aria-current="page"{{end}}>Resolved</a>
 </nav>
 {{if .Findings}}
 <ul class="findings">{{range .Findings}}{{template "findingrow" .}}{{end}}</ul>

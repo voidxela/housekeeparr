@@ -48,6 +48,8 @@ type Options struct {
 	// and one of them.
 	TLSCert, TLSKey string
 	TrustedProxy    bool
+	// BasePath serves everything under a path prefix ("" for the root).
+	BasePath string
 	// Listener timeouts; zero uses the configuration defaults.
 	ReadHeaderTimeout, ReadTimeout, WriteTimeout, IdleTimeout time.Duration
 }
@@ -65,8 +67,10 @@ type Server struct {
 	tlsKey  string
 	// trustedProxy: a TLS-terminating proxy is declared in front.
 	trustedProxy bool
-	http         *http.Server
-	static       http.Handler
+	// base is the path prefix, without a trailing slash.
+	base   string
+	http   *http.Server
+	static http.Handler
 }
 
 // New builds a server. A non-loopback listen address requires
@@ -97,7 +101,7 @@ func New(svc *app.Service, o Options) (*Server, error) {
 	if _, err := rand.Read(key); err != nil {
 		return nil, err
 	}
-	s := &Server{svc: svc, log: o.Logger, listen: o.Listen, csrfKey: key, tlsCert: o.TLSCert, tlsKey: o.TLSKey, trustedProxy: o.TrustedProxy,
+	s := &Server{svc: svc, log: o.Logger, listen: o.Listen, csrfKey: key, tlsCert: o.TLSCert, tlsKey: o.TLSKey, trustedProxy: o.TrustedProxy, base: o.BasePath,
 		hosts: map[string]bool{"localhost": true, "127.0.0.1": true, "::1": true}}
 	if isLoopback(host) {
 		s.hosts[strings.Trim(host, "[]")] = true
@@ -105,7 +109,7 @@ func New(svc *app.Service, o Options) (*Server, error) {
 	for _, h := range o.AllowedHosts {
 		s.hosts[strings.ToLower(h)] = true
 	}
-	if s.auth, err = newAuthState(o.Auth, o.TLSCert != "" || o.TrustedProxy); err != nil {
+	if s.auth, err = newAuthState(o.Auth, o.TLSCert != "" || o.TrustedProxy, o.BasePath+"/"); err != nil {
 		return nil, err
 	}
 	if err := s.parseTemplates(); err != nil {
@@ -178,7 +182,45 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/findings/{id}", s.apiFinding)
 	mux.HandleFunc("GET /api/v1/findings/{id}/preview", s.apiPreview)
 	mux.HandleFunc("GET /api/v1/downloads/{client}/{native}", s.apiDownload)
-	return s.guard(mux)
+	return s.prefixed(s.guard(mux))
+}
+
+// prefixed serves next under the base path: it strips the prefix from
+// requests and adds it to every local redirect, so handlers and their
+// redirects stay root-relative.
+func (s *Server) prefixed(next http.Handler) http.Handler {
+	if s.base == "" {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
+		switch {
+		case p == s.base:
+			http.Redirect(w, r, s.base+"/", http.StatusMovedPermanently)
+			return
+		case !strings.HasPrefix(p, s.base+"/"):
+			http.NotFound(w, r)
+			return
+		}
+		r2 := r.Clone(r.Context())
+		r2.URL.Path = strings.TrimPrefix(p, s.base)
+		r2.URL.RawPath = ""
+		next.ServeHTTP(&prefixWriter{ResponseWriter: w, base: s.base}, r2)
+	})
+}
+
+// prefixWriter adds the base path to local Location headers.
+type prefixWriter struct {
+	http.ResponseWriter
+	base string
+}
+
+func (p *prefixWriter) WriteHeader(code int) {
+	h := p.ResponseWriter.Header()
+	if loc := h.Get("Location"); strings.HasPrefix(loc, "/") && !strings.HasPrefix(loc, "//") {
+		h.Set("Location", p.base+loc)
+	}
+	p.ResponseWriter.WriteHeader(code)
 }
 
 // guard enforces Host allowlisting (DNS-rebinding protection), security

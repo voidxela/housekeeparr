@@ -225,7 +225,7 @@ func TestConcurrentFailedSignInsRespectGlobalLimit(t *testing.T) {
 }
 
 func TestWebAuthUsesConfiguredSessionAndSignInBounds(t *testing.T) {
-	a, err := newAuthState(&Auth{Username: "admin", Password: "pw", SessionTTL: time.Hour, SignInWindow: 5 * time.Minute, SignInFailures: 1}, true)
+	a, err := newAuthState(&Auth{Username: "admin", Password: "pw", SessionTTL: time.Hour, SignInWindow: 5 * time.Minute, SignInFailures: 1}, true, "/")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,5 +250,51 @@ func TestWebAuthUsesConfiguredSessionAndSignInBounds(t *testing.T) {
 	}
 	if _, valid := a.session(r, now.Add(time.Hour)); valid {
 		t.Fatal("session lasted beyond its configured expiry")
+	}
+}
+
+// Behind a reverse proxy that shares one host name between applications
+// (Ultra.cc's per-application locations, for example), everything lives
+// under the base path: links, assets, redirects, and the session cookie.
+func TestBasePath(t *testing.T) {
+	d, err := demo.Generate(context.Background(), t.TempDir(), time.Date(2026, 11, 1, 16, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { d.Store.Close() })
+	svc := app.New(d.Store, d.Config, d.Clock.Now, d.Engine)
+	s, err := New(svc, Options{Listen: "127.0.0.1:8484", Logger: slog.New(slog.NewTextHandler(testWriter{t}, nil)),
+		Auth: &Auth{Username: "admin", Password: "correct horse"}, AllowedHosts: []string{"hk.example.org"}, TrustedProxy: true, BasePath: "/housekeeparr"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := &env{h: s.Handler(), svc: svc, d: d}
+	if w := e.req(t, "GET", "/housekeeparr", nil, nil); w.Code != http.StatusMovedPermanently || w.Header().Get("Location") != "/housekeeparr/" {
+		t.Fatalf("bare base: %d %q", w.Code, w.Header().Get("Location"))
+	}
+	if w := e.req(t, "GET", "/attention", nil, nil); w.Code != http.StatusNotFound {
+		t.Fatalf("outside the base path: %d", w.Code)
+	}
+	w := e.req(t, "GET", "/housekeeparr/attention", nil, nil)
+	if loc := w.Header().Get("Location"); w.Code != http.StatusSeeOther || !strings.HasPrefix(loc, "/housekeeparr/login?next=") {
+		t.Fatalf("unauthenticated page: %d %q", w.Code, loc)
+	}
+	w = e.req(t, "GET", "/housekeeparr/login", nil, nil)
+	if body := w.Body.String(); !strings.Contains(body, `action="/housekeeparr/login"`) || !strings.Contains(body, `href="/housekeeparr/static/app.css"`) {
+		t.Fatalf("login page links:\n%s", body)
+	}
+	if w := e.req(t, "GET", "/housekeeparr/static/app.css", nil, nil); w.Code != http.StatusOK {
+		t.Fatalf("asset: %d", w.Code)
+	}
+	w = e.req(t, "POST", "/housekeeparr/login", url.Values{"csrf": {token(t, w.Body.String())}, "username": {"admin"},
+		"password": {"correct horse"}, "next": {"/attention"}}, nil)
+	c := sessionOf(t, w)
+	if c.Path != "/housekeeparr/" || w.Header().Get("Location") != "/housekeeparr/attention" {
+		t.Fatalf("sign-in: cookie path %q, location %q", c.Path, w.Header().Get("Location"))
+	}
+	w = e.req(t, "GET", "/housekeeparr/", nil, c)
+	body := w.Body.String()
+	if w.Code != http.StatusOK || !strings.Contains(body, `href="/housekeeparr/attention"`) || strings.Contains(body, `href="/attention"`) {
+		t.Fatalf("overview %d links not under the base path", w.Code)
 	}
 }

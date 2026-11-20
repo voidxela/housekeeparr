@@ -150,6 +150,9 @@ listen = "127.0.0.1:8484"
 # tls_cert = "/etc/housekeeparr/cert.pem"
 # tls_key = "/etc/housekeeparr/key.pem"
 # trusted_proxy = false
+# Serve under a path prefix when the proxy shares one host name between
+# applications (for example https://host/housekeeparr/).
+# base_path = "/housekeeparr"
 # A proxy must pass the original Host header (nginx: proxy_set_header Host
 # $host) and wait at least write_timeout (see packaging/README.md).
 #

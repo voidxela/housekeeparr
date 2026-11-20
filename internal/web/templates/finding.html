@@ -1,5 +1,5 @@
 {{define "content"}}{{$csrf := .CSRF}}{{with .Page}}
-<nav class="crumbs" aria-label="Breadcrumb"><a href="/attention">Needs attention</a> / #{{.ID}}</nav>
+<nav class="crumbs" aria-label="Breadcrumb"><a href="{{base}}/attention">Needs attention</a> / #{{.ID}}</nav>
 <div class="finding-hero sev-border-{{.Severity}}">
   <div class="finding-head">
     {{template "sev" .Severity}} <span class="pill">{{stateLabel .State}}</span>
@@ -17,7 +17,7 @@
     {{if and .NextEvaluationAt (ne (printf "%s" .State) "resolved")}}<div><dt>Next evaluation</dt><dd>{{until .NextEvaluationAt}}</dd></div>{{end}}
     {{if .SnoozedUntil}}<div><dt>Snoozed until</dt><dd>{{clockp .SnoozedUntil}}</dd></div>{{end}}
     {{with .Subject.Content}}<div><dt>Affects</dt><dd>{{join . ", "}}</dd></div>{{end}}
-    {{if .Subject.ClientID}}{{if .Subject.NativeID}}<div><dt>Transfer</dt><dd><a href="/downloads/{{.Subject.ClientID}}/{{.Subject.NativeID}}">{{if .Subject.TransferName}}{{.Subject.TransferName}}{{else}}{{.Subject.NativeID}}{{end}}</a></dd></div>{{end}}{{end}}
+    {{if .Subject.ClientID}}{{if .Subject.NativeID}}<div><dt>Transfer</dt><dd><a href="{{base}}/downloads/{{.Subject.ClientID}}/{{.Subject.NativeID}}">{{if .Subject.TransferName}}{{.Subject.TransferName}}{{else}}{{.Subject.NativeID}}{{end}}</a></dd></div>{{end}}{{end}}
   </dl>
 </div>
 
@@ -28,11 +28,11 @@
   {{if .Detail.ProposedEffects}}<ul>{{range .Detail.ProposedEffects}}<li>{{.}}</li>{{end}}</ul>{{else}}<p class="muted small">No external effects are proposed.</p>{{end}}
   <div class="action-row">
     {{if eq (printf "%s" .State) "open"}}
-    <form method="post" action="/findings/{{.ID}}/ack"><input type="hidden" name="csrf" value="{{$csrf}}"><button type="submit">Acknowledge</button></form>
+    <form method="post" action="{{base}}/findings/{{.ID}}/ack"><input type="hidden" name="csrf" value="{{$csrf}}"><button type="submit">Acknowledge</button></form>
     {{else}}
-    <form method="post" action="/findings/{{.ID}}/reopen"><input type="hidden" name="csrf" value="{{$csrf}}"><button type="submit" class="secondary">Return to open</button></form>
+    <form method="post" action="{{base}}/findings/{{.ID}}/reopen"><input type="hidden" name="csrf" value="{{$csrf}}"><button type="submit" class="secondary">Return to open</button></form>
     {{end}}
-    <form method="post" action="/findings/{{.ID}}/snooze" class="inline">
+    <form method="post" action="{{base}}/findings/{{.ID}}/snooze" class="inline">
       <input type="hidden" name="csrf" value="{{$csrf}}">
       <label for="snooze-d">Snooze for</label>
       <select id="snooze-d" name="duration"><option value="4h">4 hours</option><option value="24h" selected>1 day</option><option value="168h">1 week</option><option value="720h">30 days</option></select>
@@ -46,7 +46,7 @@
 {{with $.Page.Automation}}
 <section class="card" aria-labelledby="h-auto">
   <h2 id="h-auto">Automation</h2>
-  <p><span class="pill">{{.Result}}</span> evaluated {{clock .EvaluatedAt}}{{with .NextAt}}; next eligible {{clock .}}{{end}}{{if .IntentID}} — <a href="/activity">action #{{.IntentID}}</a>{{end}}</p>
+  <p><span class="pill">{{.Result}}</span> evaluated {{clock .EvaluatedAt}}{{with .NextAt}}; next eligible {{clock .}}{{end}}{{if .IntentID}} — <a href="{{base}}/activity">action #{{.IntentID}}</a>{{end}}</p>
   <p class="small">{{.Detail}}</p>
 </section>
 {{end}}
@@ -66,7 +66,7 @@
   <h3>Effects</h3>
   <ul>{{range .Effects}}<li>{{.}}</li>{{end}}{{range .SideEffects}}<li>{{.}}</li>{{end}}</ul>
   {{if .Eligible}}
-  <form method="post" action="/findings/{{$.Page.ID}}/act">
+  <form method="post" action="{{base}}/findings/{{$.Page.ID}}/act">
     <input type="hidden" name="csrf" value="{{$csrf}}">
     <label><input type="checkbox" name="confirm" value="yes" required> I have read the effects above</label>
     <button type="submit">Run this action</button>
@@ -98,6 +98,6 @@
 <section class="card" aria-labelledby="h-hist">
   <h2 id="h-hist">History</h2>
   <ol class="timeline">{{range .Events}}<li><time datetime="{{iso .At}}" title="{{clock .At}}">{{clock .At}}</time> <span class="event event-{{.Kind}}">{{.Kind}}</span> <span class="muted small">{{.Actor}}</span> {{.Detail}}</li>{{end}}</ol>
-  {{with .History}}<h3>Earlier occurrences</h3><ul class="plain">{{range .}}<li><a href="/findings/{{.ID}}">#{{.ID}}</a> {{clock .FirstSeen}} – {{clockp .ResolvedAt}}: {{.Resolution}}</li>{{end}}</ul>{{end}}
+  {{with .History}}<h3>Earlier occurrences</h3><ul class="plain">{{range .}}<li><a href="{{base}}/findings/{{.ID}}">#{{.ID}}</a> {{clock .FirstSeen}} – {{clockp .ResolvedAt}}: {{.Resolution}}</li>{{end}}</ul>{{end}}
 </section>
 {{end}}{{end}}

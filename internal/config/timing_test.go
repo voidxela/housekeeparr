@@ -49,3 +49,12 @@ func TestUntestedVersions(t *testing.T) {
 	}
 	expectProblem(t, minimal+"\n[automation]\nuntested_versions = \"yes\"\n", "automation.untested_versions", "observe")
 }
+
+func TestWebBasePath(t *testing.T) {
+	if b := mustParse(t, minimal+"\n[web]\nbase_path = \"/housekeeparr\"\n").Web.BasePath; b != "/housekeeparr" {
+		t.Fatalf("base_path %q", b)
+	}
+	for _, bad := range []string{"housekeeparr", "/housekeeparr/", "//x", "/a b", "/a?b"} {
+		expectProblem(t, minimal+"\n[web]\nenabled = true\nbase_path = \""+bad+"\"\n", "web.base_path", "must start with /")
+	}
+}

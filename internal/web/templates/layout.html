@@ -5,9 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <title>{{.Title}} · Housekeeparr{{if .Demo}} (demo){{end}}</title>
-<link rel="stylesheet" href="/static/app.css">
-<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
-<script src="/static/app.js" defer></script>
+<link rel="stylesheet" href="{{base}}/static/app.css">
+<link rel="icon" href="{{base}}/static/icon.svg" type="image/svg+xml">
+<script src="{{base}}/static/app.js" defer></script>
 </head>
 <body{{if .Demo}} class="is-demo"{{end}}>
 <a class="skip" href="#main">Skip to content</a>
@@ -18,17 +18,17 @@
 {{end}}
 <div class="shell">
   <header class="side">
-    <a class="brand" href="/"><img src="/static/icon.svg" alt="" width="22" height="22"> Housekeeparr</a>
+    <a class="brand" href="{{base}}/"><img src="{{base}}/static/icon.svg" alt="" width="22" height="22"> Housekeeparr</a>
     <nav aria-label="Main">
-      <a href="/" {{if eq .Nav "overview"}}aria-current="page"{{end}}>Overview</a>
-      <a href="/attention" {{if or (eq .Nav "attention") (eq .Nav "finding")}}aria-current="page"{{end}}>Needs attention{{if .Attention}} <span class="count" aria-label="{{.Attention}} unresolved">{{.Attention}}</span>{{end}}</a>
-      <a href="/downloads" {{if or (eq .Nav "downloads") (eq .Nav "download")}}aria-current="page"{{end}}>Downloads</a>
-      <a href="/activity" {{if eq .Nav "activity"}}aria-current="page"{{end}}>Activity</a>
-      <a href="/connections" {{if eq .Nav "connections"}}aria-current="page"{{end}}>Connections &amp; policy</a>
+      <a href="{{base}}/" {{if eq .Nav "overview"}}aria-current="page"{{end}}>Overview</a>
+      <a href="{{base}}/attention" {{if or (eq .Nav "attention") (eq .Nav "finding")}}aria-current="page"{{end}}>Needs attention{{if .Attention}} <span class="count" aria-label="{{.Attention}} unresolved">{{.Attention}}</span>{{end}}</a>
+      <a href="{{base}}/downloads" {{if or (eq .Nav "downloads") (eq .Nav "download")}}aria-current="page"{{end}}>Downloads</a>
+      <a href="{{base}}/activity" {{if eq .Nav "activity"}}aria-current="page"{{end}}>Activity</a>
+      <a href="{{base}}/connections" {{if eq .Nav "connections"}}aria-current="page"{{end}}>Connections &amp; policy</a>
     </nav>
     <div class="side-foot">
       <span class="mode mode-{{.Mode}}" title="Operating mode">{{if eq .Mode "paused"}}Paused{{else}}Observe-only{{end}}</span>
-      {{if .Authed}}<form method="post" action="/logout" class="logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button type="submit" class="secondary small">Sign out</button></form>{{end}}
+      {{if .Authed}}<form method="post" action="{{base}}/logout" class="logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button type="submit" class="secondary small">Sign out</button></form>{{end}}
       {{with .Worker}}
       <span class="worker worker-{{.State}}" title="{{.Explanation}}"><span class="dot" aria-hidden="true"></span>Worker {{.State}}{{if .HeartbeatAge}} · {{.HeartbeatAge}}{{end}}</span>
       {{end}}
