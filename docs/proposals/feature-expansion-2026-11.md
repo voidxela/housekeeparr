@@ -196,5 +196,17 @@ findings when retained data plus active downloads approach it.
 
 ## Production trial so far
 
+In three hours of automatic operation, Housekeeparr dispatched 41 actions
+(34 no-progress recoveries, 2 metadata recoveries, 5 missing searches), and
+all of them were verified with no failures. Sonarr then grabbed 35
+replacements: 32 from 1337x and 3 from EZTV. At the checkpoint, 29 of them
+had no metadata, so coverage rose by only 2 files. Recovery is doing its
+job, but the manager keeps choosing from sources that rarely work. That is
+the strongest evidence for area 1.
+
+The trial also produced the version-line support decision (SPEC §4.1), the
+correlated-hold exemption for reached swarms, `[web] base_path`, and the
+no-payload exclusion from the retained ceiling.
+
 See `docs/STATUS.md` ("Production trial") and `docs/compatibility.md`
 ("Production trial runs") for the full record.

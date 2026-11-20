@@ -44,7 +44,30 @@ was deployed, and runs on the host.
 | The correlated-stall hold held every recovery on the client, because every incomplete download was a dead release. A stall whose connected peers lack its pieces no longer counts toward the hold and is recovered despite it. Connected peers on any active download now enable probes, as verified progress already did. | `b13197c` |
 | Transmission 4.0.5 had no released-instance evidence. It is pinned against three independent checksums and registered for every workflow from a full run (compatibility.md, "Production trial runs"). | `bc06af1`, `1662f1d` |
 | The interface could not be served under a shared host's per-application path. `[web] base_path` prefixes routes, links, assets, redirects and the session cookie path. | `f563779` |
+| The retained-transfer count ceiling counted magnets stopped before metadata, which hold no data, so a client full of dead magnets reached the ceiling and blocked recovery. The count ceiling and the room check now exclude no-payload transfers. | `c2b5835` |
 | Status, findings and previews carried milestone-era claims: recovery "not verified for any version", missing searches "not implemented", `search_command=not_implemented`, "privacy (public)" for unknown privacy, and version refusals on unmanaged transfers. | `d3e9bfc`, `f0cdc00`, `8aa3ab7`, `985c127` |
+
+### Results after three hours of automatic operation
+
+At the checkpoint (2026-11-20 04:16 local), Housekeeparr had dispatched 41
+automatic actions, and every one was verified: 34 no-progress recoveries, 2
+metadata recoveries and 5 missing-episode searches. None failed or needed
+review. Sonarr grabbed replacements for 30 of the recovered items, and 6
+were awaiting a grab. Coverage rose from 917 to 919 episode files, and
+wanted-missing fell from 413 to 411. The service used 38 MB (peak 54 MB)
+and 22 s of CPU.
+
+The correlated-stall hold stayed engaged, with about 60 of 95 active
+downloads stalled. Recovery continued through the exemption for swarms
+whose connected peers lack the missing pieces, and through the spaced probe.
+
+Coverage gains are limited by the sources. Sonarr took 32 of its 35
+replacement grabs from 1337x and 3 from EZTV, the same public sources
+whose earlier grabs died. At the checkpoint, 29 of the replacements had no
+metadata yet. Each recovery blocklists the dead release, so these cycles
+work through the release list, but they cannot find a healthy copy that
+the indexers do not offer. Proposal area 1
+([feature expansion](proposals/feature-expansion-2026-11.md)) targets this.
 
 ## Default-timing validation — 2026-11-19 (continuation)
 
