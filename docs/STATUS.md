@@ -10,6 +10,42 @@ repository · **unverified** = implemented, but behaviour against real
 released applications has not been established · **remaining** = not
 implemented.
 
+## Production trial — started 2026-11-20
+
+Housekeeparr runs on the user's shared Ultra.cc host "eclipse" (Debian
+13, x86_64): Sonarr 4.0.20.3014, Radarr 6.4.4.10685 and Transmission 4.0.5
+(a6fe2a64aa), with Lidarr, Prowlarr and Jellyfin alongside. It is
+installed in `~/.apps/housekeeparr`.
+
+- The static binary runs as a user systemd service with `Restart=on-failure`,
+  `Nice=10` and idle I/O priority.
+- Secrets are files in a private directory, written on the host.
+- The web interface listens on loopback behind the account's nginx at
+  `https://<host>/housekeeparr/`, with a password, `trusted_proxy` and
+  `base_path`.
+- Polling uses the default 10-minute interval with two concurrent reads.
+- Memory use is about 12–40 MB, with negligible CPU.
+
+The first two hours ran in observe mode. At start, 97 of 587 torrents were
+incomplete. 91 of them were Sonarr grabs from one 2026-11-18
+missing-episode search; all were dead after 46 hours, 50 of them magnets
+that never obtained metadata. The other six were unmanaged Lidarr
+downloads. Automatic mode then enabled all five workflows, with trial
+limits of 60 acquisitions a day and 150 retained transfers. After the
+first hour of automatic operation, the trial also allowed three actions
+per cycle and a 20-minute correlated-stall probe.
+
+The trial found and fixed these defects. Each fix has a regression test,
+was deployed, and runs on the host.
+
+| Finding and fix | Commits |
+| --- | --- |
+| Writes required an exact tested version for every application, so the host's Transmission 4.0.5 was observe-only. Write support is now per API-contract line (SPEC §4.1, user decision 2026-11-20). Untested lines are opt-in through `untested_versions = "act"`. | `e5fc8ae`, `3a0ec75`, `146c187` |
+| The correlated-stall hold held every recovery on the client, because every incomplete download was a dead release. A stall whose connected peers lack its pieces no longer counts toward the hold and is recovered despite it. Connected peers on any active download now enable probes, as verified progress already did. | `b13197c` |
+| Transmission 4.0.5 had no released-instance evidence. It is pinned against three independent checksums and registered for every workflow from a full run (compatibility.md, "Production trial runs"). | `bc06af1`, `1662f1d` |
+| The interface could not be served under a shared host's per-application path. `[web] base_path` prefixes routes, links, assets, redirects and the session cookie path. | `f563779` |
+| Status, findings and previews carried milestone-era claims: recovery "not verified for any version", missing searches "not implemented", `search_command=not_implemented`, "privacy (public)" for unknown privacy, and version refusals on unmanaged transfers. | `d3e9bfc`, `f0cdc00`, `8aa3ab7`, `985c127` |
+
 ## Default-timing validation — 2026-11-19 (continuation)
 
 `review/remediation` (`21638d8`, tested as `63cda18`) was fast-forwarded
