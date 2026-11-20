@@ -716,7 +716,7 @@ download_clients = { "qBittorrent" = "qbit" }
 	if stall == nil || len(stall.Subject.Content) != 1 || stall.Subject.Content[0] != "Example Film (2024)" {
 		t.Fatalf("stall %+v", stall)
 	}
-	if !strings.Contains(strings.Join(stall.Detail.NextSteps, " "), "Radarr → Activity → Queue") {
+	if !strings.Contains(strings.Join(stall.Detail.NextSteps, " "), "sent to Radarr and qBittorrent") {
 		t.Fatalf("steps must name Radarr: %v", stall.Detail.NextSteps)
 	}
 	if imp == nil || !strings.HasPrefix(imp.Title, "Radarr import pending") {

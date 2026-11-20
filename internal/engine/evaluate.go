@@ -274,9 +274,10 @@ func consecutiveErrors(obs []store.Observation) int {
 	return n
 }
 
-// unverifiedRecovery states the recovery limitation until a version-tested
-// preservation workflow exists.
-const unverifiedRecovery = "Recovery semantics (media-manager queue removal, blocklisting, replacement-search ownership, and whether the torrent, its data, its tracker registration, and its active slot are retained) have not been verified for any version, so Housekeeparr proposes no action and makes no preservation claim."
+// recoveryLimitation states what a recovery does and does not establish.
+const recoveryLimitation = "Recovery fails and blocklists this grab in the media manager, which then searches for a replacement; it keeps the torrent and every file. " +
+	"It runs only where the workflow is enabled and the manager and client versions are supported (see the action preview for the exact operations and prerequisites), " +
+	"and a replacement search does not establish that a better release exists."
 
 func (e *Engine) modeEligibility(extra ...string) string {
 	var b strings.Builder
@@ -428,7 +429,7 @@ func (e *Engine) stalledDraft(key string, meta ConnMeta, eff policy.Effective, t
 		title = "No verified progress, pieces missing among connected peers: " + t.Name
 	}
 	managers, links := e.managerLinks(queue)
-	privacyNote := "Private and unknown-privacy transfers will default to observation even when recovery exists."
+	privacyNote := "For a private or unknown-privacy transfer, recovery by default fails the grab in the manager and leaves the torrent running (private_recovery)."
 	if p, ok := t.Private.Get(); ok && !p {
 		privacyNote = ""
 	}
@@ -439,7 +440,7 @@ func (e *Engine) stalledDraft(key string, meta ConnMeta, eff policy.Effective, t
 	}
 	if len(queue) > 0 {
 		mgr := e.conns.Meta[queue[0].ManagerID].Name
-		steps = append(steps, fmt.Sprintf("Review the item in %s → Activity → Queue. Before removing or blocklisting anything manually, confirm in your %s version's documentation what each removal option does to the torrent, its data, and future searches — Housekeeparr has not verified those effects.", mgr, mgr))
+		steps = append(steps, fmt.Sprintf("Preview the recovery on this page or with housekeeparr preview: it lists every operation sent to %s and %s, with each flag, and every prerequisite.", mgr, meta.Name))
 	} else {
 		steps = append(steps, "No media-manager queue item is associated with this transfer.")
 	}
@@ -455,7 +456,7 @@ func (e *Engine) stalledDraft(key string, meta ConnMeta, eff policy.Effective, t
 				a.Observations, policy.HumanDuration(eff.Settings.MaxObservationGap)),
 			Limitations: append(append([]string{}, a.Limitations...),
 				"A stalled torrent is not provably dead; an intermittent swarm may still complete.",
-				unverifiedRecovery),
+				recoveryLimitation),
 			Baseline:    stallBaseline(t),
 			Eligibility: e.modeEligibility(privacyNote),
 			NextSteps:   steps,
@@ -484,11 +485,11 @@ func (e *Engine) metadataDraft(key string, meta ConnMeta, eff policy.Effective, 
 			Confidence: "Established from consecutive metadata-state observations reported by the client.",
 			Limitations: append(append([]string{}, a.Limitations...),
 				"Magnet links depend on peers, trackers, or DHT to supply metadata; a magnet that cannot reach any of them may never resolve.",
-				unverifiedRecovery),
+				recoveryLimitation),
 			Eligibility: e.modeEligibility(),
 			NextSteps: []string{
 				fmt.Sprintf("Inspect the magnet in %s: tracker messages and whether any peer is connected.", meta.Name),
-				"Review the item in the media manager's Activity → Queue. Before removing or blocklisting anything manually, confirm in that version's documentation what each removal option does — Housekeeparr has not verified those effects.",
+				"Preview the recovery on this page or with housekeeparr preview: it lists every operation and flag, and every prerequisite. A magnet no manager tracks has no grab to fail and is only reported.",
 			},
 			Links: links,
 		},
