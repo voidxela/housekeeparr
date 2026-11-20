@@ -217,7 +217,7 @@ func TestFindingPageShowsActionPreviewAndActRefuses(t *testing.T) {
 	e := setup(t)
 	f := firstFinding(t, e, domain.FindingTransferStalled)
 	page := e.get(t, "/findings/"+itoa(f.ID)).Body.String()
-	for _, want := range []string{"Action preview: no_progress_recovery", "Not eligible", "tested write workflow", "FAILS",
+	for _, want := range []string{"Action preview: no_progress_recovery", "Not eligible", "supported versions", "FAILS",
 		"manager.queue.fail", `&#34;removeFromClient&#34;:false`, "housekeeparr preview " + itoa(f.ID)} {
 		if !strings.Contains(page, want) {
 			t.Errorf("finding page lacks %q", want)
@@ -236,7 +236,7 @@ func TestFindingPageShowsActionPreviewAndActRefuses(t *testing.T) {
 	// Confirmed, it goes through the coordinator and is refused with reasons.
 	w = e.do(t, post(path, "http://127.0.0.1:8485", url.Values{"csrf": {m[1]}, "confirm": {"yes"}}))
 	loc, _ := url.QueryUnescape(w.Header().Get("Location"))
-	if w.Code != http.StatusSeeOther || !strings.Contains(loc, "nothing was sent") || !strings.Contains(loc, "tested write workflow") {
+	if w.Code != http.StatusSeeOther || !strings.Contains(loc, "nothing was sent") || !strings.Contains(loc, "supported versions") {
 		t.Fatalf("confirmed act: %d %s", w.Code, loc)
 	}
 	if acts, _ := e.svc.Actions(context.Background(), 10); len(acts) != 0 {

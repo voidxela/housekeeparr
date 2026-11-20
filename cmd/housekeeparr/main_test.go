@@ -257,7 +257,7 @@ func TestPreviewActionsAndActConfirmation(t *testing.T) {
 	}
 	sid := strconv.FormatInt(id, 10)
 	code, out, errOut := runCLI(t, "preview", sid, "--config", cfg)
-	if code != exitOK || !strings.Contains(out, "NOT ELIGIBLE") || !strings.Contains(out, "[FAIL] tested write workflow") ||
+	if code != exitOK || !strings.Contains(out, "NOT ELIGIBLE") || !strings.Contains(out, "[FAIL] supported versions") ||
 		!strings.Contains(out, `"removeFromClient":false`) || !strings.Contains(out, "Nothing will be sent") {
 		t.Fatalf("preview: %d\n%s%s", code, out, errOut)
 	}

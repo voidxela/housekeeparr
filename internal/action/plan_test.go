@@ -44,10 +44,10 @@ func TestPlanBlockedOnlyByMissingTestedWorkflow(t *testing.T) {
 	if np != nil {
 		t.Fatal(np.Reason)
 	}
-	if b := blockerNames(p); len(b) != 1 || b[0] != "tested write workflow" {
+	if b := blockerNames(p); len(b) != 1 || b[0] != "supported versions" {
 		t.Fatalf("blockers %v", b)
 	}
-	if !strings.Contains(p.Blockers()[0].Detail, "sonarr 4.0.20.3014 with qbittorrent 5.3.0") {
+	if !strings.Contains(p.Blockers()[0].Detail, "never passed released-instance tests with sonarr and qbittorrent") {
 		t.Fatalf("detail %q", p.Blockers()[0].Detail)
 	}
 	// Every consequential flag is explicit.
@@ -71,10 +71,19 @@ func TestPlanBlockedOnlyByMissingTestedWorkflow(t *testing.T) {
 	if p, _ := Plan(in); !p.Eligible() {
 		t.Fatalf("tested combination blocked by %v", blockerNames(p))
 	}
-	// A different client version is not covered.
+	// A later patch in the same API lines is supported.
 	in.ClientProbe = &adapter.Probe{Version: "v5.3.1"}
+	if p, _ := Plan(in); !p.Eligible() {
+		t.Fatalf("same-line version blocked by %v", blockerNames(p))
+	}
+	// A new major is observed only, unless the operator opts in.
+	in.ClientProbe = &adapter.Probe{Version: "v6.0.0"}
 	if p, _ := Plan(in); p.Eligible() {
-		t.Fatal("untested version eligible")
+		t.Fatal("version outside the tested lines eligible")
+	}
+	in.UntestedVersions = true
+	if p, _ := Plan(in); !p.Eligible() {
+		t.Fatalf("opted-in version blocked by %v", blockerNames(p))
 	}
 }
 

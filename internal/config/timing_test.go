@@ -39,3 +39,13 @@ func TestOutcomeWindowSettings(t *testing.T) {
 	expectProblem(t, minimal+"\n[action_timing]\nno_grab_after = \"200h\"\n", "action_timing.no_grab_after", "outcome_window")
 	expectProblem(t, minimal+"\n[action_timing]\ncommand_follow = \"1m\"\n", "action_timing.command_follow", "between")
 }
+
+func TestUntestedVersions(t *testing.T) {
+	if mustParse(t, minimal).ActOnUntestedVersions() {
+		t.Fatal("default acts on untested versions")
+	}
+	if !mustParse(t, minimal+"\n[automation]\nuntested_versions = \"act\"\n").ActOnUntestedVersions() {
+		t.Fatal("opt-in ignored")
+	}
+	expectProblem(t, minimal+"\n[automation]\nuntested_versions = \"yes\"\n", "automation.untested_versions", "observe")
+}

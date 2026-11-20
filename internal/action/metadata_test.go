@@ -40,7 +40,7 @@ func TestMetadataRecoveryRefusesUnknownPrivacyWhenTurnedOff(t *testing.T) {
 		t.Fatal(np.Reason)
 	}
 	b := blockerNames(p)
-	if !slices.Equal(b, []string{"tested write workflow", "public transfer"}) {
+	if !slices.Equal(b, []string{"supported versions", "public transfer"}) {
 		t.Fatalf("blockers %v", b)
 	}
 	for _, c := range p.Blockers() {
@@ -61,7 +61,7 @@ func TestMetadataRecoveryWithUnknownPrivacyOptIn(t *testing.T) {
 	in := metadataInput()
 	optIn(&in)
 	p, _ := Plan(in)
-	if b := blockerNames(p); !slices.Equal(b, []string{"tested write workflow"}) {
+	if b := blockerNames(p); !slices.Equal(b, []string{"supported versions"}) {
 		t.Fatalf("blockers %v", b)
 	}
 	if !p.UnknownPrivacy {

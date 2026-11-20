@@ -103,7 +103,7 @@ type Redownload struct {
 var LiveChecks = []string{
 	"the torrent is still registered, in the same state, with no new verified progress and the same file selection",
 	"privacy (public) and category are unchanged",
-	"client and manager versions are still the tested ones",
+	"client and manager versions are unchanged since this preview",
 	"no other queue row in any manager refers to this torrent; the planned row is unchanged before the manager step",
 	"before the manager step: the content still exists and is monitored, and the manager reports no download-client or search-indexer failure",
 	"before the manager step: the manager's \"Redownload Failed\" setting is on (and, for a release grabbed through interactive search, \"Redownload Failed from Interactive Search\"), so failing the grab makes the manager search for a replacement",

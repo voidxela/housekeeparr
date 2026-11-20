@@ -80,7 +80,7 @@ func (s *Service) Preview(ctx context.Context, findingID int64, origin action.Or
 		return s.previewPack(ctx, f, origin, out)
 	}
 	in := action.PlanInput{Finding: *f, Origin: origin, PollInterval: s.cfg.Polling.Interval.Duration,
-		ConfigRevision: s.cfg.Revision, Tested: action.Tested, Now: s.now(), Limits: s.cfg.Limits(), PreviewTTL: s.cfg.ActionTiming.PreviewTTL.Duration}
+		ConfigRevision: s.cfg.Revision, Tested: action.Tested, UntestedVersions: s.cfg.ActOnUntestedVersions(), Now: s.now(), Limits: s.cfg.Limits(), PreviewTTL: s.cfg.ActionTiming.PreviewTTL.Duration}
 	if f.Subject.ClientID != "" && f.Subject.NativeID != "" {
 		if in.Transfer, err = s.st.Transfer(ctx, f.Subject.ClientID, f.Subject.NativeID); err != nil {
 			return nil, err

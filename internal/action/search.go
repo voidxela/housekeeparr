@@ -38,12 +38,14 @@ type SearchPlanInput struct {
 	Retained     store.RetainedUsage
 	// Searching is another search still in progress anywhere ("" none):
 	// one acquisition search is in flight at a time.
-	Searching      string
-	Tested         []TestedWorkflow
-	ConfigRevision string
-	Now            time.Time
-	PreviewTTL     time.Duration
-	Timing         config.SearchConfig
+	Searching string
+	Tested    []TestedWorkflow
+	// UntestedVersions: see PlanInput.
+	UntestedVersions bool
+	ConfigRevision   string
+	Now              time.Time
+	PreviewTTL       time.Duration
+	Timing           config.SearchConfig
 }
 
 // SearchTarget is the manager.search operation's target.
@@ -84,16 +86,8 @@ func PlanSearch(in SearchPlanInput) *Proposal {
 		p.Prerequisites = append(p.Prerequisites, Check{Name: name, Satisfied: ok, Hard: true, Detail: detail})
 	}
 	mv := probeVersion(in.ManagerProbe)
-	tested := false
-	for _, tw := range in.Tested {
-		tested = tested || tw.Workflow == wf && tw.Manager == in.ManagerKind && tw.ManagerVersion == mv
-	}
-	combo := nonEmpty(string(in.ManagerKind), "an unknown manager") + " " + nonEmpty(mv, "(version unknown)")
-	if tested {
-		add("tested write workflow", true, "missing-content searches passed disposable-instance tests for "+combo)
-	} else {
-		add("tested write workflow", false, "no missing-content search workflow has been tested for "+combo+"; this build sends no searches there")
-	}
+	sup := VersionSupport(in.Tested, wf, Side{in.ManagerKind, mv}, Side{}, in.UntestedVersions)
+	add("supported versions", sup.OK, sup.Detail)
 	add("content identity known", id > 0 && (kind == "episode" || kind == "movie"), "content "+it.ContentKey)
 	age := in.Now.Sub(it.LastSeen)
 	fresh := it.Present && age >= 0 && age <= in.Timing.MissingFreshness.Duration

@@ -18,8 +18,9 @@ and the last two run tables in [compatibility.md](compatibility.md).
 - Apply the scoped `private_recovery` mode to private and unknown-privacy
   transfers. The default keeps the torrent running and accounts for it as
   retained.
-- Keep exact-version write registrations tied to released-instance runs.
-  Use a new migration and a previous-schema upgrade test for database
+- Writes are supported per API line (SPEC §4.1): every `action.Tested` entry
+  still needs a released-instance run, and a new line needs one before it
+  is added to `action.Lines`. Use a new migration and a previous-schema upgrade test for database
   changes.
 - Use focused, subject-only conventional commits. Run released fixtures
   serially from a worktree pinned to the tested commit and record

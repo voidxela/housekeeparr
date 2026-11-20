@@ -70,16 +70,18 @@ type PackPlanInput struct {
 	// ClientKind/ClientProbe: the download client holding the pack; how a
 	// manager imports from it differs by client, so registration is per
 	// exact manager and client versions.
-	ClientKind     adapter.Kind
-	ClientProbe    *adapter.Probe
-	Locks          map[string]int64
-	Cooldowns      map[string]store.CooldownRecord
-	Paused         *store.WorkflowPause
-	Handled        int64 // an earlier succeeded clearance of this download
-	Tested         []TestedWorkflow
-	ConfigRevision string
-	Now            time.Time
-	PreviewTTL     time.Duration
+	ClientKind  adapter.Kind
+	ClientProbe *adapter.Probe
+	Locks       map[string]int64
+	Cooldowns   map[string]store.CooldownRecord
+	Paused      *store.WorkflowPause
+	Handled     int64 // an earlier succeeded clearance of this download
+	Tested      []TestedWorkflow
+	// UntestedVersions: see PlanInput.
+	UntestedVersions bool
+	ConfigRevision   string
+	Now              time.Time
+	PreviewTTL       time.Duration
 }
 
 // PlanPack builds the clearance proposal for a partial-pack finding.
@@ -102,17 +104,8 @@ func PlanPack(in PackPlanInput) *Proposal {
 		p.Prerequisites = append(p.Prerequisites, Check{Name: name, Satisfied: ok, Hard: true, Detail: detail})
 	}
 	mv, cv := probeVersion(in.ManagerProbe), probeVersion(in.ClientProbe)
-	tested := false
-	for _, tw := range in.Tested {
-		tested = tested || tw.Workflow == wf && tw.Manager == in.ManagerKind && tw.ManagerVersion == mv && tw.Client == in.ClientKind && tw.ClientVersion == cv
-	}
-	combo := fmt.Sprintf("%s %s with %s %s", nonEmpty(string(in.ManagerKind), "an unknown manager"), nonEmpty(mv, "(version unknown)"),
-		nonEmpty(string(in.ClientKind), "an unknown client"), nonEmpty(cv, "(version unknown)"))
-	if tested {
-		add("tested write workflow", true, "partial-pack clearance passed disposable-instance tests for "+combo)
-	} else {
-		add("tested write workflow", false, "no partial-pack workflow has been tested for "+combo+"; this build sends nothing there")
-	}
+	sup := VersionSupport(in.Tested, wf, Side{in.ManagerKind, mv}, Side{in.ClientKind, cv}, in.UntestedVersions)
+	add("supported versions", sup.OK, sup.Detail)
 	switch f.State {
 	case domain.FindingOpen, domain.FindingAcknowledged:
 		add("finding is active", true, "the finding is "+string(f.State))

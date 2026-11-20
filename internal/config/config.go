@@ -137,9 +137,18 @@ type AutomationConfig struct {
 	// PrivateRecovery sets how no-progress recovery treats a transfer that
 	// is private or of unknown privacy: policy.PrivateKeepRunning (default),
 	// policy.PrivateStop, or policy.PrivateObserve.
-	PrivateRecovery string       `toml:"private_recovery"`
-	Limits          LimitsConfig `toml:"limits"`
+	PrivateRecovery string `toml:"private_recovery"`
+	// UntestedVersions is "observe" (default) or "act": whether workflows
+	// may write through manager or client versions outside the API lines
+	// with released-instance evidence (action.Lines). Versions within a
+	// tested line are always supported.
+	UntestedVersions string       `toml:"untested_versions"`
+	Limits           LimitsConfig `toml:"limits"`
 }
+
+// ActOnUntestedVersions reports the operator's opt-in to writes through
+// versions outside the tested API lines.
+func (c *Config) ActOnUntestedVersions() bool { return c.Automation.UntestedVersions == "act" }
 
 // LimitsConfig bounds acquisition-starting actions. Unset fields use the
 // proposed defaults in policy.DefaultLimits; none can be disabled.
@@ -581,6 +590,11 @@ func validate(cfg *Config, md toml.MetaData) []Problem {
 	validateWorkflowMap(errf, "automation.workflows", cfg.Automation.Workflows)
 	validateUnknownPrivacyMap(errf, "automation.unknown_privacy", cfg.Automation.UnknownPrivacy)
 	validatePrivateRecovery(errf, "automation.private_recovery", cfg.Automation.PrivateRecovery)
+	switch cfg.Automation.UntestedVersions {
+	case "", "observe", "act":
+	default:
+		errf("automation.untested_versions", "must be \"observe\" or \"act\", got %q", cfg.Automation.UntestedVersions)
+	}
 	validateLimits(errf, cfg)
 	timing := cfg.ActionTiming
 	if timing.PreviewTTL.Duration <= 0 {

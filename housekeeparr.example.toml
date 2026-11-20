@@ -46,6 +46,16 @@ missing_search = false
 # Can also be set in a [[rule]] or [[override]] (private_recovery = "...").
 # private_recovery = "keep_running"
 
+# Version support. A workflow writes through any manager or client release
+# in the same API line as a release where it passed released-instance tests
+# (for example every Sonarr 4, Radarr 6, Transmission 4, qBittorrent 4.1+ or
+# 5, Deluge 2, rTorrent 0.9.8+ release). New patch and minor releases need
+# no Housekeeparr update. Each step is verified live, and an unexpected
+# result holds the workflow for review. Versions outside those lines (a new
+# major release, or one older than a line's floor) are observed only, unless
+# this is "act".
+# untested_versions = "observe"
+
 [automation.unknown_privacy]
 # Recovery never acts on a transfer the client reports as private. A magnet
 # that never received its metadata always has unknown privacy: no supported

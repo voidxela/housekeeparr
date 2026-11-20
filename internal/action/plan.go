@@ -23,7 +23,7 @@ type TestedWorkflow struct {
 	ClientVersion  string
 }
 
-// Tested is the registry of tested write workflows. Each entry is backed
+// Tested is the registry of supported versionss. Each entry is backed
 // by a passing run of internal/integration/recovery_test.go recorded in
 // docs/compatibility.md ("Recovery workflow runs"); add an entry only with
 // such a run.
@@ -143,7 +143,11 @@ type PlanInput struct {
 	PollInterval   time.Duration
 	ConfigRevision string
 	Tested         []TestedWorkflow
-	Now            time.Time
+	// UntestedVersions is the operator's opt-in to writes through versions
+	// outside the API lines with tested evidence ([automation]
+	// untested_versions = "act").
+	UntestedVersions bool
+	Now              time.Time
 	// PreviewTTL bounds how long a preview may be executed; 0 means 5m.
 	PreviewTTL time.Duration
 }
@@ -238,21 +242,11 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 			" did not report an episode or movie ID, so attempts, locks, and exclusions cannot be tied to the content")
 	}
 
-	// --- tested workflow ----------------------------------------------------
+	// --- version support ------------------------------------------------------
 	cv, mv := probeVersion(in.ClientProbe), probeVersion(in.ManagerProbe)
-	tested := false
-	for _, tw := range in.Tested {
-		if tw.Workflow == wf && tw.Client == in.ClientKind && tw.ClientVersion == cv && row != nil && tw.Manager == in.ManagerKind && tw.ManagerVersion == mv {
-			tested = true
-		}
-	}
-	combo := fmt.Sprintf("%s %s with %s %s", nonEmpty(string(in.ManagerKind), "an unknown manager"), nonEmpty(mv, "(version unknown)"),
-		nonEmpty(string(in.ClientKind), "an unknown client"), nonEmpty(cv, "(version unknown)"))
-	if tested {
-		add("tested write workflow", true, true, string(wf)+" passed disposable-instance workflow tests for "+combo)
-	} else {
-		add("tested write workflow", false, true, "no complete "+string(wf)+" workflow has been tested for "+combo+
-			"; this build performs no writes for it (see docs/compatibility.md)")
+	{
+		sup := VersionSupport(in.Tested, wf, Side{in.ManagerKind, mv}, Side{in.ClientKind, cv}, in.UntestedVersions)
+		add("supported versions", sup.OK && row != nil, true, sup.Detail)
 	}
 
 	// --- finding and evidence -----------------------------------------------

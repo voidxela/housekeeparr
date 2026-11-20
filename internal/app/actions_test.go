@@ -79,7 +79,7 @@ func TestPreviewAndActShareTheCoordinator(t *testing.T) {
 		t.Fatalf("no proposal: %s", pv.NoAction)
 	}
 	b := names(pv.Proposal.Blockers())
-	if !b["tested write workflow"] || !b["manual action permitted by policy"] {
+	if !b["supported versions"] || !b["manual action permitted by policy"] {
 		t.Fatalf("expected the untested-workflow and observe-mode blockers, got %v", b)
 	}
 	// Refused before anything is journaled or sent.
@@ -125,7 +125,7 @@ func TestPreviewAndActShareTheCoordinator(t *testing.T) {
 		if names(pv.Proposal.Blockers())["manual action permitted by policy"] {
 			t.Fatalf("paused mode blocks manual actions: %v", pv.Proposal.Blockers())
 		}
-		if names(pv.Proposal.Blockers())["tested write workflow"] {
+		if names(pv.Proposal.Blockers())["supported versions"] {
 			t.Fatalf("registered combination still untested: %v", pv.Proposal.Blockers())
 		}
 		if pv.Proposal.Eligible() {
