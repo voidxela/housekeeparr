@@ -18,7 +18,7 @@ import (
 	"github.com/voidxela/housekeeparr/internal/store"
 )
 
-var pageNames = []string{"overview", "attention", "finding", "downloads", "download", "activity", "sources", "connections", "error"}
+var pageNames = []string{"overview", "attention", "finding", "downloads", "download", "activity", "sources", "coverage", "connections", "error"}
 
 func (s *Server) funcs() template.FuncMap {
 	now := s.svc.Now
@@ -130,6 +130,9 @@ func (s *Server) funcs() template.FuncMap {
 		"add":         func(a, b int) int { return a + b },
 		"sub":         func(a, b int) int { return a - b },
 		"get":         func(m map[string]int, k string) int { return m[k] },
+		"gapLabel":    app.GapLabel,
+		"gapStates":   func() []string { return app.GapStates },
+		"pct1":        func(f float64) string { return strconv.FormatFloat(f, 'f', 1, 64) + "%" },
 		"pctf":        func(f float64) string { return strconv.FormatFloat(f*100, 'f', 0, 64) + "%" },
 		"human":       policy.HumanDuration,
 		"title": func(s string) string {
@@ -317,6 +320,18 @@ func (s *Server) sources(r *http.Request) (string, string, any, error) {
 		return "", "", nil, err
 	}
 	return "sources", "Sources", sc, nil
+}
+
+func (s *Server) coverage(r *http.Request) (string, string, any, error) {
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	if offset < 0 {
+		offset = 0
+	}
+	cv, err := s.svc.Coverage(r.Context(), r.URL.Query().Get("manager"), offset, 100)
+	if err != nil {
+		return "", "", nil, err
+	}
+	return "coverage", "Coverage", cv, nil
 }
 
 func (s *Server) connections(r *http.Request) (string, string, any, error) {

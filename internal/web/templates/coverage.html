@@ -1,0 +1,17 @@
+{{define "content"}}{{with .Page}}
+<h1>Coverage</h1>
+<p class="muted small">{{range .Notes}}{{.}} {{end}}The same figures: <code>housekeeparr coverage</code>.</p>
+{{if not .Managers}}{{template "empty" "No coverage read yet: the first sweep starts with the next observation cycle of a readable Sonarr or Radarr."}}{{end}}
+{{range .Managers}}
+<section class="card" aria-labelledby="h-{{.ManagerID}}">
+  <h2 id="h-{{.ManagerID}}">{{.Name}}</h2>
+  <p><strong>{{.Have}} of {{.Wanted}}</strong> have a file ({{pct1 .Percent}}); {{.GapsTotal}} gaps.{{with .DenominatorChange}} Denominator {{.}} since the previous recorded day.{{end}}</p>
+  {{if .Complete}}<p class="muted small">Complete sweep; groups read between {{clockp .OldestRead}} and {{clockp .NewestRead}}.</p>{{else}}<p><strong>Incomplete:</strong> {{.GroupsRead}} of {{.Groups}} groups read in this sweep; unread groups keep their previous counts or are not counted yet.</p>{{end}}
+  {{$st := .States}}<ul class="plain small">{{range gapStates}}{{if get $st .}}<li>{{get $st .}} {{gapLabel .}}</li>{{end}}{{end}}</ul>
+  {{if .Trend}}<table class="table compact"><caption class="muted small">Daily, at each day's last complete sweep</caption><thead><tr><th scope="col">Day</th><th scope="col">Have</th><th scope="col">Wanted</th></tr></thead><tbody>{{range .Trend}}<tr><td>{{.Day}}</td><td>{{.Have}}</td><td>{{.Wanted}}</td></tr>{{end}}</tbody></table>{{end}}
+  {{if .Gaps}}<table class="table compact"><caption class="muted small">Gaps, most recently aired first</caption><thead><tr><th scope="col">Item</th><th scope="col">State</th><th scope="col">Since</th><th scope="col">Why</th></tr></thead><tbody>
+  {{range .Gaps}}<tr><td>{{.Label}}</td><td>{{gapLabel .State}}</td><td>{{clockp .EvidenceAt}}</td><td class="small">{{join .Reasons "; "}}</td></tr>{{end}}
+  </tbody></table>{{end}}
+</section>
+{{end}}
+{{end}}{{end}}
