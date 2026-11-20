@@ -168,6 +168,23 @@ func EvaluateTransfer(in TransferInput, s Settings, now time.Time) Assessment {
 
 	switch last.StateClass {
 	case domain.StateDownloading:
+		// A payload whose every wanted byte is verified is complete, whatever
+		// state the client reports: it is never a dead release.
+		if w, okW := last.WantedBytes.Get(); okW && w > 0 {
+			if v, okV := last.VerifiedBytes.Get(); okV && v >= w {
+				a.Status = StatusNotApplicable
+				a.Headline = "Every wanted byte is verified: the payload is complete, so no stall diagnosis applies."
+				return a
+			}
+		}
+		// A tracker that refuses this client is not a dead release: replacing
+		// the release does not change the client.
+		if v, ok := last.SourceFailure.Get(); ok && v == domain.SourceClientRejected {
+			a.Status = StatusNotApplicable
+			a.Headline = "The tracker refuses this client or its version; that is not a dead release, so no stall diagnosis is made."
+			a.Details = append(a.Details, "Replacing the release would not change the client. Other trackers or DHT may still serve the torrent.")
+			return a
+		}
 		evaluateNoProgress(&a, in, s, now)
 		// A no-progress diagnosis keeps precedence, so the workflows (and
 		// privacy choices) that address it are unchanged.
