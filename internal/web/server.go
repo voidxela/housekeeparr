@@ -214,6 +214,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /downloads", s.page(s.downloads))
 	mux.HandleFunc("GET /downloads/{client}/{native}", s.page(s.download))
 	mux.HandleFunc("GET /activity", s.page(s.activity))
+	mux.HandleFunc("GET /sources", s.page(s.sources))
 	mux.HandleFunc("POST /attempts/reset", s.resetAttempts)
 	mux.HandleFunc("POST /workflows/{workflow}/{verb}", s.workflowControl)
 	mux.HandleFunc("GET /connections", s.page(s.connections))

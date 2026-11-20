@@ -74,6 +74,7 @@ type Engine struct {
 	probes map[string]probeState
 	// missingRead is when each manager's missing list was last read.
 	missingRead map[string]time.Time
+	historyRead map[string]time.Time
 	last        *CycleReport
 	storeErr    error
 	started     time.Time

@@ -94,6 +94,7 @@ func (e *Engine) Cycle(ctx context.Context, next *time.Time) CycleReport {
 	e.setStoreErr(nil)
 	e.readMissing(ctx, results)
 	e.readSources(ctx, results)
+	e.readHistory(ctx, results)
 	for _, f := range results {
 		cr := ConnResult{ID: f.id, Kind: f.kind, Skipped: f.skipped, OK: f.err == nil && f.skipped == "", Duration: f.duration,
 			Complete: (f.transfer == nil || f.transfer.Complete) && (f.queue == nil || f.queue.Complete)}

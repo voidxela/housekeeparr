@@ -63,6 +63,7 @@ func commands() []command {
 		{"review", "resolve an uncertain action after checking: review <action-id> --as failed --note ...", cmdReview},
 		{"retained", "list transfers recovery left in the client with their data (stopped or running), against the configured ceilings (--all includes released)", cmdRetained},
 		{"notifications", "list recent notification events and their delivery state", cmdNotifications},
+		{"sources", "release-source scorecard: grabs per indexer through import, from the managers' history (--acquisitions lists each grab)", cmdSources},
 		{"missing", "list missing content managers report and Housekeeparr's proactive-search state (--all includes no longer missing)", cmdMissing},
 		{"attempts", "list recovery attempts and pacing use; allow more after review: attempts reset <manager>|episode:<id> --note ...", cmdAttempts},
 		{"pause", "pause a workflow (no automatic or manual actions) until resumed: pause <workflow> --note ...", cmdPause},
@@ -327,6 +328,11 @@ func cmdRun(args []string, out, errOut io.Writer) int {
 	var passErr error
 	passLog := newPassLogger(log)
 	dispatch := func(ctx context.Context, rep engine.CycleReport) {
+		// Release-source findings come from stored history (observation
+		// only), whatever the mode.
+		if err := svc.EvaluateSources(ctx); err != nil {
+			log.Error("release-source evaluation failed", "err", err)
+		}
 		pr := svc.DispatchPass(ctx, rep.Fresh())
 		passErr = pr.Err()
 		passLog.recovery(pr)

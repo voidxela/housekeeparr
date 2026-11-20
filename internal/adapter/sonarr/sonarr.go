@@ -292,3 +292,9 @@ func (c *Client) MissingFrom(ctx context.Context, maxItems, startPage int) (doma
 func (c *Client) SearchEpisodes(ctx context.Context, episodeIDs []int64) (int64, error) {
 	return c.api.Search(ctx, "EpisodeSearch", "episodeIds", episodeIDs)
 }
+
+// HistoryFeed reads one page of the manager-wide history, newest first,
+// for the release-source scorecard (read-only).
+func (c *Client) HistoryFeed(ctx context.Context, page, pageSize int) (arr.HistoryPage, error) {
+	return c.api.HistoryFeed(ctx, page, pageSize)
+}

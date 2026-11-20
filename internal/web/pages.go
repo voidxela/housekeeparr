@@ -18,7 +18,7 @@ import (
 	"github.com/voidxela/housekeeparr/internal/store"
 )
 
-var pageNames = []string{"overview", "attention", "finding", "downloads", "download", "activity", "connections", "error"}
+var pageNames = []string{"overview", "attention", "finding", "downloads", "download", "activity", "sources", "connections", "error"}
 
 func (s *Server) funcs() template.FuncMap {
 	now := s.svc.Now
@@ -129,6 +129,8 @@ func (s *Server) funcs() template.FuncMap {
 		"sevcount":    func(m map[domain.Severity]int, s string) int { return m[domain.Severity(s)] },
 		"add":         func(a, b int) int { return a + b },
 		"sub":         func(a, b int) int { return a - b },
+		"get":         func(m map[string]int, k string) int { return m[k] },
+		"pctf":        func(f float64) string { return strconv.FormatFloat(f*100, 'f', 0, 64) + "%" },
 		"human":       policy.HumanDuration,
 		"title": func(s string) string {
 			if s == "" {
@@ -307,6 +309,14 @@ func (s *Server) activity(r *http.Request) (string, string, any, error) {
 		return "", "", nil, err
 	}
 	return "activity", "Activity", a, nil
+}
+
+func (s *Server) sources(r *http.Request) (string, string, any, error) {
+	sc, err := s.svc.Scorecard(r.Context(), false)
+	if err != nil {
+		return "", "", nil, err
+	}
+	return "sources", "Sources", sc, nil
 }
 
 func (s *Server) connections(r *http.Request) (string, string, any, error) {

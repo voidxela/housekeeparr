@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -314,5 +315,43 @@ func TestActivityAttemptsResetOnly(t *testing.T) {
 		if !strings.Contains(page, want) {
 			t.Fatalf("activity lacks %q", want)
 		}
+	}
+}
+
+// The Sources page shows the scorecard the CLI and JSON report.
+func TestSourcesPageMatchesTheScorecard(t *testing.T) {
+	svc, st := demoServiceStore(t, nil)
+	now := svc.Now()
+	var evs []store.HistoryEvent
+	for i := 0; i < 40; i++ {
+		dl := "DL" + itoa(int64(i))
+		at := now.Add(-time.Duration(4+i) * time.Hour * 24 / 4)
+		evs = append(evs, store.HistoryEvent{ManagerID: "demo-sonarr", EventID: int64(2*i + 1), EventType: "grabbed", At: at, DownloadID: dl,
+			ContentKey: "episode:" + itoa(int64(i)), Indexer: "Example"})
+		if i%4 == 0 {
+			evs = append(evs, store.HistoryEvent{ManagerID: "demo-sonarr", EventID: int64(2*i + 2), EventType: "downloadFolderImported", At: at.Add(time.Hour),
+				DownloadID: dl, ContentKey: "episode:" + itoa(int64(i))})
+		}
+	}
+	if err := st.Write(context.Background(), func(tx *store.Tx) error { _, err := tx.SaveHistory(evs); return err }); err != nil {
+		t.Fatal(err)
+	}
+	sc, err := svc.Scorecard(context.Background(), false)
+	if err != nil || len(sc.Sources) != 1 {
+		t.Fatalf("scorecard %+v %v", sc, err)
+	}
+	s, err := New(svc, Options{Listen: "127.0.0.1:0", Logger: slog.New(slog.NewTextHandler(testWriter{t}, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := &env{h: s.Handler(), svc: svc}
+	page := e.get(t, "/sources").Body.String()
+	src := sc.Sources[0]
+	want := fmt.Sprintf("<td>Example <span class=\"muted small\">demo-sonarr</span></td><td>%d</td><td>%d</td>", src.Grabs, src.Outcomes["imported"])
+	if !strings.Contains(page, want) {
+		t.Fatalf("page lacks %q", want)
+	}
+	if !strings.Contains(page, "<strong>demo-sonarr</strong>: ") {
+		t.Fatal("the history coverage is not stated")
 	}
 }

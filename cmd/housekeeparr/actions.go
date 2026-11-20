@@ -736,3 +736,92 @@ func cmdMissing(args []string, out, errOut io.Writer) int {
 	fmt.Fprintln(out, "\nA search the manager accepted does not mean a release was found or grabbed.")
 	return exitOK
 }
+
+// cmdSources prints the release-source scorecard: per indexer, grabs in
+// the window by outcome, the mature import fraction and data quality, the
+// history coverage behind it, and the recoveries' replacements.
+func cmdSources(args []string, out, errOut io.Writer) int {
+	o := newFlags("sources", errOut)
+	list := o.fs.Bool("acquisitions", false, "also list every acquisition with its outcome")
+	if _, err := o.parse(args); err != nil {
+		return exitUsage
+	}
+	svc, done, code := readService(o)
+	if svc == nil {
+		return code
+	}
+	defer done()
+	sc, err := svc.Scorecard(context.Background(), *list)
+	if err != nil {
+		fmt.Fprintln(errOut, err)
+		return exitFailure
+	}
+	if o.json {
+		return writeJSON(out, sc)
+	}
+	fmt.Fprintf(out, "Grabs of the last %s from the managers' history; a grab is mature after %s. Alerts need %d mature grabs and open below %.0f%% imported (clear at %.0f%%).\n",
+		policy.HumanDuration(sc.Window), policy.HumanDuration(sc.Maturity), sc.MinSample, 100*sc.AlertBelow, 100*sc.ClearAt)
+	for _, c := range sc.Coverage {
+		state := "not read yet"
+		switch {
+		case c.GapAt != nil:
+			state = "gap at " + ts(c.GapAt) + "; covered since " + ts(c.CoveredSince)
+		case c.CoversWindow:
+			state = "covers the window"
+		case c.CoveredSince != nil:
+			state = "covered since " + ts(c.CoveredSince) + " (still reading back)"
+		}
+		fmt.Fprintf(out, "History %s: %s\n", c.ManagerID, state)
+	}
+	if len(sc.Sources) == 0 {
+		fmt.Fprintln(out, "No grabs in the window.")
+	} else {
+		w := tw(out)
+		fmt.Fprintln(w, "\nSOURCE\tGRABS\tIMPORTED\tPARTIAL\tFAILED\tIGNORED\tPENDING\tUNKNOWN\tMATURE IMPORTED\tSTATE")
+		for _, s := range append(sc.Sources, sc.Totals) {
+			frac := "-"
+			if s.ImportFraction != nil {
+				frac = fmt.Sprintf("%d of %d (%.0f%%)", s.MatureImported, s.Mature, 100**s.ImportFraction)
+			}
+			state := "ok"
+			switch {
+			case s.Alert:
+				state = "ALERT"
+			case s.Quality != "":
+				state = s.Quality
+			}
+			if s.Indexer == sc.Totals.Indexer {
+				state = ""
+			}
+			o := s.Outcomes
+			fmt.Fprintf(w, "%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%s\n", s.Indexer, s.Grabs, o[app.OutcomeImported], o[app.OutcomePartial], o[app.OutcomeFailed],
+				o[app.OutcomeIgnored], o[app.OutcomePending], o[app.OutcomeUnknown], frac, state)
+		}
+		w.Flush()
+	}
+	r := sc.Recovery
+	fmt.Fprintf(out, "\nRecoveries in the window: %d; replacement grab observed for %d (%s); none observed for %d.\n", r.Recoveries, r.Grabbed,
+		nonEmptyOutcomes(r.Outcomes), r.NoGrab)
+	if *list {
+		w := tw(out)
+		fmt.Fprintln(w, "\nGRABBED\tMANAGER\tSOURCE\tOUTCOME\tCONTENT\tTITLE")
+		for _, a := range sc.Acquisitions {
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d of %d imported\t%s\n", ts(&a.GrabbedAt), a.ManagerID, a.Indexer, a.Outcome, len(a.Imported), len(a.Content), a.Title)
+		}
+		w.Flush()
+	}
+	return exitOK
+}
+
+func nonEmptyOutcomes(m map[string]int) string {
+	var parts []string
+	for _, k := range []string{app.OutcomeImported, app.OutcomePartial, app.OutcomeFailed, app.OutcomeIgnored, app.OutcomePending, app.OutcomeUnknown} {
+		if m[k] > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", m[k], k))
+		}
+	}
+	if len(parts) == 0 {
+		return "no outcome yet"
+	}
+	return strings.Join(parts, ", ")
+}

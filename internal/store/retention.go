@@ -91,6 +91,15 @@ func (t *Tx) Prune(now time.Time, r Retention) (PruneResult, error) {
 			if err := run(&n, "DELETE FROM notification_attempts WHERE attempted_at < ?", ms(now.Add(-r.AuditEvents))); err != nil {
 				return err
 			}
+			// Manager history is kept for the audit horizon; coverage then
+			// starts no earlier than what is kept.
+			if err := run(&n, "DELETE FROM manager_history WHERE at < ?", ms(now.Add(-r.AuditEvents))); err != nil {
+				return err
+			}
+			if err := run(&n, "UPDATE history_cursors SET covered_since=? WHERE covered_since IS NOT NULL AND covered_since < ?",
+				ms(now.Add(-r.AuditEvents)), ms(now.Add(-r.AuditEvents))); err != nil {
+				return err
+			}
 			var notes int64
 			if err := run(&notes, "DELETE FROM notification_events WHERE (sent_at IS NOT NULL OR dropped_at IS NOT NULL) AND created_at < ?", ms(now.Add(-r.AuditEvents))); err != nil {
 				return err

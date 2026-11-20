@@ -243,3 +243,12 @@ func (s *Store) Outcomes(ctx context.Context, ids []int64) (map[int64]RecoveryOu
 	}
 	return out, err
 }
+
+// RecentOutcomes returns the recovery outcomes started at or after since.
+func (s *Store) RecentOutcomes(ctx context.Context, since time.Time) ([]RecoveryOutcome, error) {
+	rows, err := s.r.QueryContext(ctx, "SELECT "+outcomeCols+" FROM recovery_outcomes WHERE started_at >= ? ORDER BY started_at", ms(since))
+	if err != nil {
+		return nil, err
+	}
+	return scanOutcomes(rows)
+}

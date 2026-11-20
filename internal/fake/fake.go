@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/voidxela/housekeeparr/internal/adapter"
+	"github.com/voidxela/housekeeparr/internal/adapter/arr"
 	"github.com/voidxela/housekeeparr/internal/domain"
 )
 
@@ -163,6 +164,7 @@ type Manager struct {
 	reads     int
 	w         managerWrites
 	ms        missingState
+	feed      []arr.HistoryRecord // AddHistory records
 }
 
 // NewManager creates a fake Sonarr-kind manager.
