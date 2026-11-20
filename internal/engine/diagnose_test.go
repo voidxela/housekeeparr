@@ -93,3 +93,43 @@ func TestCompletePayloadNotImported(t *testing.T) {
 		t.Fatalf("not resolved after the queue item left: %+v", fs)
 	}
 }
+
+// A settled import problem gets its download's files listed, a bounded
+// number per cycle and once per candidate; archives with no video are
+// explained as needing extraction.
+func TestImportFindingNamesArchiveOnlyPayload(t *testing.T) {
+	h := newHarness(t, baseConfig)
+	var hashes []string
+	var rows []domain.QueueItem
+	var trs []domain.Transfer
+	for i := 0; i < 5; i++ {
+		hs := strings.Repeat(string(rune('a'+i)), 40)
+		hashes = append(hashes, hs)
+		trs = append(trs, fake.Transfer(hs, "Show.S01E0"+string(rune('1'+i)), domain.StateComplete, 4*gib, 4*gib, t0))
+		q := fake.Episode(int64(i+1), hs, "Show.S01E0"+string(rune('1'+i)), "Example Show", 1, int64(i+1))
+		q.TrackedState, q.TrackedStatus = domain.KnownValue("importBlocked"), domain.KnownValue("warning")
+		q.StatusMessages = []domain.StatusMessage{{Title: "Show.S01E01", Messages: []string{"No files found are eligible for import"}}}
+		rows = append(rows, q)
+		h.client.SetFiles(hs, domain.TransferFile{Path: "Show/show.rar", Size: 1, Wanted: domain.KnownValue(true)},
+			domain.TransferFile{Path: "Show/show.r00", Size: 1, Wanted: domain.KnownValue(true)})
+	}
+	h.client.SetTransfers(trs...)
+	h.mgr.SetQueue(rows...)
+	h.run(40, 10) // past the 30-minute import settling period
+	if n := h.client.FileReads(); n == 0 || n > payloadReadsPerCycle*2 {
+		t.Fatalf("file reads after settling: %d", n)
+	}
+	h.run(30, 10)
+	if n := h.client.FileReads(); n != len(hashes) {
+		t.Fatalf("each candidate read once: %d reads for %d", n, len(hashes))
+	}
+	fs := activeOf(t, h, domain.FindingImportAttention)
+	if len(fs) != len(hashes) {
+		t.Fatalf("%d import findings", len(fs))
+	}
+	for _, f := range fs {
+		if !strings.Contains(f.Summary, "needs extracting") || !strings.Contains(f.Detail.NextSteps[0], "never extracts") {
+			t.Fatalf("finding %q steps %v", f.Summary, f.Detail.NextSteps)
+		}
+	}
+}

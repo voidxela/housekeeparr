@@ -704,6 +704,17 @@ func (e *Engine) importDraft(key string, meta ConnMeta, dl, state string, since 
 		sub.Connections = append(sub.Connections, items[0].MatchClientID)
 		evidence = append(evidence, domain.Evidence{Label: "Correlated transfer", Value: items[0].MatchNote})
 	}
+	steps := []string{
+		fmt.Sprintf("Review the item in %s → Activity → Queue; the message explains what could not be imported.", meta.Name),
+		fmt.Sprintf("Check whether the files %s expects are present in the download and readable by it (paths, permissions, extraction). Housekeeparr has not verified which manual step is safe for your version and does not change the queue.", meta.Name),
+	}
+	if pe, why, step := e.payloadAdvice(items, meta.Name); pe != nil {
+		evidence = append(evidence, *pe)
+		if why != "" {
+			summary += " " + why
+			steps = append([]string{step}, steps...)
+		}
+	}
 	next := now.Add(e.cfg.Polling.Interval.Duration)
 	return findings.Draft{
 		DedupKey: key, Type: domain.FindingImportAttention, Severity: sev,
@@ -715,11 +726,8 @@ func (e *Engine) importDraft(key string, meta ConnMeta, dl, state string, since 
 			Confidence:  fmt.Sprintf("Cause as reported by %s; Housekeeparr has not verified import history, files, or episode mapping, so the cause is explicitly uncertain. Reported after the %s import settling period.", meta.Name, policy.HumanDuration(eff.Settings.ImportSettle)),
 			Limitations: importLimitations(meta),
 			Eligibility: e.modeEligibility("No association will be cleared."),
-			NextSteps: []string{
-				fmt.Sprintf("Review the item in %s → Activity → Queue; the message explains what could not be imported.", meta.Name),
-				fmt.Sprintf("Check whether the files %s expects are present in the download and readable by it (paths, permissions, extraction). Housekeeparr has not verified which manual step is safe for your version and does not change the queue.", meta.Name),
-			},
-			Links: []domain.Link{{Label: meta.Name + " queue", URL: meta.BaseURL + "/activity/queue"}},
+			NextSteps:   steps,
+			Links:       []domain.Link{{Label: meta.Name + " queue", URL: meta.BaseURL + "/activity/queue"}},
 		},
 		PolicyID: eff.ID, PolicyRevision: eff.Revision, EvidenceAt: now, NextEvaluationAt: &next,
 	}

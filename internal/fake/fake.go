@@ -64,6 +64,8 @@ type Client struct {
 	probe     adapter.Probe
 	lists     int
 	stops     []string
+	files     map[string][]domain.TransferFile
+	fileReads int
 }
 
 // NewClient creates a fake qBittorrent-kind client.
@@ -150,6 +152,31 @@ func (c *Client) Partial(p bool) { c.mu.Lock(); c.partial = p; c.mu.Unlock() }
 
 // Lists returns how many listings were requested.
 func (c *Client) Lists() int { c.mu.Lock(); defer c.mu.Unlock(); return c.lists }
+
+// SetFiles sets a transfer's file list.
+func (c *Client) SetFiles(id string, fs ...domain.TransferFile) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.files == nil {
+		c.files = map[string][]domain.TransferFile{}
+	}
+	c.files[id] = fs
+}
+
+// Files lists a transfer's files (adapter.FileLister).
+func (c *Client) Files(_ context.Context, id string) ([]domain.TransferFile, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.fileReads++
+	fs, ok := c.files[id]
+	if !ok {
+		return nil, &adapter.Error{Class: adapter.ErrPermanent, Op: "fake.files", Message: "unknown transfer"}
+	}
+	return fs, nil
+}
+
+// FileReads counts Files calls.
+func (c *Client) FileReads() int { c.mu.Lock(); defer c.mu.Unlock(); return c.fileReads }
 
 // Manager is a scriptable media manager.
 type Manager struct {

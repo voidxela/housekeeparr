@@ -57,6 +57,7 @@ func (e *Engine) Cycle(ctx context.Context, next *time.Time) CycleReport {
 	if err != nil {
 		return fail(err)
 	}
+	e.readPayloads(ctx, results, eff.Settings.ImportSettle, e.clock.Now())
 	queueWall, queueMono := e.clock.Now(), e.clock.MonoMS()
 	wallElapsed := queueWall.Round(0).Sub(e.queueWall.Round(0))
 	monoElapsed := time.Duration(queueMono-e.queueMono) * time.Millisecond
