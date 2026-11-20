@@ -187,9 +187,9 @@ func (c *Client) Probe(ctx context.Context) (adapter.Probe, error) {
 		adapter.CapPrivacy:           {Support: adapter.Supported, Note: "isPrivate; unknown until metadata is available"},
 		adapter.CapMetadataState:     {Support: adapter.Supported, Note: "metadataPercentComplete"},
 		adapter.CapFileSelection:     {Support: adapter.Supported, Note: "sizeWhenDone compared with totalSize"},
+		adapter.CapClientFileList:    {Support: adapter.Supported, Note: "torrent-get files and fileStats, read for a bounded number of settled import candidates"},
 		adapter.CapSwarmCounts:       {Support: adapter.NotImplemented, Note: "available only through trackerStats, which contains tracker URLs; not requested"},
 		adapter.CapInfohashV2:        {Support: adapter.NotSupported, Note: "hashString is the v1 infohash"},
-		adapter.CapClientFileList:    {Support: adapter.NotImplemented},
 	}
 	p.Write = adapter.ReadOnlyWrites(adapter.CapTransferLabel)
 	p.Write[adapter.CapStopTransfer] = adapter.CapabilityStatus{Support: adapter.Supported, Note: "torrent-stop (legacy RPC), retaining data"}

@@ -148,6 +148,25 @@ def main(out, save):
     # Released only to the automatic preserved-data test.
     release("tv-e12-unregistered-auto", "Housekeeparr.Fixture.Show.S01E12.1080p.WEB-DL.x264-HKFIX", 4 * MB, tracker=reject, kind="tv", tvdbId=999001, season=1, episode=12)
     release("film-i-unregistered", "Housekeeparr.Ninth.Fixture.Film.2013.1080p.WEB-DL.x264-HKFIX", 4 * MB, tracker=reject, kind="movie", tmdbId=999010, imdbId="tt9990010")
+    # Multi-episode releases (one file covering two episodes of the
+    # fictional season 3), for the multi-episode queue probe: both episodes
+    # monitored; the second unmonitored; the first already has a library
+    # file (library-seed below).
+    release("tv-s03e01e02-multi", "Housekeeparr.Fixture.Show.S03E01E02.1080p.WEB-DL.x264-HKFIX", 4 * MB, kind="tv", tvdbId=999001, season=3, episode=1)
+    release("tv-s03e03e04-multi", "Housekeeparr.Fixture.Show.S03E03E04.1080p.WEB-DL.x264-HKFIX", 4 * MB, kind="tv", tvdbId=999001, season=3, episode=3)
+    release("tv-s03e05e06-multi", "Housekeeparr.Fixture.Show.S03E05E06.1080p.WEB-DL.x264-HKFIX", 4 * MB, kind="tv", tvdbId=999001, season=3, episode=6)
+    # The same three cases through Housekeeparr's recovery workflow, plus a
+    # private one (left running): released only to that test.
+    release("tv-s03e07e08-multi", "Housekeeparr.Fixture.Show.S03E07E08.1080p.WEB-DL.x264-HKFIX", 4 * MB, kind="tv", tvdbId=999001, season=3, episode=7)
+    release("tv-s03e09e10-multi-private", "Housekeeparr.Fixture.Show.S03E09E10.1080p.WEB-DL.x264-HKFIX", 4 * MB, private=True, kind="tv", tvdbId=999001, season=3, episode=9)
+    release("tv-s03e11e12-multi", "Housekeeparr.Fixture.Show.S03E11E12.1080p.WEB-DL.x264-HKFIX", 4 * MB, kind="tv", tvdbId=999001, season=3, episode=11)
+    release("tv-s03e13e14-multi", "Housekeeparr.Fixture.Show.S03E13E14.1080p.WEB-DL.x264-HKFIX", 4 * MB, kind="tv", tvdbId=999001, season=3, episode=14)
+    seed = os.path.join(out, "library-seed")
+    os.makedirs(seed, exist_ok=True)
+    with open(os.path.join(seed, "Housekeeparr.Fixture.Show.S03E05.720p.HDTV.x264-HKFIX.mkv"), "wb") as f:
+        f.write(mkv(25 * 60, 2 * MB))
+    with open(os.path.join(seed, "Housekeeparr.Fixture.Show.S03E13.720p.HDTV.x264-HKFIX.mkv"), "wb") as f:
+        f.write(mkv(25 * 60, 2 * MB))
     # A season pack with two of the season's three episodes, fully
     # downloaded (complete in the client) as playable-looking Matroska files,
     # for the partial-pack probe: Sonarr imports E01-E02 and E03 stays

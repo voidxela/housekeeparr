@@ -391,4 +391,15 @@ func TestCompleteContactCountsSeedingTransfersWithPeers(t *testing.T) {
 			t.Fatalf("contact %v, want %d (only complete transfers with peers count)", got, want)
 		}
 	}
+	// A partial listing is not evidence about the client: the last complete
+	// listing's count and time stand.
+	if err := s.Write(ctx, func(tx *Tx) error {
+		_, err := tx.SaveTransferSnapshot(domain.TransferSnapshot{ClientID: "qbit", CollectedAt: at.Add(time.Hour), Transfers: []domain.Transfer{seed}}, "r", 0, 1000)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if recs, _ := s.CompleteContactRecords(ctx); recs["qbit"].Count != 0 || !recs["qbit"].At.Equal(at.UTC()) {
+		t.Fatalf("after a partial listing: %+v", recs)
+	}
 }

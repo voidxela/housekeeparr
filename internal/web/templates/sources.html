@@ -1,0 +1,19 @@
+{{define "content"}}{{with .Page}}
+<h1>Sources</h1>
+<p class="muted small">Grabs of the last {{human .Window}} from the managers' own history, per indexer, and what became of each: imported, partly imported (a pack), failed, ignored, still pending, or unknown (mature, nothing observed). A grab is mature after {{human .Maturity}}. A source is flagged when at least {{.MinSample}} mature grabs import below {{pctf .AlertBelow}}; the flag clears at {{pctf .ClearAt}}. This is evidence about the releases a source offers, not proof it is down; Housekeeparr does not change source selection. The same figures: <code>housekeeparr sources</code>.</p>
+<section class="card" aria-labelledby="h-cov">
+  <h2 id="h-cov">History read</h2>
+  <ul>{{range .Coverage}}<li><strong>{{.ManagerID}}</strong>: {{if .GapAt}}more history arrived between reads than one read covers; records before {{clockp .GapAt}} may be missing, so rates are not judged until the read back covers the window{{else if .CoversWindow}}covers the window{{else if .CoveredSince}}read back to {{clockp .CoveredSince}}; still reading{{else}}not read yet{{end}}{{with .UpdatedAt}} <span class="muted small">(read {{clockp .}})</span>{{end}}</li>{{end}}</ul>
+</section>
+<section class="card" aria-labelledby="h-src">
+  <h2 id="h-src">Grabs by source</h2>
+  {{if .Sources}}<table class="table compact"><thead><tr><th scope="col">Source</th><th scope="col">Grabs</th><th scope="col">Imported</th><th scope="col">Partial</th><th scope="col">Failed</th><th scope="col">Ignored</th><th scope="col">Pending</th><th scope="col">Unknown</th><th scope="col">Mature imported</th><th scope="col">State</th></tr></thead><tbody>
+  {{range .Sources}}<tr><td>{{.Indexer}} <span class="muted small">{{join .Managers ", "}}</span></td><td>{{.Grabs}}</td><td>{{get .Outcomes "imported"}}</td><td>{{get .Outcomes "partial"}}</td><td>{{get .Outcomes "failed"}}</td><td>{{get .Outcomes "ignored"}}</td><td>{{get .Outcomes "pending"}}</td><td>{{get .Outcomes "unknown"}}</td><td>{{if .ImportFraction}}{{.MatureImported}} of {{.Mature}} ({{pct .ImportFraction}}){{else}}—{{end}}</td><td>{{if .Alert}}<strong>flagged</strong>{{else if .Quality}}<span class="muted small">{{.Quality}}</span>{{else}}ok{{end}}</td></tr>{{end}}
+  {{with .Totals}}<tr><th scope="row">All sources</th><td>{{.Grabs}}</td><td>{{get .Outcomes "imported"}}</td><td>{{get .Outcomes "partial"}}</td><td>{{get .Outcomes "failed"}}</td><td>{{get .Outcomes "ignored"}}</td><td>{{get .Outcomes "pending"}}</td><td>{{get .Outcomes "unknown"}}</td><td>{{if .ImportFraction}}{{.MatureImported}} of {{.Mature}} ({{pct .ImportFraction}}){{else}}—{{end}}</td><td></td></tr>{{end}}
+  </tbody></table>{{else}}{{template "empty" "No grabs in the window."}}{{end}}
+</section>
+<section class="card" aria-labelledby="h-rep">
+  <h2 id="h-rep">Recovery replacements</h2>
+  {{with .Recovery}}<p>{{.Recoveries}} recoveries in the window; a replacement grab was observed for {{.Grabbed}} ({{get .Outcomes "imported"}} imported, {{get .Outcomes "partial"}} partly, {{get .Outcomes "failed"}} failed, {{get .Outcomes "pending"}} pending, {{get .Outcomes "unknown"}} unknown) and none yet for {{.NoGrab}}. A dispatched recovery is not a completed collection: these are the replacements that actually imported.</p>{{end}}
+</section>
+{{end}}{{end}}

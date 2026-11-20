@@ -53,11 +53,17 @@ session expiry, sessions ending at restart, and the sign-in failure limit.
 later, HSTS is sent).
 
 **TLS-terminating reverse proxy:** listen on an address only the proxy can
-reach and set `trusted_proxy = true` (cookies are then marked Secure). The
-proxy must pass the browser's original `Host` header, because state-changing
-requests are accepted only when their `Origin` matches it; a proxy that
-rewrites `Host` to the upstream address gets every sign-in and form refused
-with a message naming the header. Housekeeparr reads no `X-Forwarded-*`
+reach and set `trusted_proxy = true` (cookies are then marked Secure). A
+declared proxy makes the interface reachable from other machines, so it
+requires `web.password` and `allowed_hosts` even when `listen` is loopback;
+`config validate` and the server refuse it otherwise. (A loopback listener
+without a proxy, with or without `base_path` or its own TLS files, stays
+local-only and needs neither.) The proxy must pass the browser's original
+`Host` header *with its port*, because state-changing requests are accepted
+only when their `Origin` (which includes a non-default port) matches it. In
+nginx that is `$http_host`; `$host` drops the port, so on a port other than
+443 every sign-in and form would be refused, with a message naming the
+header. Housekeeparr reads no `X-Forwarded-*`
 header. A manual action is answered only once it has finished (up to about
 six times `action_timing.settle`), so the proxy's read timeout must be at
 least `web.write_timeout` (default 2 minutes). For nginx:
@@ -65,7 +71,7 @@ least `web.write_timeout` (default 2 minutes). For nginx:
 ```nginx
 location / {
     proxy_pass http://127.0.0.1:8484;
-    proxy_set_header Host $host;
+    proxy_set_header Host $http_host;
     proxy_read_timeout 150s;
 }
 ```
@@ -75,15 +81,29 @@ application has its own `location` on one HTTPS host): set
 `base_path = "/housekeeparr"`, `trusted_proxy = true` and the shared host in
 `allowed_hosts`, keep `listen` on loopback, and proxy the path without
 rewriting it. Links, assets, redirects and the session cookie's path all
-use the prefix.
+use the prefix. Requests outside the prefix get a 404 after the same Host
+check and security headers as every other response.
+
+Browsers isolate sites by scheme, host and port, not by path. Applications
+sharing one host name are one origin: script running in another
+application on that host (for example through a cross-site scripting flaw
+in it) could read Housekeeparr's pages and submit its forms with the
+signed-in browser's session. The cookie path only keeps the session cookie
+out of other applications' requests. Where the host offers per-application
+subdomains, prefer one for Housekeeparr.
 
 ```nginx
 location /housekeeparr/ {
     proxy_pass http://127.0.0.1:8484;
-    proxy_set_header Host $host;
+    proxy_set_header Host $http_host;
     proxy_read_timeout 150s;
 }
 ```
+
+With only this location, nginx itself answers `/housekeeparr` (a 301 to
+`/housekeeparr/`) and paths outside the prefix (its own 404); Housekeeparr's
+Host check and security headers apply to what nginx forwards. Both blocks
+are exercised behind nginx 1.26.3 by `scripts/it/nginx.sh`.
 
 Listener timeouts are `web.read_header_timeout` (5 s), `read_timeout`
 (15 s), `write_timeout` (2 min, at least six times `action_timing.settle`)

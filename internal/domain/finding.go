@@ -44,10 +44,17 @@ const (
 	FindingTransferError     = "transfer.client_error"
 	FindingSourceRejected    = "transfer.source_rejected"
 	FindingTrackerCoverage   = "transfer.tracker_coverage"
-	FindingPartialPack       = "import.partial_pack"
-	FindingImportAttention   = "import.attention"
-	FindingQueueUnmatched    = "queue.unmatched"
-	FindingQueueAmbiguous    = "queue.ambiguous_ownership"
+	// FindingTrackerRejectsClient: a tracker refuses the client or its
+	// version; not a dead release.
+	FindingTrackerRejectsClient = "transfer.tracker_rejects_client"
+	// FindingCompleteNotImported: every wanted byte is verified, but the
+	// client reports an error and the manager still tracks the grab as
+	// downloading, so it is not imported.
+	FindingCompleteNotImported = "import.complete_not_imported"
+	FindingPartialPack         = "import.partial_pack"
+	FindingImportAttention     = "import.attention"
+	FindingQueueUnmatched      = "queue.unmatched"
+	FindingQueueAmbiguous      = "queue.ambiguous_ownership"
 )
 
 // Subject identifies what a finding is about.

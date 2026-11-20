@@ -9,6 +9,7 @@ import (
 
 	"github.com/voidxela/housekeeparr/internal/action"
 	"github.com/voidxela/housekeeparr/internal/app"
+	"github.com/voidxela/housekeeparr/internal/control"
 	"github.com/voidxela/housekeeparr/internal/domain"
 	"github.com/voidxela/housekeeparr/internal/engine"
 	"github.com/voidxela/housekeeparr/internal/policy"
@@ -18,16 +19,21 @@ import (
 
 // writerService opens the state store for writing (refusing with exit 3
 // while another process owns it).
-func writerService(o *opts) (*app.Service, func(), int) {
+// writerService opens the state store as its writer or, when the running
+// worker owns it, sends req to the worker and returns its answer instead.
+func writerService(o *opts, req control.Request) (*app.Service, func(), int, *control.Response) {
 	cfg, code := o.loadConfig()
 	if cfg == nil {
-		return nil, nil, code
+		return nil, nil, code, nil
 	}
-	st, code := openWriter(context.Background(), cfg, o.errOut)
+	st, resp, code := openOrRoute(context.Background(), cfg, o.errOut, &req)
+	if resp != nil {
+		return nil, nil, code, resp
+	}
 	if st == nil {
-		return nil, nil, code
+		return nil, nil, code, nil
 	}
-	return app.New(st, cfg, nil, nil), func() { st.Close() }, exitOK
+	return app.New(st, cfg, nil, nil), func() { st.Close() }, exitOK, nil
 }
 
 func cmdPreview(args []string, out, errOut io.Writer) int {
@@ -138,7 +144,10 @@ func cmdAct(args []string, out, errOut io.Writer) int {
 		fmt.Fprintln(errOut, "act requires --confirm; review `housekeeparr preview` first")
 		return exitUsage
 	}
-	svc, done, code := writerService(o)
+	svc, done, code, routed := writerService(o, control.Request{Op: "act", ID: id, Confirm: true})
+	if routed != nil {
+		return reportAct(out, errOut, o.json, routed)
+	}
 	if svc == nil {
 		return code
 	}
@@ -180,6 +189,35 @@ func cmdAct(args []string, out, errOut io.Writer) int {
 		fmt.Fprintf(out, "\naction #%d: %s %s\n", res.IntentID, res.State, res.Detail)
 	}
 	if res.State != store.IntentSucceeded {
+		return exitProblem
+	}
+	return exitOK
+}
+
+// reportAct prints a manual action the running worker carried out.
+func reportAct(out, errOut io.Writer, asJSON bool, resp *control.Response) int {
+	if asJSON {
+		writeJSON(out, map[string]any{"preview": resp.Preview, "result": resp.Result, "error": resp.Error, "by": "worker"})
+	} else if resp.Preview != nil {
+		printPreview(out, resp.Preview)
+	}
+	switch {
+	case resp.NotFound:
+		fmt.Fprintln(errOut, resp.Error)
+		return exitProblem
+	case resp.Refused:
+		fmt.Fprintln(errOut, "refused by the running worker; nothing was sent:", resp.Error)
+		return exitProblem
+	case resp.Error != "":
+		fmt.Fprintln(errOut, "the running worker reported:", resp.Error)
+	}
+	if resp.Result == nil {
+		return exitFailure
+	}
+	if !asJSON {
+		fmt.Fprintf(out, "\naction #%d: %s %s (by the running worker)\n", resp.Result.IntentID, resp.Result.State, resp.Result.Detail)
+	}
+	if resp.Result.State != store.IntentSucceeded {
 		return exitProblem
 	}
 	return exitOK
@@ -275,7 +313,10 @@ func cmdReview(args []string, out, errOut io.Writer) int {
 		return exitUsage
 	}
 	to := store.IntentState(strings.ToLower(*as))
-	svc, done, code := writerService(o)
+	svc, done, code, routed := writerService(o, control.Request{Op: "review", ID: id, To: string(to), Note: *note})
+	if routed != nil {
+		return reportRouted(out, errOut, routed, fmt.Sprintf("action #%d resolved as %s", id, to))
+	}
 	if svc == nil {
 		return code
 	}
@@ -298,7 +339,10 @@ func cmdRestoreAck(args []string, out, errOut io.Writer) int {
 		fmt.Fprintln(errOut, "restore-ack requires --confirm: it accepts this state database as authoritative even though it may predate actions already sent")
 		return exitUsage
 	}
-	svc, done, code := writerService(o)
+	svc, done, code, routed := writerService(o, control.Request{Op: "restore-ack", Confirm: true})
+	if routed != nil {
+		return reportRouted(out, errOut, routed, "restore acknowledged; the journal marker now matches this database")
+	}
 	if svc == nil {
 		return code
 	}
@@ -329,7 +373,10 @@ func cmdAttempts(args []string, out, errOut io.Writer) int {
 			fmt.Fprintln(errOut, "content must be \"<manager-id>|episode:<id>\" or \"<manager-id>|movie:<id>\"")
 			return exitUsage
 		}
-		svc, done, code := writerService(o)
+		svc, done, code, routed := writerService(o, control.Request{Op: "attempts-reset", Ref: pos[0], Note: *note})
+		if routed != nil {
+			return reportRouted(out, errOut, routed, "recovery attempts for "+pos[0]+" reset; earlier attempts remain in the history")
+		}
 		if svc == nil {
 			return code
 		}
@@ -343,9 +390,18 @@ func cmdAttempts(args []string, out, errOut io.Writer) int {
 	}
 	o := newFlags("attempts", errOut)
 	limit := o.fs.Int("limit", 50, "maximum rows to list")
+	summary := o.fs.Bool("summary", false, "list every content item with counted attempts, its limit, window and next eligible time")
 	pos, err := o.parse(args)
 	if err != nil {
 		return exitUsage
+	}
+	if *summary {
+		svc, done, code := readService(o)
+		if svc == nil {
+			return code
+		}
+		defer done()
+		return printAttemptSummaries(svc, o.json, out, errOut)
 	}
 	prefix := ""
 	if len(pos) == 1 {
@@ -384,6 +440,58 @@ func cmdAttempts(args []string, out, errOut io.Writer) int {
 	return exitOK
 }
 
+// printAttemptSummaries lists every content item with counted attempts,
+// with the same boundaries dispatch applies.
+func printAttemptSummaries(svc *app.Service, asJSON bool, out, errOut io.Writer) int {
+	var all []app.AttemptSummary
+	total := 0
+	for off := 0; ; {
+		pg, err := svc.AttemptSummaries(context.Background(), off, 500)
+		if err != nil {
+			fmt.Fprintln(errOut, err)
+			return exitFailure
+		}
+		all, total = append(all, pg.Summaries...), pg.Total
+		off += len(pg.Summaries)
+		if len(pg.Summaries) == 0 || off >= pg.Total {
+			break
+		}
+	}
+	if asJSON {
+		return writeJSON(out, map[string]any{"summaries": all, "total": total})
+	}
+	l := svc.Limits()
+	if l.ContentAttemptWindow > 0 {
+		fmt.Fprintf(out, "%d attempts per content within any rolling %s; an exhausted allowance returns by itself.\n", l.ContentAttempts, policy.HumanDuration(l.ContentAttemptWindow))
+	} else {
+		fmt.Fprintf(out, "%d attempts per content until reset; an exhausted allowance needs review and a reset.\n", l.ContentAttempts)
+	}
+	if len(all) == 0 {
+		fmt.Fprintln(out, "No recovery attempts are counted for any content.")
+		return exitOK
+	}
+	w := tw(out)
+	fmt.Fprintln(w, "CONTENT\tCOUNTED\tLATEST\tSTATE\tLAST RESET")
+	for _, a := range all {
+		state := "eligible"
+		switch {
+		case a.NeedsReview:
+			state = "needs review (housekeeparr attempts reset)"
+		case a.Exhausted && a.NextAt != nil:
+			state = "deferred until " + ts(a.NextAt)
+		case a.Exhausted:
+			state = "deferred"
+		}
+		reset := "never"
+		if a.LastReset != nil {
+			reset = ts(&a.LastReset.At) + " by " + a.LastReset.Actor
+		}
+		fmt.Fprintf(w, "%s\t%d of %d\t%s\t%s\t%s\n", a.Ref, a.Used, a.Limit, ts(&a.LastAt), state, reset)
+	}
+	w.Flush()
+	return exitOK
+}
+
 func validContentKey(k string) bool {
 	_, _, ok := domain.ParseContentKey(k)
 	return ok
@@ -412,9 +520,9 @@ func cmdRetained(args []string, out, errOut io.Writer) int {
 		return writeJSON(out, map[string]any{"retained": list, "usage": u, "limits": l})
 	}
 	if l.RetainedTransfers > 0 {
-		fmt.Fprintf(out, "%d of %d retained transfers", u.Count, l.RetainedTransfers)
+		fmt.Fprintf(out, "%d of %d retained transfers with a payload", u.Count-u.NoPayload, l.RetainedTransfers)
 	} else {
-		fmt.Fprintf(out, "%d retained transfers (no count ceiling)", u.Count)
+		fmt.Fprintf(out, "%d retained transfers with a payload (no count ceiling)", u.Count-u.NoPayload)
 	}
 	if u.Running > 0 {
 		fmt.Fprintf(out, " (%d left running)", u.Running)
@@ -424,7 +532,7 @@ func cmdRetained(args []string, out, errOut io.Writer) int {
 		fmt.Fprintf(out, " (%d of unknown size)", u.UnknownSize)
 	}
 	if u.NoPayload > 0 {
-		fmt.Fprintf(out, " (%d stopped before metadata, no payload)", u.NoPayload)
+		fmt.Fprintf(out, "; %d more stopped before metadata (no payload, not counted against any ceiling)", u.NoPayload)
 	}
 	if l.RetainedBytes > 0 {
 		fmt.Fprintf(out, "; byte ceiling %.1f GiB", float64(l.RetainedBytes)/(1<<30))
@@ -479,7 +587,10 @@ func pauseOrResume(verb string, args []string, out, errOut io.Writer) int {
 		fmt.Fprintf(errOut, "unknown workflow %q (workflows: %s)\n", pos[0], workflowNames())
 		return exitUsage
 	}
-	svc, done, code := writerService(o)
+	svc, done, code, routed := writerService(o, control.Request{Op: verb, Workflow: string(wf), Note: *note})
+	if routed != nil {
+		return reportRouted(out, errOut, routed, string(wf)+" "+verb+"d")
+	}
 	if svc == nil {
 		return code
 	}
@@ -624,4 +735,93 @@ func cmdMissing(args []string, out, errOut io.Writer) int {
 	w.Flush()
 	fmt.Fprintln(out, "\nA search the manager accepted does not mean a release was found or grabbed.")
 	return exitOK
+}
+
+// cmdSources prints the release-source scorecard: per indexer, grabs in
+// the window by outcome, the mature import fraction and data quality, the
+// history coverage behind it, and the recoveries' replacements.
+func cmdSources(args []string, out, errOut io.Writer) int {
+	o := newFlags("sources", errOut)
+	list := o.fs.Bool("acquisitions", false, "also list every acquisition with its outcome")
+	if _, err := o.parse(args); err != nil {
+		return exitUsage
+	}
+	svc, done, code := readService(o)
+	if svc == nil {
+		return code
+	}
+	defer done()
+	sc, err := svc.Scorecard(context.Background(), *list)
+	if err != nil {
+		fmt.Fprintln(errOut, err)
+		return exitFailure
+	}
+	if o.json {
+		return writeJSON(out, sc)
+	}
+	fmt.Fprintf(out, "Grabs of the last %s from the managers' history; a grab is mature after %s. Alerts need %d mature grabs and open below %.0f%% imported (clear at %.0f%%).\n",
+		policy.HumanDuration(sc.Window), policy.HumanDuration(sc.Maturity), sc.MinSample, 100*sc.AlertBelow, 100*sc.ClearAt)
+	for _, c := range sc.Coverage {
+		state := "not read yet"
+		switch {
+		case c.GapAt != nil:
+			state = "gap at " + ts(c.GapAt) + "; covered since " + ts(c.CoveredSince)
+		case c.CoversWindow:
+			state = "covers the window"
+		case c.CoveredSince != nil:
+			state = "covered since " + ts(c.CoveredSince) + " (still reading back)"
+		}
+		fmt.Fprintf(out, "History %s: %s\n", c.ManagerID, state)
+	}
+	if len(sc.Sources) == 0 {
+		fmt.Fprintln(out, "No grabs in the window.")
+	} else {
+		w := tw(out)
+		fmt.Fprintln(w, "\nSOURCE\tGRABS\tIMPORTED\tPARTIAL\tFAILED\tIGNORED\tPENDING\tUNKNOWN\tMATURE IMPORTED\tSTATE")
+		for _, s := range append(sc.Sources, sc.Totals) {
+			frac := "-"
+			if s.ImportFraction != nil {
+				frac = fmt.Sprintf("%d of %d (%.0f%%)", s.MatureImported, s.Mature, 100**s.ImportFraction)
+			}
+			state := "ok"
+			switch {
+			case s.Alert:
+				state = "ALERT"
+			case s.Quality != "":
+				state = s.Quality
+			}
+			if s.Indexer == sc.Totals.Indexer {
+				state = ""
+			}
+			o := s.Outcomes
+			fmt.Fprintf(w, "%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%s\n", s.Indexer, s.Grabs, o[app.OutcomeImported], o[app.OutcomePartial], o[app.OutcomeFailed],
+				o[app.OutcomeIgnored], o[app.OutcomePending], o[app.OutcomeUnknown], frac, state)
+		}
+		w.Flush()
+	}
+	r := sc.Recovery
+	fmt.Fprintf(out, "\nRecoveries in the window: %d; replacement grab observed for %d (%s); none observed for %d.\n", r.Recoveries, r.Grabbed,
+		nonEmptyOutcomes(r.Outcomes), r.NoGrab)
+	if *list {
+		w := tw(out)
+		fmt.Fprintln(w, "\nGRABBED\tMANAGER\tSOURCE\tOUTCOME\tCONTENT\tTITLE")
+		for _, a := range sc.Acquisitions {
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d of %d imported\t%s\n", ts(&a.GrabbedAt), a.ManagerID, a.Indexer, a.Outcome, len(a.Imported), len(a.Content), a.Title)
+		}
+		w.Flush()
+	}
+	return exitOK
+}
+
+func nonEmptyOutcomes(m map[string]int) string {
+	var parts []string
+	for _, k := range []string{app.OutcomeImported, app.OutcomePartial, app.OutcomeFailed, app.OutcomeIgnored, app.OutcomePending, app.OutcomeUnknown} {
+		if m[k] > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", m[k], k))
+		}
+	}
+	if len(parts) == 0 {
+		return "no outcome yet"
+	}
+	return strings.Join(parts, ", ")
 }

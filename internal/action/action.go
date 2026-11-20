@@ -53,7 +53,28 @@ type Check struct {
 	// Hard checks are safety prerequisites that no rule, override, or
 	// manual request can waive.
 	Hard bool `json:"hard"`
+	// Code classifies an unsatisfied check for automation decisions and
+	// explanations; "" is an ordinary prerequisite.
+	Code CheckCode `json:"code,omitempty"`
+	// Until is when an unsatisfied check clears by itself (an allowance or
+	// cooldown expiring); nil when it does not.
+	Until *time.Time `json:"until,omitempty"`
 }
+
+// CheckCode is a stable reason code for a prerequisite.
+type CheckCode string
+
+const (
+	CodePolicy   CheckCode = "policy"   // mode, emergency stop, exclusion or workflow permission
+	CodePaused   CheckCode = "paused"   // an operator paused the workflow
+	CodeCapacity CheckCode = "capacity" // a retained count or byte ceiling, or room for this transfer
+	CodeCooldown CheckCode = "cooldown" // a success cooldown on a lock subject
+	CodePacing   CheckCode = "pacing"   // an acquisition pacing allowance
+	// CodeAttempts is a per-content attempt allowance; with Until it
+	// returns by itself (rolling window), without it only a reset helps.
+	CodeAttempts CheckCode = "attempts"
+	CodeLock     CheckCode = "lock" // another action holds a lock subject
+)
 
 // Operation is one intended external operation. Request must carry every
 // consequential flag explicitly; Expect is the postcondition to verify.
@@ -190,6 +211,10 @@ type Coordinator struct {
 	Gate     Gate
 	Now      func() time.Time
 	Actor    string
+	// LegacyCooldown is the success cooldown reconciliation applies to an
+	// intent journaled before cooldowns were recorded with it (the
+	// currently configured success_cooldown).
+	LegacyCooldown time.Duration
 }
 
 // Errors returned by Execute. Each leaves external state untouched unless
@@ -200,8 +225,52 @@ var (
 	ErrStale       = errors.New("decision-relevant state changed since the preview")
 	ErrConflict    = errors.New("a conflicting action holds a required lock")
 	ErrRestoreHold = errors.New("writes are held: the state database may predate actions already sent")
-	ErrJournal     = errors.New("the action journal could not be written; no request was sent")
+	// ErrJournal matches every failure to persist the action journal
+	// (errors.Is). Whether a request may already have been sent is carried
+	// by *JournalError; a bare ErrJournal (a read-only store) sent nothing.
+	ErrJournal = errors.New("the action journal could not be written")
 )
+
+// JournalError is a failure to persist the action journal. It is an
+// integrity failure, not a scoped refusal: callers stop further acquisition
+// work until reconciliation has settled the journal again.
+type JournalError struct {
+	// IntentID is the intent concerned, 0 if none was journaled.
+	IntentID int64
+	// Sent reports that a request was dispatched before the failure, so it
+	// may have taken effect. Such an intent is settled by observation at
+	// the next reconciliation and never re-sent.
+	Sent bool
+	// Stage names the journal write that failed.
+	Stage string
+	Err   error
+}
+
+func (e *JournalError) Error() string {
+	msg := ErrJournal.Error()
+	if e.Stage != "" {
+		msg += " (" + e.Stage + ")"
+	}
+	if e.Sent {
+		msg += "; a request was already sent and may have taken effect: it is settled by observation at the next reconciliation and never re-sent"
+	} else {
+		msg += "; no request was sent"
+	}
+	if e.Err != nil {
+		msg += ": " + e.Err.Error()
+	}
+	return msg
+}
+
+func (e *JournalError) Is(target error) bool { return target == ErrJournal }
+func (e *JournalError) Unwrap() error        { return e.Err }
+
+// MaybeSent reports whether err is a journal failure after a request was
+// dispatched, whose effect is therefore unknown until reconciliation.
+func MaybeSent(err error) bool {
+	var je *JournalError
+	return errors.As(err, &je) && je.Sent
+}
 
 // RefusedError carries the checks that prevented execution.
 type RefusedError struct {
@@ -271,7 +340,7 @@ func (c *Coordinator) Execute(ctx context.Context, p Proposal) (Result, error) {
 	}
 	rs, err := c.Store.CheckRestore(ctx)
 	if err != nil {
-		return Result{}, fmt.Errorf("%w: %v", ErrJournal, err)
+		return Result{}, &JournalError{Stage: "restore check", Err: err}
 	}
 	if rs.Suspected {
 		return Result{}, &RefusedError{Err: ErrRestoreHold, Checks: []Check{{Name: "state matches the action journal", Detail: rs.Reason, Hard: true}}}
@@ -280,7 +349,7 @@ func (c *Coordinator) Execute(ctx context.Context, p Proposal) (Result, error) {
 	// journal transaction below remains the authoritative lock check.
 	for _, l := range p.Locks {
 		if h, err := c.Store.LockHolder(ctx, l); err != nil {
-			return Result{}, fmt.Errorf("%w: %v", ErrJournal, err)
+			return Result{}, &JournalError{Stage: "lock check", Err: err}
 		} else if h != 0 {
 			return Result{}, &RefusedError{Err: ErrConflict, Checks: []Check{{Name: "exclusive access", Detail: (&store.LockHeldError{Subject: l, Holder: h}).Error(), Hard: true}}}
 		}
@@ -296,11 +365,9 @@ func (c *Coordinator) Execute(ctx context.Context, p Proposal) (Result, error) {
 	in := store.Intent{Key: p.Key(), Workflow: p.Workflow, Origin: string(p.Origin), FindingID: p.FindingID, Subject: p.Subject,
 		PolicyRevision: p.PolicyRevision, ConfigRevision: p.ConfigRevision, InstanceID: c.Store.InstanceID(), Fingerprint: p.Fingerprint,
 		Evidence: p.Evidence, Locks: p.Locks}
-	plan, _ := json.Marshal(struct {
-		Operations  []Operation `json:"operations"`
-		Effects     []string    `json:"effects"`
-		SideEffects []string    `json:"side_effects"`
-	}{p.Operations, p.Effects, p.SideEffects})
+	cooldown := p.Cooldown.Milliseconds()
+	plan, _ := json.Marshal(journaledPlan{Operations: p.Operations, Effects: p.Effects, SideEffects: p.SideEffects,
+		CooldownMS: &cooldown, Planned: &p.Planned})
 	in.Plan = plan
 	for _, op := range p.Operations {
 		in.Steps = append(in.Steps, store.Step{Op: op.Op, Target: op.Target, Request: op.Request, Expect: op.Expect})
@@ -333,11 +400,16 @@ func (c *Coordinator) Execute(ctx context.Context, p Proposal) (Result, error) {
 	case errors.Is(err, store.ErrDuplicateIntent):
 		return Result{}, &RefusedError{Err: ErrConflict, Checks: []Check{{Name: "not already attempted", Detail: "this action was already journaled for the same observed state", Hard: true}}}
 	case err != nil:
-		return Result{}, fmt.Errorf("%w: %v", ErrJournal, err)
+		return Result{}, &JournalError{Stage: "reservation", Err: err}
 	}
 	if err := c.Store.NoteJournalHighWater(id); err != nil {
-		_ = c.unsent(ctx, id, store.IntentCancelled, "journal marker could not be written; cancelled before any request")
-		return Result{IntentID: id, State: store.IntentCancelled}, fmt.Errorf("%w: %v", ErrJournal, err)
+		jerr := &JournalError{IntentID: id, Stage: "journal high-water marker", Err: err}
+		why := "journal marker could not be written; cancelled before any request"
+		if cerr := c.conclude(context.WithoutCancel(ctx), id, nil, store.IntentCancelled, why, true); cerr != nil {
+			// Still reserved: the next reconciliation cancels it.
+			return Result{IntentID: id, State: store.IntentReserved, Detail: why}, errors.Join(jerr, cerr)
+		}
+		return Result{IntentID: id, State: store.IntentCancelled, Detail: why}, jerr
 	}
 	return c.run(ctx, id, p)
 }
@@ -383,30 +455,43 @@ func (c *Coordinator) actor() string {
 	return "housekeeparr"
 }
 
-// unsent finishes an intent none of whose requests can have had an
-// external effect (never sent, or definitely refused), returning its
-// budget reservations. The ledger keeps the released rows as history.
-func (c *Coordinator) unsent(ctx context.Context, id int64, st store.IntentState, why string) error {
+// conclude records an intent's terminal state in one transaction with
+// the steps that will not run (skipped). release returns its budget
+// reservations: only for an intent none of whose requests can have had an
+// external effect (never sent, or definitely refused); the ledger keeps
+// the released rows as history.
+func (c *Coordinator) conclude(ctx context.Context, id int64, skip []store.Step, st store.IntentState, why string, release bool) error {
 	now := c.now()
 	return c.Store.Write(ctx, func(tx *store.Tx) error {
+		for _, s := range skip {
+			if err := tx.FinishStep(id, s.Seq, store.StepSkipped, nil, "", now); err != nil {
+				return err
+			}
+		}
 		if err := tx.SetIntentState(id, st, why, now); err != nil {
 			return err
 		}
-		if err := tx.ReleaseBudget(id, why, now); err != nil {
-			return err
+		detail := fmt.Sprintf("#%d: %s", id, why)
+		if release {
+			if err := tx.ReleaseBudget(id, why, now); err != nil {
+				return err
+			}
+			detail += "; budget reservations returned"
 		}
-		return tx.Audit(now, c.actor(), "action."+string(st), fmt.Sprintf("#%d: %s; budget reservations returned", id, why))
+		return tx.Audit(now, c.actor(), "action."+string(st), detail)
 	})
 }
 
-func (c *Coordinator) finish(ctx context.Context, id int64, st store.IntentState, why string) error {
-	now := c.now()
-	return c.Store.Write(ctx, func(tx *store.Tx) error {
-		if err := tx.SetIntentState(id, st, why, now); err != nil {
-			return err
-		}
-		return tx.Audit(now, c.actor(), "action."+string(st), fmt.Sprintf("#%d: %s", id, why))
-	})
+// end concludes the intent and reports it. If the journal write fails,
+// the result keeps the last durable state and a *JournalError says whether
+// a request may have been sent; reconciliation settles it later.
+func (c *Coordinator) end(ctx context.Context, id int64, skip []store.Step, st store.IntentState, why string, release bool,
+	durable store.IntentState, sent bool, cause error) (Result, error) {
+	if err := c.conclude(ctx, id, skip, st, why, release); err != nil {
+		return Result{IntentID: id, State: durable, Detail: why},
+			errors.Join(&JournalError{IntentID: id, Sent: sent, Stage: "recording the " + string(st) + " outcome", Err: err}, cause)
+	}
+	return Result{IntentID: id, State: st, Detail: why}, cause
 }
 
 // run dispatches the journaled steps in order.
@@ -417,34 +502,35 @@ func (c *Coordinator) run(ctx context.Context, id int64, p Proposal) (Result, er
 	jctx := context.WithoutCancel(ctx)
 	in, err := c.Store.Intent(jctx, id)
 	if err != nil {
-		return Result{IntentID: id, State: store.IntentReserved}, err
+		return Result{IntentID: id, State: store.IntentReserved}, &JournalError{IntentID: id, Stage: "reading the journaled intent", Err: err}
 	}
+	// durable is the intent state last committed.
+	durable := store.IntentReserved
 	for i, st := range in.Steps {
+		rest := in.Steps[i:]
+		// Nothing was sent before the first step; afterwards earlier steps
+		// took effect (they were verified), so a stop holds the partial
+		// workflow for review.
+		stop := func(why string, cause error) (Result, error) {
+			if i == 0 {
+				return c.end(jctx, id, rest, store.IntentCancelled, why+"; nothing was sent", true, durable, false, cause)
+			}
+			return c.end(jctx, id, rest, store.IntentUncertain, why+"; earlier steps took effect, review required", false, durable, true, cause)
+		}
 		if err := ctx.Err(); err != nil {
-			return c.stopEarly(ctx, id, i, in.Steps, "stopped before step "+fmt.Sprint(st.Seq)+": "+err.Error())
+			return stop(fmt.Sprintf("stopped before step %d: %v", st.Seq, err), err)
 		}
 		// The first step was checked immediately before the intent was
 		// journaled. Every later write gets its own fresh checks; a
 		// divergence holds the partial workflow for review.
 		if i > 0 {
 			if why := c.recheck(ctx, p, i); why != "" {
-				c.skipRest(jctx, id, in.Steps[i:])
-				why = fmt.Sprintf("held before step %d (%s): %s; earlier steps took effect, review required", st.Seq, st.Op, why)
-				_ = c.finish(jctx, id, store.IntentUncertain, why)
-				return Result{IntentID: id, State: store.IntentUncertain, Detail: why}, nil
+				return stop(fmt.Sprintf("held before step %d (%s): %s", st.Seq, st.Op, why), nil)
 			}
 		}
 		base, berr := c.Executor.Baseline(ctx, st)
 		if berr != nil {
-			why := fmt.Sprintf("the evidence baseline for step %d (%s) could not be read: %v", st.Seq, st.Op, berr)
-			c.skipRest(jctx, id, in.Steps[i:])
-			if i == 0 {
-				_ = c.unsent(jctx, id, store.IntentCancelled, why+"; nothing was sent")
-				return Result{IntentID: id, State: store.IntentCancelled, Detail: why}, nil
-			}
-			why += "; earlier steps took effect, review required"
-			_ = c.finish(jctx, id, store.IntentUncertain, why)
-			return Result{IntentID: id, State: store.IntentUncertain, Detail: why}, nil
+			return stop(fmt.Sprintf("the evidence baseline for step %d (%s) could not be read: %v", st.Seq, st.Op, berr), nil)
 		}
 		// Commit "dispatching", with the baseline, before sending. If this
 		// write fails nothing is sent.
@@ -458,13 +544,17 @@ func (c *Coordinator) run(ctx context.Context, id int64, p Proposal) (Result, er
 			return tx.BeginStep(id, st.Seq, now, base)
 		})
 		if err != nil {
+			jerr := &JournalError{IntentID: id, Sent: i > 0, Stage: fmt.Sprintf("recording step %d as dispatching", st.Seq), Err: err}
 			if i == 0 {
-				_ = c.unsent(jctx, id, store.IntentCancelled, "journal write failed before the first request; nothing was sent")
-				return Result{IntentID: id, State: store.IntentCancelled}, fmt.Errorf("%w: %v", ErrJournal, err)
+				// Best effort: if this fails too, reconciliation cancels the
+				// still-reserved intent.
+				res, cerr := c.end(jctx, id, rest, store.IntentCancelled, "journal write failed before the first request; nothing was sent", true, durable, false, nil)
+				return res, errors.Join(jerr, cerr)
 			}
 			// Earlier steps took effect; leave the intent for reconciliation.
-			return Result{IntentID: id, State: store.IntentExecuting}, fmt.Errorf("%w after step %d: %v", ErrJournal, i, err)
+			return Result{IntentID: id, State: durable}, jerr
 		}
+		durable = store.IntentExecuting
 		st.State, st.DispatchedAt, st.Attempts, st.Baseline = store.StepDispatching, &now, st.Attempts+1, base
 		out, derr := c.Executor.Dispatch(ctx, st)
 		state, detail, outcome := c.settle(jctx, st, out, derr)
@@ -480,47 +570,33 @@ func (c *Coordinator) run(ctx context.Context, id int64, p Proposal) (Result, er
 			}
 			return nil
 		}); err != nil {
-			// The outcome is not durable; startup reconciliation will
-			// observe this step, which is still recorded as dispatching.
-			return Result{IntentID: id, State: store.IntentExecuting}, fmt.Errorf("%w: outcome of step %d not recorded: %v", ErrJournal, st.Seq, err)
+			// The outcome is not durable; reconciliation will observe this
+			// step, which is still recorded as dispatching.
+			return Result{IntentID: id, State: durable, Detail: detail},
+				&JournalError{IntentID: id, Sent: true, Stage: fmt.Sprintf("recording the outcome of step %d (%s)", st.Seq, st.Op), Err: err}
 		}
 		switch state {
 		case store.StepFailed:
-			c.skipRest(jctx, id, in.Steps[i+1:])
 			why := fmt.Sprintf("step %d (%s) failed: %s", st.Seq, st.Op, detail)
 			if i > 0 {
 				// Earlier steps took effect: the workflow is partial.
-				why += "; earlier steps took effect, review required"
-				_ = c.finish(jctx, id, store.IntentUncertain, why)
-				return Result{IntentID: id, State: store.IntentUncertain, Detail: why}, nil
+				return c.end(jctx, id, in.Steps[i+1:], store.IntentUncertain, why+"; earlier steps took effect, review required", false, durable, true, nil)
 			}
 			// Only a definite refusal fails a step (see settle), so the
 			// first request had no effect.
-			_ = c.unsent(jctx, id, store.IntentFailed, why+"; refused before any effect")
-			return Result{IntentID: id, State: store.IntentFailed, Detail: why}, nil
+			return c.end(jctx, id, in.Steps[i+1:], store.IntentFailed, why+"; refused before any effect", true, durable, true, nil)
 		case store.StepUncertain:
-			c.skipRest(jctx, id, in.Steps[i+1:])
 			why := fmt.Sprintf("step %d (%s) outcome could not be established: %s; it will not be retried automatically", st.Seq, st.Op, detail)
-			_ = c.finish(jctx, id, store.IntentUncertain, why)
-			return Result{IntentID: id, State: store.IntentUncertain, Detail: why}, nil
+			return c.end(jctx, id, in.Steps[i+1:], store.IntentUncertain, why, false, durable, true, nil)
 		}
 	}
 	now := c.now()
 	err = c.Store.Write(jctx, func(tx *store.Tx) error {
-		if err := tx.SetIntentState(id, store.IntentSucceeded, "every step verified", now); err != nil {
-			return err
-		}
-		if p.Cooldown > 0 {
-			for _, l := range p.Locks {
-				if err := tx.SetCooldown(l, now, now.Add(p.Cooldown), fmt.Sprintf("action #%d (%s)", id, p.Workflow)); err != nil {
-					return err
-				}
-			}
-		}
-		return tx.Audit(now, c.actor(), "action.succeeded", fmt.Sprintf("#%d %s", id, p.Workflow))
+		return c.succeed(tx, id, p.Workflow, p.Locks, completion{cooldown: p.Cooldown, recorded: true}, "every step verified", now, now)
 	})
 	if err != nil {
-		return Result{IntentID: id, State: store.IntentExecuting}, fmt.Errorf("%w: completion not recorded: %v", ErrJournal, err)
+		return Result{IntentID: id, State: durable, Detail: "every step verified; completion not recorded"},
+			&JournalError{IntentID: id, Sent: true, Stage: "recording completion", Err: err}
 	}
 	c.observeOutcome(ctx, jctx, id)
 	return Result{IntentID: id, State: store.IntentSucceeded, Detail: "every step verified"}, nil
@@ -589,31 +665,6 @@ func (c *Coordinator) settle(ctx context.Context, st store.Step, out json.RawMes
 	}
 }
 
-func (c *Coordinator) skipRest(ctx context.Context, id int64, rest []store.Step) {
-	now := c.now()
-	_ = c.Store.Write(ctx, func(tx *store.Tx) error {
-		for _, s := range rest {
-			if err := tx.FinishStep(id, s.Seq, store.StepSkipped, nil, "", now); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-}
-
-func (c *Coordinator) stopEarly(ctx context.Context, id int64, i int, steps []store.Step, why string) (Result, error) {
-	// Persist with a fresh context: the caller's is cancelled.
-	bg := context.WithoutCancel(ctx)
-	c.skipRest(bg, id, steps[i:])
-	if i == 0 {
-		_ = c.unsent(bg, id, store.IntentCancelled, why+"; nothing was sent")
-		return Result{IntentID: id, State: store.IntentCancelled, Detail: why}, ctx.Err()
-	}
-	why += "; earlier steps took effect, review required"
-	_ = c.finish(bg, id, store.IntentUncertain, why)
-	return Result{IntentID: id, State: store.IntentUncertain, Detail: why}, ctx.Err()
-}
-
 // ReconcileReport summarises startup reconciliation.
 type ReconcileReport struct {
 	RestoreHold *store.RestoreStatus `json:"restore_hold,omitempty"`
@@ -650,11 +701,21 @@ func (c *Coordinator) Reconcile(ctx context.Context) (ReconcileReport, error) {
 			dispatched = dispatched || (s.State != store.StepPending && s.State != store.StepSkipped)
 		}
 		if !dispatched {
-			c.skipRest(ctx, in.ID, in.Steps)
-			if err := c.unsent(ctx, in.ID, store.IntentCancelled, "interrupted before any request was sent; not replayed"); err != nil {
+			if err := c.conclude(ctx, in.ID, pendingSteps(in.Steps), store.IntentCancelled, "interrupted before any request was sent; not replayed", true); err != nil {
 				return rep, err
 			}
 			rep.Cancelled = append(rep.Cancelled, in.ID)
+			continue
+		}
+		// The first request was definitely refused (its failure is durable)
+		// and nothing else was sent: it had no effect, as when the outcome
+		// is recorded without interruption.
+		if refusedFirst(in.Steps) {
+			if err := c.conclude(ctx, in.ID, pendingSteps(in.Steps), store.IntentFailed,
+				fmt.Sprintf("step %d (%s) was refused before any effect; settled after interruption", in.Steps[0].Seq, in.Steps[0].Op), true); err != nil {
+				return rep, err
+			}
+			rep.Settled = append(rep.Settled, in.ID)
 			continue
 		}
 		if in.State != store.IntentReconciling {
@@ -688,7 +749,7 @@ func (c *Coordinator) Reconcile(ctx context.Context) (ReconcileReport, error) {
 						return err
 					}
 					if to == store.StepSucceeded {
-						return recordVerifiedStep(tx, in.ID, in.Subject, s, nil, c.now())
+						return recordVerifiedStep(tx, in.ID, in.Subject, s, plannedOf(in), c.now())
 					}
 					return nil
 				}); err != nil {
@@ -710,21 +771,20 @@ func (c *Coordinator) Reconcile(ctx context.Context) (ReconcileReport, error) {
 		}
 		switch {
 		case !uncertain && allDone:
-			if err := c.finish(ctx, in.ID, store.IntentSucceeded, "verified by reconciliation after interruption"); err != nil {
-				return rep, err
-			}
-			if err := c.Store.Write(ctx, func(tx *store.Tx) error { return trackOutcome(tx, in.ID, in.Subject, in.Steps, c.now()) }); err != nil {
+			why := "verified by reconciliation after interruption"
+			done := c.completionOf(in)
+			if err := c.Store.Write(ctx, func(tx *store.Tx) error {
+				now := c.now()
+				if err := c.succeed(tx, in.ID, in.Workflow, in.Locks, done, why, lastDispatch(in.Steps, now), now); err != nil {
+					return err
+				}
+				return trackOutcome(tx, in.ID, in.Subject, in.Steps, now)
+			}); err != nil {
 				return rep, err
 			}
 			rep.Settled = append(rep.Settled, in.ID)
 		default:
-			var pend []store.Step
-			for _, s := range in.Steps {
-				if s.State == store.StepPending {
-					pend = append(pend, s)
-				}
-			}
-			c.skipRest(ctx, in.ID, pend)
+			pend := pendingSteps(in.Steps)
 			why := "interrupted"
 			if len(pend) > 0 {
 				why += fmt.Sprintf("; %d remaining step(s) were not run", len(pend))
@@ -732,13 +792,122 @@ func (c *Coordinator) Reconcile(ctx context.Context) (ReconcileReport, error) {
 			if len(notes) > 0 {
 				why += "; " + strings.Join(notes, "; ")
 			}
-			if err := c.finish(ctx, in.ID, store.IntentUncertain, why+"; review required"); err != nil {
+			if err := c.conclude(ctx, in.ID, pend, store.IntentUncertain, why+"; review required", false); err != nil {
 				return rep, err
 			}
 			rep.Uncertain = append(rep.Uncertain, in.ID)
 		}
 	}
 	return rep, nil
+}
+
+// journaledPlan is the intent's plan as journaled: the operations and
+// effects shown to the operator, and the facts needed to finish the action
+// identically whether it completes normally or is settled by
+// reconciliation after an interruption.
+type journaledPlan struct {
+	Operations  []Operation `json:"operations"`
+	Effects     []string    `json:"effects"`
+	SideEffects []string    `json:"side_effects"`
+	// CooldownMS is the success cooldown applied to every lock subject; nil
+	// for intents journaled before it was recorded.
+	CooldownMS *int64 `json:"cooldown_ms,omitempty"`
+	// Planned is the external state planned against (retained sizes).
+	Planned *Planned `json:"planned,omitempty"`
+}
+
+func planOf(in store.Intent) journaledPlan {
+	var jp journaledPlan
+	_ = json.Unmarshal(in.Plan, &jp)
+	return jp
+}
+
+func plannedOf(in store.Intent) *Planned { return planOf(in).Planned }
+
+// completion is how a succeeded intent is finished.
+type completion struct {
+	cooldown time.Duration
+	// recorded: the cooldown was journaled with the intent; otherwise it
+	// is the legacy fallback and the reason says so.
+	recorded bool
+}
+
+// cooldownWorkflows set a success cooldown (recovery plans; searches and
+// pack clearances intentionally do not).
+var cooldownWorkflows = map[string]bool{"no_progress_recovery": true, "metadata_recovery": true, "preserved_data_failure": true}
+
+// completionOf recovers an intent's completion facts. An intent journaled
+// before cooldowns were recorded takes the currently configured cooldown
+// (LegacyCooldown) when its workflow sets one.
+func (c *Coordinator) completionOf(in store.Intent) completion {
+	if ms := planOf(in).CooldownMS; ms != nil {
+		return completion{cooldown: time.Duration(*ms) * time.Millisecond, recorded: true}
+	}
+	if cooldownWorkflows[in.Workflow] {
+		return completion{cooldown: c.LegacyCooldown}
+	}
+	return completion{recorded: true}
+}
+
+// succeed is the one success finalization, for normal completion and for
+// reconciliation: the intent's state, a cooldown from since on each of its
+// original lock subjects, and the audit record, in the caller's
+// transaction.
+func (c *Coordinator) succeed(tx *store.Tx, id int64, workflow string, locks []string, done completion, why string, since, now time.Time) error {
+	if err := tx.SetIntentState(id, store.IntentSucceeded, why, now); err != nil {
+		return err
+	}
+	if done.cooldown > 0 {
+		reason := fmt.Sprintf("action #%d (%s)", id, workflow)
+		if !done.recorded {
+			reason = fmt.Sprintf("action #%d (%s; cooldown from current settings: the action predates recorded cooldowns)", id, workflow)
+		}
+		for _, l := range locks {
+			if err := tx.SetCooldown(l, since, since.Add(done.cooldown), reason); err != nil {
+				return err
+			}
+		}
+	}
+	return tx.Audit(now, c.actor(), "action.succeeded", fmt.Sprintf("#%d %s: %s", id, workflow, why))
+}
+
+// lastDispatch is when the last dispatched step was sent: the time the
+// action's effect started, for a cooldown settled after interruption.
+func lastDispatch(steps []store.Step, fallback time.Time) time.Time {
+	var at *time.Time
+	for _, s := range steps {
+		if s.DispatchedAt != nil && (at == nil || s.DispatchedAt.After(*at)) {
+			at = s.DispatchedAt
+		}
+	}
+	if at == nil {
+		return fallback
+	}
+	return *at
+}
+
+func pendingSteps(steps []store.Step) []store.Step {
+	var out []store.Step
+	for _, s := range steps {
+		if s.State == store.StepPending {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// refusedFirst reports whether the first step definitely failed and no
+// other step was dispatched.
+func refusedFirst(steps []store.Step) bool {
+	if len(steps) == 0 || steps[0].State != store.StepFailed {
+		return false
+	}
+	for _, s := range steps[1:] {
+		if s.State != store.StepPending && s.State != store.StepSkipped {
+			return false
+		}
+	}
+	return true
 }
 
 // Review resolves an uncertain intent after an operator has checked the
@@ -821,6 +990,8 @@ func recordRetained(tx *store.Tx, id int64, subject json.RawMessage, st store.St
 			zero := int64(0)
 			r.VerifiedBytes = &zero
 		}
+		// Positive provenance: stopped before its metadata arrived.
+		r.NoPayload = st.Op == "client.stop" && pl.StateClass == domain.StateMetadata
 	}
 	return tx.RecordRetained(r)
 }
@@ -845,16 +1016,23 @@ func trackOutcome(tx *store.Tx, id int64, subject json.RawMessage, steps []store
 			continue
 		}
 		var tg struct {
-			ManagerID  string `json:"manager_id"`
-			DownloadID string `json:"download_id"`
-			EpisodeID  int64  `json:"episode_id"`
-			MovieID    int64  `json:"movie_id"`
+			ManagerID  string  `json:"manager_id"`
+			DownloadID string  `json:"download_id"`
+			EpisodeID  int64   `json:"episode_id"`
+			EpisodeIDs []int64 `json:"episode_ids"`
+			MovieID    int64   `json:"movie_id"`
 		}
 		if err := json.Unmarshal(st.Target, &tg); err != nil || tg.ManagerID == "" {
 			return nil
 		}
 		var content []string
 		switch {
+		case len(tg.EpisodeIDs) > 1:
+			// A multi-episode release: every episode's replacement is
+			// followed.
+			for _, e := range tg.EpisodeIDs {
+				content = append(content, fmt.Sprintf("episode:%d", e))
+			}
 		case tg.MovieID > 0:
 			content = []string{fmt.Sprintf("movie:%d", tg.MovieID)}
 		case tg.EpisodeID > 0:

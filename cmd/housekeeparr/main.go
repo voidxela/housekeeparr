@@ -15,8 +15,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/voidxela/housekeeparr/internal/action"
 	"github.com/voidxela/housekeeparr/internal/app"
 	"github.com/voidxela/housekeeparr/internal/config"
+	"github.com/voidxela/housekeeparr/internal/control"
 	"github.com/voidxela/housekeeparr/internal/engine"
 	"github.com/voidxela/housekeeparr/internal/notify"
 	"github.com/voidxela/housekeeparr/internal/store"
@@ -61,6 +63,8 @@ func commands() []command {
 		{"review", "resolve an uncertain action after checking: review <action-id> --as failed --note ...", cmdReview},
 		{"retained", "list transfers recovery left in the client with their data (stopped or running), against the configured ceilings (--all includes released)", cmdRetained},
 		{"notifications", "list recent notification events and their delivery state", cmdNotifications},
+		{"sources", "release-source scorecard: grabs per indexer through import, from the managers' history (--acquisitions lists each grab)", cmdSources},
+		{"coverage", "library coverage: monitored, aired episodes and available movies with files, daily trend, and why each gap is open (--gaps N)", cmdCoverage},
 		{"missing", "list missing content managers report and Housekeeparr's proactive-search state (--all includes no longer missing)", cmdMissing},
 		{"attempts", "list recovery attempts and pacing use; allow more after review: attempts reset <manager>|episode:<id> --note ...", cmdAttempts},
 		{"pause", "pause a workflow (no automatic or manual actions) until resumed: pause <workflow> --note ...", cmdPause},
@@ -168,21 +172,68 @@ func openReadOnly(ctx context.Context, cfg *config.Config, errOut io.Writer) (*s
 }
 
 func openWriter(ctx context.Context, cfg *config.Config, errOut io.Writer) (*store.Store, int) {
+	st, _, code := openOrRoute(ctx, cfg, errOut, nil)
+	return st, code
+}
+
+// workerTimeout bounds how long a CLI command waits for the worker's
+// answer; a manual action answers once it has finished.
+const workerTimeout = 15 * time.Minute
+
+// openOrRoute opens the state store as its single writer or, when the
+// running worker owns it and req is set, sends req to the worker over its
+// control socket (SPEC §10) and returns the worker's answer instead. A
+// request whose answer is lost is reported as of unknown outcome and never
+// retried.
+func openOrRoute(ctx context.Context, cfg *config.Config, errOut io.Writer, req *control.Request) (*store.Store, *control.Response, int) {
 	st, err := store.Open(ctx, cfg.State.Dir, store.Options{})
 	if err != nil {
 		var le *store.LockedError
-		if errors.As(err, &le) {
+		if !errors.As(err, &le) {
 			fmt.Fprintln(errOut, err)
-			fmt.Fprintln(errOut, "Local changes such as ack/snooze must go through the running worker's web interface, or stop the worker first.")
-			return nil, exitStateBusy
+			return nil, nil, exitFailure
 		}
-		fmt.Fprintln(errOut, err)
-		return nil, exitFailure
+		if req == nil {
+			fmt.Fprintln(errOut, err)
+			fmt.Fprintln(errOut, "This command needs exclusive use of the state store; stop the worker first.")
+			return nil, nil, exitStateBusy
+		}
+		sctx, cancel := context.WithTimeout(ctx, workerTimeout)
+		defer cancel()
+		resp, err := control.Send(sctx, cfg.State.Dir, *req)
+		switch {
+		case errors.Is(err, control.ErrNoWorker):
+			fmt.Fprintln(errOut, le)
+			fmt.Fprintln(errOut, err)
+			fmt.Fprintln(errOut, "The process holding the store does not accept commands (a one-shot run, or an older worker); retry when it finishes, or use the web interface.")
+			return nil, nil, exitStateBusy
+		case err != nil:
+			fmt.Fprintln(errOut, err)
+			return nil, nil, exitFailure
+		}
+		return nil, &resp, exitOK
 	}
 	for _, w := range st.Warnings() {
 		fmt.Fprintln(errOut, "warning:", w)
 	}
-	return st, exitOK
+	return st, nil, exitOK
+}
+
+// reportRouted prints the running worker's answer to a routed command.
+func reportRouted(out, errOut io.Writer, resp *control.Response, success string) int {
+	switch {
+	case resp.OK:
+		fmt.Fprintln(out, success+" (by the running worker)")
+		return exitOK
+	case resp.NotFound:
+		fmt.Fprintln(errOut, resp.Error)
+		return exitProblem
+	case resp.Refused:
+		fmt.Fprintln(errOut, "refused by the running worker; nothing was sent:", resp.Error)
+		return exitProblem
+	}
+	fmt.Fprintln(errOut, "the running worker reported:", resp.Error)
+	return exitFailure
 }
 
 func newLogger(cfg *config.Config, w io.Writer) *slog.Logger {
@@ -275,27 +326,27 @@ func cmdRun(args []string, out, errOut io.Writer) int {
 	// and automatic execution are serialised by the same lock.
 	svc := app.New(st, cfg, nil, eng)
 	svc.SetExecutor(workflow.FromConnections(conns.Clients, conns.Managers, cfg.ActionTiming))
+	var passErr error
+	passLog := newPassLogger(log)
 	dispatch := func(ctx context.Context, rep engine.CycleReport) {
-		r, err := svc.DispatchAutomatic(ctx, rep.Fresh())
-		switch {
-		case err != nil:
-			log.Error("automatic dispatch failed; nothing further was sent this cycle", "err", err)
-		case r.Skipped != "":
-			log.Debug("automatic dispatch skipped", "reason", r.Skipped)
-		default:
-			for _, e := range r.Evaluations {
-				log.Info("automatic evaluation", "finding", e.FindingID, "result", e.Result, "action", e.IntentID, "detail", e.Detail)
-			}
-			for scope, why := range r.Breakers {
-				log.Warn("automation held", "scope", scope, "reason", why)
-			}
+		// Release-source findings come from stored history (observation
+		// only), whatever the mode.
+		if err := svc.EvaluateSources(ctx); err != nil {
+			log.Error("release-source evaluation failed", "err", err)
 		}
-		// At most one proactive search per pass (SPEC §9.1).
-		if sr, err := svc.DispatchSearches(ctx, rep.Fresh()); err != nil {
-			log.Error("proactive search failed; nothing further was sent this cycle", "err", err)
-		} else if sr.Sent != "" {
+		pr := svc.DispatchPass(ctx, rep.Fresh())
+		passErr = pr.Err()
+		passLog.recovery(pr)
+		// At most one proactive search per pass (SPEC §9.1), and none after
+		// a recovery pass that stopped on an error.
+		switch sr := pr.Search; {
+		case pr.SearchSkipped != "":
+			log.Warn("proactive search skipped", "reason", pr.SearchSkipped)
+		case pr.SearchErr != nil:
+			logWriteFailure(log, "proactive search", pr.SearchErr)
+		case sr.Sent != "":
 			log.Info("proactive search", "content", sr.Sent, "action", sr.IntentID, "outcome", sr.Outcome)
-		} else if len(sr.Waiting) > 0 {
+		case len(sr.Waiting) > 0:
 			log.Debug("proactive search waiting", "reasons", sr.Waiting)
 		}
 		// Notifications go out after the cycle and dispatch; a failing
@@ -320,10 +371,16 @@ func cmdRun(args []string, out, errOut io.Writer) int {
 		}
 		stopRun("one-shot cycle complete")
 		if o.json {
-			return writeJSON(out, rep)
+			if code := writeJSON(out, rep); code != exitOK || passErr != nil {
+				return exitFailure
+			}
+			return exitOK
 		}
 		printCycle(out, rep)
-		if rep.StoreError != "" {
+		if rep.StoreError != "" || passErr != nil {
+			if passErr != nil {
+				fmt.Fprintln(errOut, "write phase:", passErr)
+			}
 			return exitFailure
 		}
 		for _, c := range rep.Connections {
@@ -335,15 +392,15 @@ func cmdRun(args []string, out, errOut io.Writer) int {
 	}
 	log.Info("housekeeparr worker starting", "version", version, "mode", cfg.Mode, "config_revision", cfg.Revision,
 		"connections", len(conns.Meta), "interval", cfg.Polling.Interval.Duration)
+	// Headless CLI mutations reach this worker over an owner-only socket.
+	if ctl, err := control.Listen(svc, cfg.State.Dir); err != nil {
+		log.Warn("control socket unavailable: CLI changes are refused while the worker runs", "err", err)
+	} else {
+		defer ctl.Close()
+	}
 	var srv *web.Server
 	if cfg.Web.Enabled && !*headless {
-		wo := web.Options{Listen: cfg.Web.Listen, Logger: log, AllowedHosts: cfg.Web.AllowedHosts, TLSCert: cfg.Web.TLSCert, TLSKey: cfg.Web.TLSKey,
-			TrustedProxy: cfg.Web.TrustedProxy, BasePath: cfg.Web.BasePath, ReadHeaderTimeout: cfg.Web.ReadHeaderTimeout.Duration, ReadTimeout: cfg.Web.ReadTimeout.Duration,
-			WriteTimeout: cfg.Web.WriteTimeout.Duration, IdleTimeout: cfg.Web.IdleTimeout.Duration}
-		if cfg.Web.Password != "" {
-			wo.Auth = &web.Auth{Username: cfg.Web.Username, Password: secrets["web.password"],
-				SessionTTL: cfg.Web.SessionTTL.Duration, SignInWindow: cfg.Web.SignInWindow.Duration, SignInFailures: cfg.Web.SignInFailures}
-		}
+		wo := web.OptionsFromConfig(cfg.Web, secrets["web.password"], log)
 		srv, err = web.New(svc, wo)
 		if err != nil {
 			fmt.Fprintln(errOut, "web:", err)
@@ -584,9 +641,9 @@ func cmdActivity(args []string, out, errOut io.Writer) int {
 	return exitOK
 }
 
-func mutateCmd(name string, args []string, out, errOut io.Writer, extra func(*opts) func(*app.Service, int64) error) int {
+func mutateCmd(name string, args []string, out, errOut io.Writer, extra func(*opts) (func(*app.Service, int64) error, func(int64) control.Request)) int {
 	o := newFlags(name, errOut)
-	act := extra(o)
+	act, request := extra(o)
 	pos, err := o.parse(args)
 	if err != nil {
 		return exitUsage
@@ -599,7 +656,11 @@ func mutateCmd(name string, args []string, out, errOut io.Writer, extra func(*op
 	if cfg == nil {
 		return code
 	}
-	st, code := openWriter(context.Background(), cfg, errOut)
+	req := request(id)
+	st, resp, code := openOrRoute(context.Background(), cfg, errOut, &req)
+	if resp != nil {
+		return reportRouted(out, errOut, resp, fmt.Sprintf("finding %d updated", id))
+	}
 	if st == nil {
 		return code
 	}
@@ -617,30 +678,32 @@ func mutateCmd(name string, args []string, out, errOut io.Writer, extra func(*op
 }
 
 func cmdAck(args []string, out, errOut io.Writer) int {
-	return mutateCmd("ack", args, out, errOut, func(*opts) func(*app.Service, int64) error {
+	return mutateCmd("ack", args, out, errOut, func(*opts) (func(*app.Service, int64) error, func(int64) control.Request) {
 		return func(s *app.Service, id int64) error {
 			_, err := s.Acknowledge(context.Background(), id, app.ActorCLI)
 			return err
-		}
+		}, func(id int64) control.Request { return control.Request{Op: "ack", ID: id} }
 	})
 }
 
 func cmdReopen(args []string, out, errOut io.Writer) int {
-	return mutateCmd("reopen", args, out, errOut, func(*opts) func(*app.Service, int64) error {
+	return mutateCmd("reopen", args, out, errOut, func(*opts) (func(*app.Service, int64) error, func(int64) control.Request) {
 		return func(s *app.Service, id int64) error {
 			_, err := s.Reopen(context.Background(), id, app.ActorCLI)
 			return err
-		}
+		}, func(id int64) control.Request { return control.Request{Op: "reopen", ID: id} }
 	})
 }
 
 func cmdSnooze(args []string, out, errOut io.Writer) int {
-	return mutateCmd("snooze", args, out, errOut, func(o *opts) func(*app.Service, int64) error {
+	return mutateCmd("snooze", args, out, errOut, func(o *opts) (func(*app.Service, int64) error, func(int64) control.Request) {
 		d := o.fs.Duration("for", 24*time.Hour, "snooze duration (1h to 2160h)")
 		return func(s *app.Service, id int64) error {
-			_, err := s.Snooze(context.Background(), id, *d, app.ActorCLI)
-			return err
-		}
+				_, err := s.Snooze(context.Background(), id, *d, app.ActorCLI)
+				return err
+			}, func(id int64) control.Request {
+				return control.Request{Op: "snooze", ID: id, Duration: *d}
+			}
 	})
 }
 
@@ -698,4 +761,85 @@ func cmdConfig(args []string, out, errOut io.Writer) int {
 		return exitUsage
 	}
 	return exitOK
+}
+
+// logWriteFailure reports a write-phase failure truthfully: whether a
+// request may already have taken effect, and that no further acquisition
+// is started until reconciliation succeeds.
+func logWriteFailure(log *slog.Logger, phase string, err error) {
+	if action.MaybeSent(err) {
+		log.Error(phase+" stopped: a request was sent but its outcome could not be recorded; it will be settled by observation and never re-sent; "+
+			"no further acquisition is started until the journal is reconciled", "err", err)
+		return
+	}
+	log.Error(phase+" stopped before sending anything further; no further acquisition is started until the journal is reconciled", "err", err)
+}
+
+// passLogger keeps the worker's log proportional to change: one summary
+// per pass, each evaluation at Info only when an action was taken or its
+// result changed since the previous pass (Debug otherwise), and breakers
+// when they open or close. Actions, errors and their records are never
+// suppressed.
+type passLogger struct {
+	log      *slog.Logger
+	results  map[int64]string
+	breakers map[string]bool
+}
+
+func newPassLogger(log *slog.Logger) *passLogger {
+	return &passLogger{log: log, results: map[int64]string{}, breakers: map[string]bool{}}
+}
+
+func (p *passLogger) recovery(pr app.PassReport) {
+	r := pr.Recovery
+	counts := map[string]int{}
+	results := make(map[int64]string, len(r.Evaluations))
+	changed := 0
+	for _, e := range r.Evaluations {
+		counts[e.Result]++
+		results[e.FindingID] = e.Result
+		level := slog.LevelDebug
+		if e.Result == store.EvalDispatched || p.results[e.FindingID] != e.Result {
+			level = slog.LevelInfo
+			changed++
+		}
+		p.log.Log(context.Background(), level, "automatic evaluation", "finding", e.FindingID, "result", e.Result, "action", e.IntentID, "detail", e.Detail)
+	}
+	p.results = results
+	switch {
+	case pr.RecoveryErr != nil:
+		logWriteFailure(p.log, "automatic dispatch", pr.RecoveryErr)
+	case r.Skipped != "":
+		p.log.Debug("automatic dispatch skipped", "reason", r.Skipped)
+	default:
+		open := make(map[string]bool, len(r.Breakers))
+		for scope, why := range r.Breakers {
+			open[scope] = true
+			if !p.breakers[scope] {
+				p.log.Warn("automation held", "scope", scope, "reason", why)
+			} else {
+				p.log.Debug("automation still held", "scope", scope, "reason", why)
+			}
+		}
+		for scope := range p.breakers {
+			if !open[scope] {
+				p.log.Info("automation hold lifted", "scope", scope)
+			}
+		}
+		p.breakers = open
+	}
+	if len(r.Evaluations) > 0 {
+		level := slog.LevelDebug
+		if changed > 0 {
+			level = slog.LevelInfo
+		}
+		args := []any{"evaluated", len(r.Evaluations), "changed", changed}
+		for _, k := range []string{store.EvalDispatched, store.EvalRefused, store.EvalHeld, store.EvalDeferred, store.EvalWaiting,
+			store.EvalNotPermitted, store.EvalAtCeiling, store.EvalNeedsReview, store.EvalIneligible} {
+			if counts[k] > 0 {
+				args = append(args, k, counts[k])
+			}
+		}
+		p.log.Log(context.Background(), level, "automatic pass", args...)
+	}
 }

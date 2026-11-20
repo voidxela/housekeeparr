@@ -18,7 +18,7 @@ import (
 	"github.com/voidxela/housekeeparr/internal/store"
 )
 
-var pageNames = []string{"overview", "attention", "finding", "downloads", "download", "activity", "connections", "error"}
+var pageNames = []string{"overview", "attention", "finding", "downloads", "download", "activity", "sources", "coverage", "connections", "error"}
 
 func (s *Server) funcs() template.FuncMap {
 	now := s.svc.Now
@@ -128,6 +128,13 @@ func (s *Server) funcs() template.FuncMap {
 		"join":        strings.Join,
 		"sevcount":    func(m map[domain.Severity]int, s string) int { return m[domain.Severity(s)] },
 		"add":         func(a, b int) int { return a + b },
+		"sub":         func(a, b int) int { return a - b },
+		"get":         func(m map[string]int, k string) int { return m[k] },
+		"gapLabel":    app.GapLabel,
+		"gapStates":   func() []string { return app.GapStates },
+		"pct1":        func(f float64) string { return strconv.FormatFloat(f, 'f', 1, 64) + "%" },
+		"pctf":        func(f float64) string { return strconv.FormatFloat(f*100, 'f', 0, 64) + "%" },
+		"human":       policy.HumanDuration,
 		"title": func(s string) string {
 			if s == "" {
 				return s
@@ -177,7 +184,7 @@ type layoutData struct {
 	Notice    string
 	CSRF      string
 	Authed    bool
-	Mode      string
+	Mode      app.ModeStatus
 	Now       time.Time
 	Page      any
 }
@@ -190,11 +197,9 @@ func (s *Server) page(fn pageFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name, title, data, err := fn(r)
 		ld := layoutData{Title: title, Nav: name, Demo: s.svc.Origin() == store.OriginDemo, CSRF: s.csrfToken(r), Authed: s.auth != nil,
-			Mode: string(s.svc.Config().Mode), Now: s.svc.Now(), Page: data, Notice: r.URL.Query().Get("notice")}
-		if c, cerr := s.svc.Overview(r.Context()); cerr == nil {
-			ld.Attention = c.Counts.Open + c.Counts.Acknowledged
-			ld.Worker = &c.Worker
-			ld.Warnings = c.Warnings
+			Mode: s.svc.Mode(), Now: s.svc.Now(), Page: data, Notice: s.noticeFor(r.URL.Query().Get("notice"))}
+		if c, cerr := s.svc.Layout(r.Context()); cerr == nil {
+			ld.Attention, ld.Worker, ld.Warnings = c.Attention, c.Worker, c.Warnings
 		}
 		status := http.StatusOK
 		if err != nil {
@@ -307,6 +312,26 @@ func (s *Server) activity(r *http.Request) (string, string, any, error) {
 		return "", "", nil, err
 	}
 	return "activity", "Activity", a, nil
+}
+
+func (s *Server) sources(r *http.Request) (string, string, any, error) {
+	sc, err := s.svc.Scorecard(r.Context(), false)
+	if err != nil {
+		return "", "", nil, err
+	}
+	return "sources", "Sources", sc, nil
+}
+
+func (s *Server) coverage(r *http.Request) (string, string, any, error) {
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	if offset < 0 {
+		offset = 0
+	}
+	cv, err := s.svc.Coverage(r.Context(), r.URL.Query().Get("manager"), offset, 100)
+	if err != nil {
+		return "", "", nil, err
+	}
+	return "coverage", "Coverage", cv, nil
 }
 
 func (s *Server) connections(r *http.Request) (string, string, any, error) {

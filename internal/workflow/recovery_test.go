@@ -314,3 +314,32 @@ func TestLiveReadsEveryDecisionInput(t *testing.T) {
 		t.Fatalf("progress before stop: %v", bad)
 	}
 }
+
+// A multi-episode release has one queue row per episode for the same
+// download (observed on Sonarr 4.0.20). The step holds only when every row
+// is gone; before, more than one row was an error.
+func TestObserveQueueFailMultiEpisode(t *testing.T) {
+	ctx := context.Background()
+	req := `{"removeFromClient":false,"blocklist":true,"skipRedownload":false,"changeCategory":false}`
+	target := `{"manager_id":"sonarr","queue_id":7,"download_id":"aa","title":"Show.S03E01E02","series_id":3,"episode_id":9,"episode_ids":[9,10]}`
+	rows := []domain.QueueItem{{DownloadID: "AA", QueueID: 7, EpisodeID: 9}, {DownloadID: "aa", QueueID: 8, EpisodeID: 10}}
+	for _, c := range []struct {
+		name string
+		m    fakeManager
+		want action.Verdict
+	}{
+		{"whole download failed", fakeManager{blockIDs: []int64{6}, history: hist(12, "downloadFailed", 11, "downloadFailed", 10, "grabbed")}, action.Holds},
+		{"both rows still tracked", fakeManager{rows: rows, history: hist(10, "grabbed")}, action.NotHolds},
+		{"one row left", fakeManager{rows: rows[1:], blockIDs: []int64{6}, history: hist(11, "downloadFailed", 10, "grabbed")}, action.Unknown},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			m := c.m
+			st := step("manager.queue.fail", target, req)
+			st.Baseline = json.RawMessage(`{"blocklist_ids":[],"history_ids":[10]}`)
+			obs, err := rec(&m, &fakeClient{}).Observe(ctx, st)
+			if err != nil || obs.Verdict != c.want {
+				t.Fatalf("%+v %v", obs, err)
+			}
+		})
+	}
+}

@@ -174,3 +174,29 @@ func TestConnectedPeersLiftTheHold(t *testing.T) {
 		t.Fatalf("stops %v: %+v", s, d.Automation)
 	}
 }
+
+// The last pass's holds, with their evidence time and next probe, are
+// available to the overview and status between passes.
+func TestOverviewShowsLastPassHolds(t *testing.T) {
+	w := newWorld(t, "automatic", 20)
+	w.unmanagedStalls(hashB, hashC)
+	w.stalled(hashA, 1, 1)
+	w.stalled(hashD, 2, 2)
+	w.run(150 * time.Minute)
+	o, err := w.svc.Overview(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.Holds == nil || !o.Holds.EvaluatedAt.Equal(w.clock.Now()) {
+		t.Fatalf("holds %+v", o.Holds)
+	}
+	var found bool
+	for _, h := range o.Holds.Holds {
+		if h.Scope == "client:qbit" && h.Correlated && h.Probing && h.NextProbe != nil && strings.Contains(h.Reason, "stalled together") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("correlated hold with next probe missing: %+v", o.Holds.Holds)
+	}
+}

@@ -50,6 +50,13 @@ func TestSourceFailureClassification(t *testing.T) {
 			wantValue:     domain.SourceUnregistered,
 		},
 		{
+			name:          "client version refused",
+			state:         "Downloading",
+			trackerStatus: strPtr("Error: blacklisted client, update or change client"),
+			wantStatus:    domain.Known,
+			wantValue:     domain.SourceClientRejected,
+		},
+		{
 			name:          "torrent not registered with this tracker",
 			state:         "Downloading",
 			trackerStatus: strPtr("Error: torrent not registered with this tracker"),

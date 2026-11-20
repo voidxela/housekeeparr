@@ -154,7 +154,9 @@ func (r *Recovery) transfer(ctx context.Context, clientID, nativeID string) (dom
 	return domain.Transfer{}, false, nil
 }
 
-func (r *Recovery) queueRow(ctx context.Context, managerID, downloadID string) (*domain.QueueItem, error) {
+// queueRows returns the manager's queue rows for a download: one, or one
+// per episode for a multi-episode release.
+func (r *Recovery) queueRows(ctx context.Context, managerID, downloadID string) ([]domain.QueueItem, error) {
 	m, ok := r.Managers[managerID]
 	if !ok {
 		return nil, fmt.Errorf("manager %q has no recovery support", managerID)
@@ -166,13 +168,10 @@ func (r *Recovery) queueRow(ctx context.Context, managerID, downloadID string) (
 	if !q.Complete {
 		return nil, fmt.Errorf("manager %s queue listing is incomplete: %v", managerID, q.Limitations)
 	}
-	var found *domain.QueueItem
+	var found []domain.QueueItem
 	for i := range q.Items {
 		if strings.EqualFold(q.Items[i].DownloadID, downloadID) {
-			if found != nil {
-				return nil, fmt.Errorf("more than one %s queue row for %s", managerID, downloadID)
-			}
-			found = &q.Items[i]
+			found = append(found, q.Items[i])
 		}
 	}
 	return found, nil
@@ -457,14 +456,17 @@ func (r *Recovery) Observe(ctx context.Context, st store.Step) (action.Observati
 			}
 		}
 		return r.wait(ctx, func() (action.Observation, error) {
-			row, err := r.queueRow(ctx, tg.ManagerID, tg.DownloadID)
+			rows, err := r.queueRows(ctx, tg.ManagerID, tg.DownloadID)
 			if err != nil {
 				return action.Observation{}, err
 			}
+			// Every row for the download must be gone: the manager fails a
+			// multi-episode release as a whole.
+			present := len(rows) > 0
 			if base == nil {
 				// Without a baseline an existing entry or record cannot be
 				// told apart from this step's effect.
-				ev, _ := json.Marshal(map[string]any{"queue_row_present": row != nil})
+				ev, _ := json.Marshal(map[string]any{"queue_row_present": present})
 				return action.Observation{Verdict: action.Unknown, Evidence: ev,
 					Detail: "no pre-dispatch baseline, so blocklist and history evidence cannot be attributed to this request"}, nil
 			}
@@ -489,16 +491,16 @@ func (r *Recovery) Observe(ctx context.Context, st store.Step) (action.Observati
 				}
 			}
 			bl := len(newBlock) > 0
-			ev, _ := json.Marshal(map[string]any{"queue_row_present": row != nil, "new_blocklist_ids": newBlock, "new_history": newEvents,
+			ev, _ := json.Marshal(map[string]any{"queue_row_present": present, "queue_rows_present": len(rows), "new_blocklist_ids": newBlock, "new_history": newEvents,
 				"baseline": base, "matching": "byte-exact release title and content; title evidence, not infohash identity"})
 			switch {
-			case row == nil && recorded && (bl || !blocklist):
+			case !present && recorded && (bl || !blocklist):
 				return action.Observation{Verdict: action.Holds, Evidence: ev}, nil
-			case row != nil && !recorded && !bl:
-				return action.Observation{Verdict: action.NotHolds, Evidence: ev, Detail: "the queue row is still tracked and nothing new was recorded"}, nil
+			case present && !recorded && !bl:
+				return action.Observation{Verdict: action.NotHolds, Evidence: ev, Detail: fmt.Sprintf("%d queue row(s) for the download are still tracked and nothing new was recorded", len(rows))}, nil
 			default:
 				return action.Observation{Verdict: action.Unknown, Evidence: ev,
-					Detail: fmt.Sprintf("partial effect: row present=%v, new %s recorded=%v, new blocklist entries=%d", row != nil, event, recorded, len(newBlock))}, nil
+					Detail: fmt.Sprintf("partial effect: %d queue row(s) still present, new %s recorded=%v, new blocklist entries=%d", len(rows), event, recorded, len(newBlock))}, nil
 			}
 		})
 	case "client.stop":

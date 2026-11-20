@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"hash/fnv"
 	"strconv"
 	"strings"
@@ -163,6 +164,11 @@ func (t *Tx) SaveTransferSnapshot(snap domain.TransferSnapshot, runID string, mo
 	// storedForm), so the latest listing's count of complete transfers in
 	// contact with a swarm is kept per client instead: it shows the client
 	// and its network work (the correlated-stall hold uses it).
+	// Only a complete listing is evidence about every transfer: a partial
+	// one leaves the previous count, with its observation time, unchanged.
+	if !snap.Complete {
+		return nil, nil
+	}
 	contact := 0
 	for _, tr := range snap.Transfers {
 		if tr.StateClass == domain.StateComplete && inContact(tr) {
@@ -170,11 +176,8 @@ func (t *Tx) SaveTransferSnapshot(snap domain.TransferSnapshot, runID string, mo
 		}
 	}
 	if _, err := t.exec("INSERT INTO meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-		"complete_contact:"+snap.ClientID, strconv.Itoa(contact)); err != nil {
+		"complete_contact:"+snap.ClientID, fmt.Sprintf("%d@%d", contact, ms(snap.CollectedAt))); err != nil {
 		return nil, err
-	}
-	if !snap.Complete {
-		return nil, nil
 	}
 	rows, err := t.query("SELECT native_id, name FROM transfers WHERE client_id=? AND present=1", snap.ClientID)
 	if err != nil {
@@ -488,23 +491,49 @@ func inContact(tr domain.Transfer) bool {
 	return peers > 0 || seeds > 0 || rate > 0
 }
 
+// ContactRecord is a client's count of complete transfers in contact with
+// their swarm in its latest complete listing, and when that was observed
+// (zero for counts recorded before the time was kept).
+type ContactRecord struct {
+	Count int
+	At    time.Time
+}
+
 // CompleteContact returns, per client, how many complete transfers were in
 // contact with their swarm (connected peers or seeds, or a rate) in that
-// client's latest stored listing.
+// client's latest complete listing.
 func (s *Store) CompleteContact(ctx context.Context) (map[string]int, error) {
+	recs, err := s.CompleteContactRecords(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]int, len(recs))
+	for k, r := range recs {
+		out[k] = r.Count
+	}
+	return out, nil
+}
+
+// CompleteContactRecords is CompleteContact with observation times.
+func (s *Store) CompleteContactRecords(ctx context.Context) (map[string]ContactRecord, error) {
 	rows, err := s.r.QueryContext(ctx, "SELECT key, value FROM meta WHERE key LIKE 'complete_contact:%'")
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := map[string]int{}
+	out := map[string]ContactRecord{}
 	for rows.Next() {
 		var k, v string
 		if err := rows.Scan(&k, &v); err != nil {
 			return nil, err
 		}
-		n, _ := strconv.Atoi(v)
-		out[strings.TrimPrefix(k, "complete_contact:")] = n
+		n, at, _ := strings.Cut(v, "@")
+		var r ContactRecord
+		r.Count, _ = strconv.Atoi(n)
+		if m, err := strconv.ParseInt(at, 10, 64); err == nil {
+			r.At = fromMS(m)
+		}
+		out[strings.TrimPrefix(k, "complete_contact:")] = r
 	}
 	return out, rows.Err()
 }

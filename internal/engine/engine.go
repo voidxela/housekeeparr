@@ -74,9 +74,13 @@ type Engine struct {
 	probes map[string]probeState
 	// missingRead is when each manager's missing list was last read.
 	missingRead map[string]time.Time
-	last        *CycleReport
-	storeErr    error
-	started     time.Time
+	historyRead map[string]time.Time
+	// payloads holds the classified file lists of settled import
+	// candidates, by client and transfer (see readPayloads).
+	payloads map[string]payloadRecord
+	last     *CycleReport
+	storeErr error
+	started  time.Time
 }
 
 type probeState struct {
@@ -120,7 +124,7 @@ func New(ctx context.Context, o Options) (*Engine, error) {
 	buf := make([]byte, 6)
 	_, _ = rand.Read(buf)
 	e := &Engine{cfg: o.Config, st: o.Store, conns: o.Conns, clock: o.Clock, log: o.Logger,
-		runID: hex.EncodeToString(buf), kind: o.RunKind, version: o.Version, probes: map[string]probeState{}}
+		runID: hex.EncodeToString(buf), kind: o.RunKind, version: o.Version, probes: map[string]probeState{}, payloads: map[string]payloadRecord{}}
 	e.started = e.clock.Now()
 	if err := e.startRun(ctx); err != nil {
 		return nil, err

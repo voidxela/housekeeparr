@@ -59,6 +59,15 @@ func (b BudgetClaim) Returns() bool { return b.Kind == store.BudgetPacing || b.W
 // window need review.
 func BudgetCheck(b BudgetClaim, u store.BudgetUsage) Check {
 	c := Check{Name: b.Label, Satisfied: u.Fits(b.Units), Hard: true}
+	if !c.Satisfied {
+		c.Code = CodePacing
+		if b.Kind == store.BudgetAttempts {
+			c.Code = CodeAttempts
+		}
+		if b.Returns() {
+			c.Until = u.NextAt
+		}
+	}
 	switch b.Kind {
 	case store.BudgetPacing:
 		c.Detail = fmt.Sprintf("%d of %d used in the last %s (limit from %s)", u.Used, u.Limit, policy.HumanDuration(b.Window), b.From)

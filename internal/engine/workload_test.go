@@ -95,6 +95,7 @@ url = "http://127.0.0.1:8081"
 		t.Fatal(err)
 	}
 	var total, worst time.Duration
+	stmts0 := st.Statements()
 	cycles := 144
 	if n, err := strconv.Atoi(os.Getenv("HK_WORKLOAD_CYCLES")); err == nil && n > 0 {
 		cycles = n
@@ -131,6 +132,7 @@ url = "http://127.0.0.1:8081"
 	t.Logf("reference workload: 4,000 transfers (200 incomplete), 300 queue rows, %d cycles", cycles)
 	t.Logf("cycle time: mean %s, worst %s (fake adapters; excludes network)", (total / time.Duration(cycles)).Round(time.Millisecond), worst.Round(time.Millisecond))
 	t.Logf("state after one simulated day: %.1f MiB (db + wal)", float64(dbBytes)/(1<<20))
+	t.Logf("write statements: %.0f per cycle", float64(st.Statements()-stmts0)/float64(cycles))
 	t.Logf("heap after GC: %.1f MiB in use, %.1f MiB obtained from OS", float64(ms.HeapInuse)/(1<<20), float64(ms.Sys)/(1<<20))
 	t.Logf("open findings: %d (expected 120 stalls)", len(fs))
 	if len(fs) != 120 {

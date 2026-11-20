@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -67,6 +69,32 @@ type RecoveryOutcome struct {
 	CheckedAt    time.Time     `json:"checked_at"`
 	Note         string        `json:"note,omitempty"`
 	Search       SearchOutcome `json:"search"`
+	// PerContent follows each content item separately when the recovery
+	// covered several (schema 24); empty otherwise.
+	PerContent []ContentOutcome `json:"per_content,omitempty"`
+}
+
+// ContentOutcome is one content item's replacement within a recovery that
+// covered several: its own grab, progress and completion.
+type ContentOutcome struct {
+	Content       string     `json:"content"`
+	State         string     `json:"state"`
+	GrabbedAt     *time.Time `json:"grabbed_at,omitempty"`
+	NewDownloadID string     `json:"new_download_id,omitempty"`
+	NewClientID   string     `json:"new_client_id,omitempty"`
+	NewNativeID   string     `json:"new_native_id,omitempty"`
+	GrabVerified  *int64     `json:"grab_verified,omitempty"`
+	ProgressAt    *time.Time `json:"progress_at,omitempty"`
+	CompletedAt   *time.Time `json:"completed_at,omitempty"`
+	Note          string     `json:"note,omitempty"`
+}
+
+func perContentJSON(cs []ContentOutcome) string {
+	if len(cs) == 0 {
+		return ""
+	}
+	b, _ := json.Marshal(cs)
+	return string(b)
 }
 
 // SearchOutcome is what was observed of the replacement search: a search
@@ -96,9 +124,16 @@ func ptrTime(t *time.Time) sql.NullInt64 {
 // CreateOutcome starts tracking a recovery's replacement; it is a no-op if
 // the intent is already tracked.
 func (t *Tx) CreateOutcome(o RecoveryOutcome) error {
+	var per []ContentOutcome
+	if len(o.Content) > 1 {
+		for _, c := range o.Content {
+			per = append(per, ContentOutcome{Content: c, State: OutcomeAwaitingGrab})
+		}
+	}
 	_, err := t.exec(`INSERT OR IGNORE INTO recovery_outcomes(intent_id, manager_id, content, old_download_id, old_client_id, started_at, state, checked_at,
-		search_state, search_since, search_after_id) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, o.IntentID, o.ManagerID, strings.Join(o.Content, ","),
-		o.OldDownloadID, o.OldClientID, ms(o.StartedAt), OutcomeAwaitingGrab, ms(o.StartedAt), SearchUnobserved, ptrTime(o.Search.Since), nullInt(o.Search.AfterID))
+		search_state, search_since, search_after_id, content_outcomes) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, o.IntentID, o.ManagerID, strings.Join(o.Content, ","),
+		o.OldDownloadID, o.OldClientID, ms(o.StartedAt), OutcomeAwaitingGrab, ms(o.StartedAt), SearchUnobserved, ptrTime(o.Search.Since), nullInt(o.Search.AfterID),
+		perContentJSON(per))
 	return err
 }
 
@@ -106,10 +141,10 @@ func (t *Tx) CreateOutcome(o RecoveryOutcome) error {
 func (t *Tx) SaveOutcome(o RecoveryOutcome) error {
 	_, err := t.exec(`UPDATE recovery_outcomes SET state=?, grabbed_at=?, new_download_id=?, new_client_id=?, new_native_id=?, grab_verified=?,
 		progress_at=?, completed_at=?, checked_at=?, note=?, search_state=?, search_since=?, search_command_id=?, search_name=?, search_queued_at=?,
-		search_ended_at=?, search_checked_at=?, search_note=? WHERE intent_id=?`, o.State, ptrTime(o.GrabbedAt), nullStr(o.NewDownloadID),
+		search_ended_at=?, search_checked_at=?, search_note=?, content_outcomes=? WHERE intent_id=?`, o.State, ptrTime(o.GrabbedAt), nullStr(o.NewDownloadID),
 		nullStr(o.NewClientID), nullStr(o.NewNativeID), nullInt(o.GrabVerified), ptrTime(o.ProgressAt), ptrTime(o.CompletedAt), ms(o.CheckedAt),
 		o.Note, o.Search.State, ptrTime(o.Search.Since), nullInt(o.Search.CommandID), o.Search.Name, ptrTime(o.Search.QueuedAt),
-		ptrTime(o.Search.EndedAt), ptrTime(o.Search.CheckedAt), o.Search.Note, o.IntentID)
+		ptrTime(o.Search.EndedAt), ptrTime(o.Search.CheckedAt), o.Search.Note, perContentJSON(o.PerContent), o.IntentID)
 	return err
 }
 
@@ -125,19 +160,19 @@ func (t *Tx) SaveSearchOutcome(intentID int64, so SearchOutcome) error {
 
 const outcomeCols = `intent_id, manager_id, content, old_download_id, old_client_id, started_at, state, grabbed_at, COALESCE(new_download_id, ''),
 	COALESCE(new_client_id, ''), COALESCE(new_native_id, ''), grab_verified, progress_at, completed_at, checked_at, note,
-	search_state, search_since, search_command_id, search_name, search_queued_at, search_ended_at, search_checked_at, search_note, search_after_id`
+	search_state, search_since, search_command_id, search_name, search_queued_at, search_ended_at, search_checked_at, search_note, search_after_id, content_outcomes`
 
 func scanOutcomes(rows *sql.Rows) ([]RecoveryOutcome, error) {
 	defer rows.Close()
 	var out []RecoveryOutcome
 	for rows.Next() {
 		var o RecoveryOutcome
-		var content string
+		var content, per string
 		var started, checked int64
 		var grabbed, gv, prog, done, sSince, sCmd, sQueued, sEnded, sChecked, sAfter sql.NullInt64
 		if err := rows.Scan(&o.IntentID, &o.ManagerID, &content, &o.OldDownloadID, &o.OldClientID, &started, &o.State, &grabbed, &o.NewDownloadID,
 			&o.NewClientID, &o.NewNativeID, &gv, &prog, &done, &checked, &o.Note,
-			&o.Search.State, &sSince, &sCmd, &o.Search.Name, &sQueued, &sEnded, &sChecked, &o.Search.Note, &sAfter); err != nil {
+			&o.Search.State, &sSince, &sCmd, &o.Search.Name, &sQueued, &sEnded, &sChecked, &o.Search.Note, &sAfter, &per); err != nil {
 			return nil, err
 		}
 		o.Search.Since, o.Search.QueuedAt, o.Search.EndedAt, o.Search.CheckedAt = ptrMS(sSince), ptrMS(sQueued), ptrMS(sEnded), ptrMS(sChecked)
@@ -149,6 +184,11 @@ func scanOutcomes(rows *sql.Rows) ([]RecoveryOutcome, error) {
 		}
 		if content != "" {
 			o.Content = strings.Split(content, ",")
+		}
+		if per != "" {
+			if err := json.Unmarshal([]byte(per), &o.PerContent); err != nil {
+				return nil, fmt.Errorf("outcome %d per-content record: %w", o.IntentID, err)
+			}
 		}
 		o.StartedAt, o.CheckedAt = fromMS(started), fromMS(checked)
 		o.GrabbedAt, o.ProgressAt, o.CompletedAt = ptrMS(grabbed), ptrMS(prog), ptrMS(done)
@@ -242,4 +282,13 @@ func (s *Store) Outcomes(ctx context.Context, ids []int64) (map[int64]RecoveryOu
 		out[o.IntentID] = o
 	}
 	return out, err
+}
+
+// RecentOutcomes returns the recovery outcomes started at or after since.
+func (s *Store) RecentOutcomes(ctx context.Context, since time.Time) ([]RecoveryOutcome, error) {
+	rows, err := s.r.QueryContext(ctx, "SELECT "+outcomeCols+" FROM recovery_outcomes WHERE started_at >= ? ORDER BY started_at", ms(since))
+	if err != nil {
+		return nil, err
+	}
+	return scanOutcomes(rows)
 }

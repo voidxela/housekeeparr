@@ -57,6 +57,7 @@ func (e *Engine) Cycle(ctx context.Context, next *time.Time) CycleReport {
 	if err != nil {
 		return fail(err)
 	}
+	e.readPayloads(ctx, results, eff.Settings.ImportSettle, e.clock.Now())
 	queueWall, queueMono := e.clock.Now(), e.clock.MonoMS()
 	wallElapsed := queueWall.Round(0).Sub(e.queueWall.Round(0))
 	monoElapsed := time.Duration(queueMono-e.queueMono) * time.Millisecond
@@ -81,7 +82,8 @@ func (e *Engine) Cycle(ctx context.Context, next *time.Time) CycleReport {
 		}
 		ret := e.cfg.Retention
 		if _, err := tx.Prune(now, store.Retention{Observations: ret.Observations.Duration, ConnectionChecks: ret.ConnectionChecks.Duration,
-			ResolvedFindings: ret.ResolvedFindings.Duration, AuditEvents: ret.AuditEvents.Duration}); err != nil {
+			ResolvedFindings: ret.ResolvedFindings.Duration, AuditEvents: ret.AuditEvents.Duration,
+			ContentAttemptWindow: e.cfg.Limits().ContentAttemptWindow}); err != nil {
 			return err
 		}
 		return tx.CycleFinished(e.runID, now, next)
@@ -93,6 +95,8 @@ func (e *Engine) Cycle(ctx context.Context, next *time.Time) CycleReport {
 	e.setStoreErr(nil)
 	e.readMissing(ctx, results)
 	e.readSources(ctx, results)
+	e.readHistory(ctx, results)
+	e.sweepCoverage(ctx, results)
 	for _, f := range results {
 		cr := ConnResult{ID: f.id, Kind: f.kind, Skipped: f.skipped, OK: f.err == nil && f.skipped == "", Duration: f.duration,
 			Complete: (f.transfer == nil || f.transfer.Complete) && (f.queue == nil || f.queue.Complete)}
@@ -303,13 +307,26 @@ func (e *Engine) persist(tx *store.Tx, results []*fetched, now time.Time, maxGap
 			// Sizes of transfers still retained follow the listing: one
 			// left running, or resumed by the operator, may obtain metadata
 			// or download more (SPEC §7.1).
+			// The client's active retained set is read once; only its
+			// members whose listed sizes changed are written.
+			retained, err := tx.ActiveRetained(f.transfer.ClientID)
+			if err != nil {
+				return nil, nil, err
+			}
 			for _, t := range f.transfer.Transfers {
+				rec, ok := retained[t.NativeID]
+				if !ok {
+					continue
+				}
 				var wanted, verified *int64
 				if v, ok := t.WantedBytes.Get(); ok {
 					wanted = &v
 				}
 				if v, ok := t.VerifiedBytes.Get(); ok {
 					verified = &v
+				}
+				if !rec.Changes(wanted, verified) {
+					continue
 				}
 				if err := tx.RefreshRetained(t.ClientID, t.NativeID, wanted, verified); err != nil {
 					return nil, nil, err

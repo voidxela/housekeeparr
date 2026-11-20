@@ -26,6 +26,7 @@ type fakeQBit struct {
 	torrents      []byte
 	trackers      map[string][]byte // hash -> JSON array; defaults to []
 	trackerStatus map[string]int    // optional per-hash HTTP status override
+	files         map[string][]byte // hash -> /torrents/files JSON
 	user          string
 	pass          string
 	logins        atomic.Int32
@@ -72,6 +73,15 @@ func (f *fakeQBit) handler() http.Handler {
 	mux.HandleFunc("/api/v2/torrents/info", auth(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(f.torrents)
+	}))
+	mux.HandleFunc("/api/v2/torrents/files", auth(func(w http.ResponseWriter, r *http.Request) {
+		body, ok := f.files[r.URL.Query().Get("hash")]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
 	}))
 	mux.HandleFunc("/api/v2/torrents/trackers", auth(func(w http.ResponseWriter, r *http.Request) {
 		f.trackerReqs.Add(1)

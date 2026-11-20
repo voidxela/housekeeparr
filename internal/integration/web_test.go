@@ -36,7 +36,7 @@ import (
 //   - direct TLS: `listen` on a non-loopback address with tls_cert/tls_key;
 //   - trusted proxy: a TLS-terminating reverse proxy in front of a plain
 //     listener with trusted_proxy = true. The proxy must pass the original
-//     Host header (nginx: `proxy_set_header Host $host`); a proxy that
+//     Host header with its port (nginx: `proxy_set_header Host $http_host`); a proxy that
 //     rewrites it to the upstream address is shown to be refused, with an
 //     explanation.
 //

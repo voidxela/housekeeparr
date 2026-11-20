@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/voidxela/housekeeparr/internal/adapter"
+	"github.com/voidxela/housekeeparr/internal/adapter/arr"
 	"github.com/voidxela/housekeeparr/internal/domain"
 )
 
@@ -63,6 +64,8 @@ type Client struct {
 	probe     adapter.Probe
 	lists     int
 	stops     []string
+	files     map[string][]domain.TransferFile
+	fileReads int
 }
 
 // NewClient creates a fake qBittorrent-kind client.
@@ -150,6 +153,31 @@ func (c *Client) Partial(p bool) { c.mu.Lock(); c.partial = p; c.mu.Unlock() }
 // Lists returns how many listings were requested.
 func (c *Client) Lists() int { c.mu.Lock(); defer c.mu.Unlock(); return c.lists }
 
+// SetFiles sets a transfer's file list.
+func (c *Client) SetFiles(id string, fs ...domain.TransferFile) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.files == nil {
+		c.files = map[string][]domain.TransferFile{}
+	}
+	c.files[id] = fs
+}
+
+// Files lists a transfer's files (adapter.FileLister).
+func (c *Client) Files(_ context.Context, id string) ([]domain.TransferFile, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.fileReads++
+	fs, ok := c.files[id]
+	if !ok {
+		return nil, &adapter.Error{Class: adapter.ErrPermanent, Op: "fake.files", Message: "unknown transfer"}
+	}
+	return fs, nil
+}
+
+// FileReads counts Files calls.
+func (c *Client) FileReads() int { c.mu.Lock(); defer c.mu.Unlock(); return c.fileReads }
+
 // Manager is a scriptable media manager.
 type Manager struct {
 	mu        sync.Mutex
@@ -163,6 +191,54 @@ type Manager struct {
 	reads     int
 	w         managerWrites
 	ms        missingState
+	feed      []arr.HistoryRecord // AddHistory records
+	cov       coverageState
+}
+
+type coverageState struct {
+	groups    []domain.CoverageGroup
+	items     map[int64][]domain.CoverageItem
+	groupErr  error
+	itemErr   error
+	itemReads int
+}
+
+// SetCoverage sets the coverage groups and their items.
+func (m *Manager) SetCoverage(groups []domain.CoverageGroup, items map[int64][]domain.CoverageItem) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.cov.groups, m.cov.items = groups, items
+}
+
+// FailCoverage makes group-list or item reads fail.
+func (m *Manager) FailCoverage(groupErr, itemErr error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.cov.groupErr, m.cov.itemErr = groupErr, itemErr
+}
+
+// CoverageItemReads counts CoverageItems calls.
+func (m *Manager) CoverageItemReads() int { m.mu.Lock(); defer m.mu.Unlock(); return m.cov.itemReads }
+
+// CoverageGroups lists the coverage groups (engine.CoverageReader).
+func (m *Manager) CoverageGroups(context.Context) ([]domain.CoverageGroup, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.cov.groupErr != nil {
+		return nil, m.cov.groupErr
+	}
+	return append([]domain.CoverageGroup(nil), m.cov.groups...), nil
+}
+
+// CoverageItems lists one group's items (engine.CoverageReader).
+func (m *Manager) CoverageItems(_ context.Context, g domain.CoverageGroup, _ time.Time) ([]domain.CoverageItem, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.cov.itemReads++
+	if m.cov.itemErr != nil {
+		return nil, m.cov.itemErr
+	}
+	return append([]domain.CoverageItem(nil), m.cov.items[g.ID]...), nil
 }
 
 // NewManager creates a fake Sonarr-kind manager.

@@ -22,6 +22,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/voidxela/housekeeparr/internal/action"
@@ -54,6 +55,19 @@ type Options struct {
 	ReadHeaderTimeout, ReadTimeout, WriteTimeout, IdleTimeout time.Duration
 }
 
+// OptionsFromConfig builds the server options for a configured [web]
+// section; password is the resolved web.password secret ("" for none).
+func OptionsFromConfig(c config.WebConfig, password string, log *slog.Logger) Options {
+	o := Options{Listen: c.Listen, Logger: log, AllowedHosts: c.AllowedHosts, TLSCert: c.TLSCert, TLSKey: c.TLSKey,
+		TrustedProxy: c.TrustedProxy, BasePath: c.BasePath, ReadHeaderTimeout: c.ReadHeaderTimeout.Duration, ReadTimeout: c.ReadTimeout.Duration,
+		WriteTimeout: c.WriteTimeout.Duration, IdleTimeout: c.IdleTimeout.Duration}
+	if c.Password != "" {
+		o.Auth = &Auth{Username: c.Username, Password: password,
+			SessionTTL: c.SessionTTL.Duration, SignInWindow: c.SignInWindow.Duration, SignInFailures: c.SignInFailures}
+	}
+	return o
+}
+
 // Server serves the interface.
 type Server struct {
 	svc     *app.Service
@@ -68,9 +82,63 @@ type Server struct {
 	// trustedProxy: a TLS-terminating proxy is declared in front.
 	trustedProxy bool
 	// base is the path prefix, without a trailing slash.
-	base   string
-	http   *http.Server
-	static http.Handler
+	base    string
+	http    *http.Server
+	static  http.Handler
+	notices notices
+}
+
+// notices holds the outcome messages of recent form submissions. A
+// redirect carries only an opaque token, so a crafted link cannot make the
+// interface display arbitrary text; unknown or expired tokens show nothing.
+type notices struct {
+	mu    sync.Mutex
+	byTok map[string]notice
+	order []string
+}
+
+type notice struct {
+	msg string
+	at  time.Time
+}
+
+const (
+	maxNotices = 128
+	noticeTTL  = 10 * time.Minute
+)
+
+// flash stores msg and returns its token.
+func (s *Server) flash(msg string) string {
+	b := make([]byte, 12)
+	_, _ = rand.Read(b)
+	tok := hex.EncodeToString(b)
+	n := &s.notices
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.byTok == nil {
+		n.byTok = map[string]notice{}
+	}
+	for len(n.order) >= maxNotices {
+		delete(n.byTok, n.order[0])
+		n.order = n.order[1:]
+	}
+	n.byTok[tok] = notice{msg: msg, at: time.Now()}
+	n.order = append(n.order, tok)
+	return tok
+}
+
+// noticeFor returns the message for a token, or "".
+func (s *Server) noticeFor(tok string) string {
+	if tok == "" {
+		return ""
+	}
+	n := &s.notices
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if v, ok := n.byTok[tok]; ok && time.Since(v.at) < noticeTTL {
+		return v.msg
+	}
+	return ""
 }
 
 // New builds a server. A non-loopback listen address requires
@@ -81,15 +149,11 @@ func New(svc *app.Service, o Options) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("listen address: %w", err)
 	}
-	if !isLoopback(host) {
-		switch {
-		case o.Auth == nil || o.Auth.Password == "":
-			return nil, fmt.Errorf("refusing to listen on %q: only loopback addresses are allowed without authentication", host)
-		case len(o.AllowedHosts) == 0:
-			return nil, fmt.Errorf("refusing to listen on %q without allowed host names", host)
-		case o.TLSCert == "" && !o.TrustedProxy:
-			return nil, fmt.Errorf("refusing to listen on %q without TLS or a declared TLS-terminating proxy", host)
-		}
+	// The same rules as configuration validation: a server built directly
+	// cannot accept an exposure that validation would refuse.
+	if probs := config.CheckWebExposure(config.WebExposure{Listen: o.Listen, Password: o.Auth != nil && o.Auth.Password != "",
+		AllowedHosts: o.AllowedHosts, TLS: o.TLSCert != "", TrustedProxy: o.TrustedProxy}); len(probs) > 0 {
+		return nil, fmt.Errorf("refusing to serve: %w", probs[0])
 	}
 	if o.Auth != nil && o.Auth.Password == "" {
 		return nil, fmt.Errorf("authentication needs a password")
@@ -130,14 +194,7 @@ func New(svc *app.Service, o Options) (*Server, error) {
 	return s, nil
 }
 
-func isLoopback(host string) bool {
-	host = strings.Trim(host, "[]")
-	if host == "localhost" {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
-}
+func isLoopback(host string) bool { return config.IsLoopbackHost(strings.Trim(host, "[]")) }
 
 // ListenAndServe serves until Shutdown.
 func (s *Server) ListenAndServe() error {
@@ -170,6 +227,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /downloads", s.page(s.downloads))
 	mux.HandleFunc("GET /downloads/{client}/{native}", s.page(s.download))
 	mux.HandleFunc("GET /activity", s.page(s.activity))
+	mux.HandleFunc("GET /sources", s.page(s.sources))
+	mux.HandleFunc("GET /coverage", s.page(s.coverage))
 	mux.HandleFunc("POST /attempts/reset", s.resetAttempts)
 	mux.HandleFunc("POST /workflows/{workflow}/{verb}", s.workflowControl)
 	mux.HandleFunc("GET /connections", s.page(s.connections))
@@ -182,7 +241,19 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/findings/{id}", s.apiFinding)
 	mux.HandleFunc("GET /api/v1/findings/{id}/preview", s.apiPreview)
 	mux.HandleFunc("GET /api/v1/downloads/{client}/{native}", s.apiDownload)
-	return s.prefixed(s.guard(mux))
+	// Host and origin checks and security headers apply to every response,
+	// including the base path's redirect and 404s outside it; the session
+	// check sees the path with the mount prefix stripped.
+	return s.guard(s.prefixed(s.authorized(mux)))
+}
+
+// authorized requires a session (or API credentials) where configured.
+func (s *Server) authorized(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.authorize(w, r) {
+			next.ServeHTTP(w, r)
+		}
+	})
 }
 
 // prefixed serves next under the base path: it strips the prefix from
@@ -217,10 +288,16 @@ type prefixWriter struct {
 
 func (p *prefixWriter) WriteHeader(code int) {
 	h := p.ResponseWriter.Header()
-	if loc := h.Get("Location"); strings.HasPrefix(loc, "/") && !strings.HasPrefix(loc, "//") {
+	if loc := h.Get("Location"); strings.HasPrefix(loc, "/") && !strings.HasPrefix(loc, "//") && !mounted(loc, p.base) {
 		h.Set("Location", p.base+loc)
 	}
 	p.ResponseWriter.WriteHeader(code)
+}
+
+// mounted reports whether a local path already carries the base path, so
+// a redirect is prefixed exactly once.
+func mounted(loc, base string) bool {
+	return loc == base || strings.HasPrefix(loc, base+"/") || strings.HasPrefix(loc, base+"?") || strings.HasPrefix(loc, base+"#")
 }
 
 // guard enforces Host allowlisting (DNS-rebinding protection), security
@@ -245,7 +322,7 @@ func (s *Server) guard(next http.Handler) http.Handler {
 			if !s.sameOrigin(r) {
 				msg := "Cross-origin request refused."
 				if s.trustedProxy {
-					msg += " Behind a reverse proxy, pass the original Host header to Housekeeparr (nginx: proxy_set_header Host $host); this request's Host is " +
+					msg += " Behind a reverse proxy, pass the original Host header, with its port, to Housekeeparr (nginx: proxy_set_header Host $http_host); this request's Host is " +
 						strconv.Quote(r.Host) + "."
 				}
 				http.Error(w, msg, http.StatusForbidden)
@@ -254,9 +331,6 @@ func (s *Server) guard(next http.Handler) http.Handler {
 		}
 		if s.auth != nil {
 			h.Set("Cache-Control", "no-store")
-		}
-		if !s.authorize(w, r) {
-			return
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -345,14 +419,14 @@ func (s *Server) findingAction(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	case errors.Is(err, findings.ErrResolved), errors.Is(err, findings.ErrInvalidSnooze):
-		target += "?notice=" + url.QueryEscape(err.Error())
+		target += "?notice=" + s.flash(err.Error())
 	case errors.As(err, new(*action.RefusedError)), errors.Is(err, app.ErrNoExecutor):
-		target += "?notice=" + url.QueryEscape("Not run, nothing was sent: "+err.Error())
+		target += "?notice=" + s.flash("Not run, nothing was sent: "+err.Error())
 	case err != nil:
 		s.log.Error("finding action failed", "id", id, "err", err)
-		target += "?notice=" + url.QueryEscape("Could not save the change: "+err.Error())
+		target += "?notice=" + s.flash("Could not save the change: "+err.Error())
 	default:
-		target += "?notice=" + url.QueryEscape("Saved.")
+		target += "?notice=" + s.flash("Saved.")
 	}
 	http.Redirect(w, r, target, http.StatusSeeOther)
 }
@@ -377,7 +451,7 @@ func (s *Server) resetAttempts(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		msg = "Not reset: " + err.Error()
 	}
-	http.Redirect(w, r, "/activity?notice="+url.QueryEscape(msg)+"#h-attempts", http.StatusSeeOther)
+	http.Redirect(w, r, "/activity?notice="+s.flash(msg)+"#h-attempts", http.StatusSeeOther)
 }
 
 // workflowControl pauses or resumes one workflow (the same service as the
@@ -403,7 +477,7 @@ func (s *Server) workflowControl(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		msg = "Not changed: " + err.Error()
 	}
-	http.Redirect(w, r, "/connections?notice="+url.QueryEscape(msg)+"#h-workflows", http.StatusSeeOther)
+	http.Redirect(w, r, "/connections?notice="+s.flash(msg)+"#h-workflows", http.StatusSeeOther)
 }
 
 func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {

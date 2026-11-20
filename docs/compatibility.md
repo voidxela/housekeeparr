@@ -719,3 +719,52 @@ loopback-only namespaces.
 | `bc06af1` | `--clients transmission --manager-client transmission --tr 4.0.5 --managers sonarr,radarr`, unselected | **23 of 24 passed**: observation, correlation, removal semantics, manual no-progress, metadata and private recovery, public and private preserved-data failure, proactive searches, Sonarr pack clearance across restart, and automatic preserved-data recovery on both managers. `TestAutomaticRecovery` refused to run: its precondition still required an exact `action.Tested` entry, which line support (SPEC §4.1) no longer needs. |
 | `146c187` | Same, `--only '^TestAutomaticRecovery$'` | **Passed.** With no exact 4.0.5 entry, the production binary planned through line support: one recovery per pass, both verified on the real instances. |
 | `2a61ae4` | Same, `--only '^TestAutomaticRecovery$'` | **Passed** with the blocking-rule audit's defaults: both stalled grabs were dispatched in one pass (actions_per_cycle 5), one at a time, and every step was verified on the real instances. |
+
+## Manager history feed (release-source scorecard) — 2026-11-20
+
+Selected run (`--only '^Test(Sonarr|Radarr)(RecoveryWorkflow|HistoryFeed)$'`), not a full matrix, from a worktree at `fe8d645`: `scripts/it/run.sh --clients qbittorrent --managers sonarr,radarr`, Sonarr 4.0.20.3014 and Radarr 6.4.4.10685 with qBittorrent 5.3.0, in the loopback network namespace. All four selected tests **passed**.
+
+| Manager | Read | Observed |
+| --- | --- | --- |
+| Sonarr 4.0.20.3014 | `GET /api/v3/history?page=N&pageSize=5&sortKey=id&sortDirection=descending` after one recovery | ids strictly descending across pages, `totalRecords` stable; the `grabbed` record carries `data.indexer` = the configured indexer name and `data.releaseSource`; the `downloadFailed` record carries the release group but **no indexer and no release source** |
+| Radarr 6.4.4.10685 | same | as Sonarr, except that the `downloadFailed` record also carries `data.indexer` |
+
+Interpretation: attribution uses the `grabbed` record's indexer only (as the scorecard does); a failure record's indexer is not relied on. No URL-like field was kept by the adapter.
+
+## Reverse proxy (nginx) — 2026-11-20
+
+`scripts/it/nginx.sh` from a worktree at `9cd564a`: Debian trixie `nginx 1.26.3-3+deb13u7` (aarch64, sha256 `7f16b949…` matching the archive's Packages index; extracted under the cache, run as the user on loopback, never installed) in front of Housekeeparr serving synthetic demo data. `TestNginxProxy` **passed** (3 of 3 subtests).
+
+| nginx configuration | Observed |
+| --- | --- |
+| Documented `location /housekeeparr/` with `proxy_set_header Host $http_host`, HTTPS on a free nonstandard port | sign-in with nested return; session cookie `Path=/housekeeparr/`, Secure, HttpOnly, SameSite=Strict; acknowledge POST accepted; foreign Host 421 with security headers; nginx itself answers `/housekeeparr` (301 to `https://host:port/housekeeparr/`) and outside paths (404) without Housekeeparr's headers |
+| Documented `location /` in front of the mounted interface | Housekeeparr's bare-mount 301 to `/housekeeparr/` and outside 404, both with security headers; foreign Host 421 on both |
+| `$host` in place of `$http_host` | sign-in refused with 403 naming `proxy_set_header Host $http_host` |
+
+## Multi-episode queue semantics — 2026-11-20
+
+`TestSonarrMultiEpisodeQueueSemantics` (probe) on Sonarr 4.0.20.3014, one release (one file) covering two episodes of the fictional season 3, in three cases. Sanitized observations: `internal/integration/testdata/observed/sonarr-4.0.20-qbittorrent-5.3.0-multi-episode-*.json` (`--capture`, worktree at `0679095`).
+
+| Case | Grab | Observed after `DELETE /api/v3/queue/{id}` on **one** episode's row, `removeFromClient=false&blocklist=true&skipRedownload=false&changeCategory=false` |
+| --- | --- | --- |
+| Both episodes monitored, no files | episode search | HTTP 200; both rows gone at once and after two `RefreshMonitoredDownloads`; one blocklist entry with both episode IDs; one `downloadFailed` per episode, no new grab; exactly one `EpisodeSearch` (trigger `unspecified`) for both episode IDs |
+| Second episode unmonitored | episode search for the monitored one (Sonarr grabs the release for both) | as above; the replacement `EpisodeSearch` **includes the unmonitored episode** |
+| First episode already has a library file | interactive ("download anyway"; an episode search rejects it: existing file meets cutoff) | as above; the replacement search includes the episode with a file; Sonarr's own cutoff rules then grab nothing for it |
+
+In every case the torrent stayed registered in the same state and category with a byte-identical payload. Interpretation: one manager request fails the whole download; a release with an unmonitored episode is left to the operator (its replacement search would cover that episode).
+
+## Multi-episode recovery runs — 2026-11-20
+
+Selected runs (`--only '^TestSonarrMultiEpisode(QueueSemantics|RecoveryWorkflow)$'`, `--managers sonarr`), not full matrices, from a worktree at `0679095`. `TestSonarrMultiEpisodeRecoveryWorkflow` runs Housekeeparr's planner, coordinator, executor and adapters: both monitored (recovered; torrent stopped), private (recovered; left running under `keep_running`), second episode unmonitored (refused live before anything was sent, explaining the replacement search would cover it), first episode with a file (recovered). Each recovered case verified: rows gone, one blocklist entry for both episodes, exactly one `EpisodeSearch` for both, payload byte-identical, a released lock, a cooldown and an attempt per episode, and an outcome per episode.
+
+| Client (`--manager-client`) | Result |
+| --- | --- |
+| qBittorrent 5.3.0 | both tests **passed** |
+| Deluge 2.2.0 | both tests **passed** |
+| rTorrent 0.9.8 | both tests **passed** |
+| Transmission 4.1.4 | both tests **passed** |
+| Transmission 4.0.6 | both tests **passed** |
+| Transmission 4.0.5 | both tests **passed** |
+| qBittorrent 4.6.7 | **not run**: the harness's fixture setup failed before any test ("qBittorrent did not stop the complete errored fixture before deletion"); not registered for multi-episode recovery |
+
+Radarr has no multi-episode releases; the tested combinations are registered with `MultiEpisode: true` in `internal/action/plan.go`.

@@ -162,6 +162,11 @@ func (s *Service) DispatchSearches(ctx context.Context, fresh map[string]bool) (
 	}
 	s.execMu.Lock()
 	defer s.execMu.Unlock()
+	// Like recovery dispatch and manual actions, settle anything an
+	// interruption or journal failure left in progress before new work.
+	if _, err := s.Reconcile(ctx); err != nil {
+		return rep, fmt.Errorf("reconcile interrupted actions: %w", err)
+	}
 	if js, err := s.Journal(ctx); err != nil {
 		return rep, err
 	} else if js.RestoreHold != nil {
@@ -233,11 +238,22 @@ func (s *Service) sendSearch(ctx context.Context, it store.MissingRecord, p *act
 	res, err := c.Execute(ctx, *p)
 	var ref *action.RefusedError
 	if errors.Is(err, action.ErrJournal) {
+		if action.MaybeSent(err) {
+			rep.Sent, rep.IntentID, rep.Outcome = it.ManagerID+"|"+it.ContentKey, res.IntentID, string(res.State)
+		}
 		return rep, err
 	}
 	if errors.As(err, &ref) || (err != nil && res.IntentID == 0) {
 		rep.Waiting = append(rep.Waiting, fmt.Sprintf("%s|%s refused before anything was sent: %v", it.ManagerID, it.ContentKey, err))
-		return rep, nil
+		// Rotate: a live refusal (for example content unmonitored since the
+		// list was read) sits out the next pass, so the same leading items
+		// cannot use up every pass's live evaluations. Its search count and
+		// backoff are unchanged; the next list read settles it.
+		next := s.now().Add(2 * s.cfg.Polling.Interval.Duration)
+		note := fmt.Sprintf("refused by its live check before anything was sent (%v); reconsidered after the next pass", err)
+		return rep, s.st.Write(ctx, func(tx *store.Tx) error {
+			return tx.SetMissingSearch(it.ManagerID, it.ContentKey, it.State, note, nil, nil, &next, false)
+		})
 	}
 	if err != nil {
 		return rep, err
@@ -273,6 +289,43 @@ func (s *Service) sendSearch(ctx context.Context, it store.MissingRecord, p *act
 			Title: "Search for missing " + it.Title + ": " + string(res.State), Body: note}, now)
 	})
 	return rep, err
+}
+
+// PassReport is one dispatch pass after an observation cycle: automatic
+// recovery, then at most one proactive search.
+type PassReport struct {
+	Recovery DispatchReport `json:"recovery"`
+	// RecoveryErr is why recovery dispatch stopped, if it did.
+	RecoveryErr error         `json:"-"`
+	Search      *SearchReport `json:"search,omitempty"`
+	SearchErr   error         `json:"-"`
+	// SearchSkipped says why the search pass did not run at all.
+	SearchSkipped string `json:"search_skipped,omitempty"`
+}
+
+// Err returns the first failure of the pass.
+func (r PassReport) Err() error {
+	if r.RecoveryErr != nil {
+		return r.RecoveryErr
+	}
+	return r.SearchErr
+}
+
+// DispatchPass runs the worker's write phase after a cycle. A recovery
+// pass that stopped on an error (the journal could not be written, or
+// local state could not be read or reconciled) starts no proactive search:
+// the next pass reconciles first. Observation and notification delivery
+// are the caller's and are unaffected.
+func (s *Service) DispatchPass(ctx context.Context, fresh map[string]bool) PassReport {
+	var rep PassReport
+	rep.Recovery, rep.RecoveryErr = s.DispatchAutomatic(ctx, fresh)
+	if rep.RecoveryErr != nil {
+		rep.SearchSkipped = "recovery dispatch stopped on an error; no search is started until the journal is reconciled"
+		return rep
+	}
+	sr, err := s.DispatchSearches(ctx, fresh)
+	rep.Search, rep.SearchErr = &sr, err
+	return rep
 }
 
 // Missing lists recorded missing content and its search state.

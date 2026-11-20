@@ -451,3 +451,24 @@ func TestWantedOnlyAvailabilityIgnoresFileSelection(t *testing.T) {
 		t.Fatalf("%s %s", a.Availability, a.Diagnosis)
 	}
 }
+
+// Neither a complete payload in an error-like state nor a tracker that
+// refuses the client is a dead release: the same no-progress streak that
+// qualifies otherwise is not diagnosed.
+func TestCompleteOrClientRefusedIsNotADeadRelease(t *testing.T) {
+	complete := newSampler().every(0, 120, 10, domain.StateDownloading, 10*gib)
+	if a := eval(t, input(complete.out, 0), 120); a.Status != StatusNotApplicable || !strings.Contains(a.Headline, "payload is complete") {
+		t.Fatalf("complete payload: %s/%s (%s)", a.Status, a.Diagnosis, a.Headline)
+	}
+	refused := func(s *Sample) { s.SourceFailure = domain.KnownValue(domain.SourceClientRejected) }
+	r := newSampler().every(0, 120, 10, domain.StateDownloading, 2*gib, refused)
+	if a := eval(t, input(r.out, 0), 120); a.Status != StatusNotApplicable || !strings.Contains(a.Headline, "refuses this client") {
+		t.Fatalf("client refused: %s/%s (%s)", a.Status, a.Diagnosis, a.Headline)
+	}
+	// Once the refusal stops (an upgraded client), the stall is evaluated
+	// again from the evidence.
+	r.add(130, domain.StateDownloading, 2*gib)
+	if a := eval(t, input(r.out, 0), 130); a.Status != StatusQualified {
+		t.Fatalf("after the refusal ended: %s (%s)", a.Status, a.Headline)
+	}
+}

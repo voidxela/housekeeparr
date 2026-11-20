@@ -82,6 +82,7 @@ var (
 		"system.library_version": true,
 		"d.multicall2":           true,
 		"t.multicall":            true,
+		"f.multicall":            true,
 		"d.stop":                 true,
 	}
 	writeMethods = map[string]bool{
@@ -173,7 +174,7 @@ func (c *Client) Probe(ctx context.Context) (adapter.Probe, error) {
 		adapter.CapFileSelection:     {Support: adapter.Supported, Note: "derived from d.wanted_chunks"},
 		adapter.CapSwarmCounts:       {Support: adapter.NotImplemented, Note: "tracker scrape counts are per tracker (t.multicall); not used"},
 		adapter.CapInfohashV2:        {Support: adapter.NotSupported},
-		adapter.CapClientFileList:    {Support: adapter.NotImplemented},
+		adapter.CapClientFileList:    {Support: adapter.Supported, Note: "f.multicall path, size and priority, read for a bounded number of settled import candidates"},
 	}
 	p.Write = adapter.ReadOnlyWrites(adapter.CapTransferLabel)
 	p.Write[adapter.CapStopTransfer] = adapter.CapabilityStatus{Support: adapter.Supported, Note: "d.stop, retaining data (tested: the download stays registered with its files and label; d.close is never sent)"}

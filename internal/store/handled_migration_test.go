@@ -117,7 +117,7 @@ func TestRetainedDispositionAndRefresh(t *testing.T) {
 		t.Fatalf("running, unknown size: %+v (a running transfer can obtain payload)", u)
 	}
 	write(func(tx *Tx) error {
-		return tx.RecordRetained(RetainedTransfer{ClientID: "q", NativeID: "a", IntentID: 1, Disposition: RetainedStopped, RetainedAt: time.Unix(2, 0)})
+		return tx.RecordRetained(RetainedTransfer{ClientID: "q", NativeID: "a", IntentID: 1, Disposition: RetainedStopped, NoPayload: true, RetainedAt: time.Unix(2, 0)})
 	})
 	if u, _ := s.RetainedUsage(ctx); u.Count != 1 || u.Running != 0 || u.NoPayload != 1 {
 		t.Fatalf("stopped, no payload: %+v", u)
@@ -490,11 +490,158 @@ func TestForwardMigrationV19CooldownSince(t *testing.T) {
 	if cs, err := s.ActiveCooldowns(ctx, at, time.Hour); err != nil || len(cs) != 0 {
 		t.Fatalf("with a 1h cooldown both have ended 2h after the action: %+v %v", cs, err)
 	}
-	cs, err := s.ActiveCooldowns(ctx, at, 0)
+	if cs, err := s.ActiveCooldowns(ctx, at, 0); err != nil || len(cs) != 0 {
+		t.Fatalf("a zero cooldown (disabled) ends every recorded cooldown: %+v %v", cs, err)
+	}
+	cs, err := s.ActiveCooldowns(ctx, at, 1000*time.Hour)
 	if err != nil || len(cs) != 2 {
 		t.Fatalf("recorded ends: %+v %v", cs, err)
 	}
 	if cs, _ := s.ActiveCooldowns(ctx, at, 23*time.Hour); len(cs) != 2 || !cs["content:sonarr|episode:1"].Until.Equal(set.Add(23*time.Hour)) {
 		t.Fatalf("capped end: %+v", cs)
+	}
+}
+
+// buildSchema applies the committed migrations before prefix and records
+// version as the schema version, as an older release left the database.
+func buildSchema(t *testing.T, dir, prefix string, version int) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(dir, dbFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := migrationFS.ReadDir("migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Name() >= prefix {
+			break
+		}
+		body, err := migrationFS.ReadFile("migrations/" + e.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(string(body)); err != nil {
+			t.Fatalf("%s: %v", e.Name(), err)
+		}
+	}
+	if _, err := db.Exec(fmt.Sprintf("INSERT INTO meta(key, value) VALUES('schema_version','%d'),('data_origin','live'),('instance_id','old'),('created_at','0')", version)); err != nil {
+		t.Fatal(err)
+	}
+	return db
+}
+
+// Six-hour cooldowns distinguish a start recovered from the action from
+// migration 0020's 24-hour fallback: a normal receipt and, after repair, a
+// bare "action #N" receipt start at their action; a receipt whose action
+// was pruned keeps the fallback (its start cannot be established), which
+// under a 1 h cooldown has already ended. The same repair applies to a
+// database already at schema 20.
+func TestCooldownStartsAfterUpgrade(t *testing.T) {
+	set := time.Unix(200000, 0)
+	until := set.Add(6 * time.Hour)
+	seed := func(t *testing.T, db *sql.DB, v20 bool) {
+		t.Helper()
+		qs := []string{fmt.Sprintf(`INSERT INTO action_intents(id, idem_key, workflow, origin, subject_json, state, policy_revision, config_revision, instance_id, fingerprint,
+		  evidence_json, plan_json, review_required, created_at, updated_at) VALUES
+		 (45,'k45','no_progress_recovery','automatic','{}','succeeded','p','c','old','f','{}','{}',0,%[1]d,%[1]d),
+		 (46,'k46','no_progress_recovery','automatic','{}','succeeded','p','c','old','f','{}','{}',0,%[1]d,%[1]d)`, ms(set))}
+		if v20 {
+			// As migration 0020 left them: the bare receipt and the pruned
+			// action fell back to until - 24 h.
+			qs = append(qs, fmt.Sprintf(`INSERT INTO action_cooldowns(subject, since, until, reason) VALUES
+			 ('content:normal',%[2]d,%[1]d,'action #45 (no_progress_recovery)'),
+			 ('content:bare',%[3]d,%[1]d,'action #46'),
+			 ('content:pruned',%[3]d,%[1]d,'action #99 (no_progress_recovery)')`, ms(until), ms(set), ms(until.Add(-24*time.Hour))))
+		} else {
+			qs = append(qs, fmt.Sprintf(`INSERT INTO action_cooldowns(subject, until, reason) VALUES
+			 ('content:normal',%[1]d,'action #45 (no_progress_recovery)'),
+			 ('content:bare',%[1]d,'action #46'),
+			 ('content:pruned',%[1]d,'action #99 (no_progress_recovery)')`, ms(until)))
+		}
+		for _, q := range qs {
+			if _, err := db.Exec(q); err != nil {
+				t.Fatalf("%s: %v", q, err)
+			}
+		}
+	}
+	for name, v := range map[string]struct {
+		prefix  string
+		version int
+	}{"from schema 19": {"0020", 19}, "from schema 20": {"0021", 20}} {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			dir := t.TempDir()
+			db := buildSchema(t, dir, v.prefix, v.version)
+			seed(t, db, v.version == 20)
+			if err := db.Close(); err != nil {
+				t.Fatal(err)
+			}
+			s, err := Open(ctx, dir, Options{})
+			if err != nil {
+				t.Fatalf("upgrade: %v", err)
+			}
+			defer s.Close()
+			cs, err := s.ActiveCooldowns(ctx, set.Add(30*time.Minute), time.Hour)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, sub := range []string{"content:normal", "content:bare"} {
+				if c, ok := cs[sub]; !ok || !c.Until.Equal(set.Add(time.Hour)) {
+					t.Errorf("%s: %+v, want a 1 h cooldown from the action at %s", sub, c, set)
+				}
+			}
+			if _, ok := cs["content:pruned"]; ok {
+				t.Error("a cooldown whose start cannot be established kept a recovered start")
+			}
+			// With a cooldown as long as recorded, every recorded end holds.
+			if cs, _ := s.ActiveCooldowns(ctx, set.Add(5*time.Hour), 24*time.Hour); len(cs) != 3 {
+				t.Errorf("recorded ends: %+v", cs)
+			}
+		})
+	}
+}
+
+// No payload is counted only on positive evidence (P3): recorded at
+// retention, or, for a row from before that was recorded, the client still
+// listing the transfer as acquiring metadata. A stopped transfer with an
+// unknown wanted size and zero verified bytes is otherwise of unknown size.
+func TestRetainedNoPayloadNeedsPositiveEvidence(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	db := buildSchema(t, dir, "0022", 21)
+	for _, q := range []string{
+		// Legacy rows: one still a magnet in the client, one a stopped
+		// download whose wanted size was never known.
+		`INSERT INTO retained_transfers(client_id, native_id, intent_id, verified_bytes, retained_at, disposition) VALUES
+		 ('q','magnet',1,0,1,'stopped'), ('q','download',2,0,1,'stopped')`,
+		`INSERT INTO transfers(client_id, native_id, name, state_class, present, first_seen, last_seen, latest_json) VALUES
+		 ('q','magnet','M','metadata',1,1,1,'{}'), ('q','download','D','paused',1,1,1,'{}')`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(ctx, dir, Options{})
+	if err != nil {
+		t.Fatalf("upgrade from schema 21: %v", err)
+	}
+	defer s.Close()
+	if u, _ := s.RetainedUsage(ctx); u.Count != 2 || u.NoPayload != 1 || u.UnknownSize != 1 {
+		t.Fatalf("legacy rows: %+v, want the listed magnet without payload and the download of unknown size", u)
+	}
+	zero := int64(0)
+	if err := s.Write(ctx, func(tx *Tx) error {
+		return tx.RecordRetained(RetainedTransfer{ClientID: "q", NativeID: "new-magnet", IntentID: 3, Disposition: RetainedStopped,
+			VerifiedBytes: &zero, NoPayload: true, RetainedAt: time.Unix(2, 0)})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if u, _ := s.RetainedUsage(ctx); u.Count != 3 || u.NoPayload != 2 || u.UnknownSize != 1 {
+		t.Fatalf("with a recorded no-payload row: %+v", u)
 	}
 }

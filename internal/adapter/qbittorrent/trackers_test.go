@@ -287,3 +287,31 @@ func TestMalformedTrackerEvidenceCannotQualifyRejection(t *testing.T) {
 		})
 	}
 }
+
+// A client-version refusal counts only when every tracker that answered
+// agrees; a working tracker means the torrent is served, and a refusal
+// beside an unregistered answer is an ordinary tracker error.
+func TestClientRejectionNeedsEveryTracker(t *testing.T) {
+	const a, b = "https://tracker.example/announce", "https://tracker2.example/announce"
+	const refuse = "blacklisted client, update or change client"
+	for _, tc := range []struct {
+		name    string
+		entries []trackerEntry
+		want    domain.SourceFailure
+		known   bool
+	}{
+		{"only tracker refuses the client", []trackerEntry{{URL: "** [DHT] **"}, {URL: a, Status: 4, Msg: refuse}}, domain.SourceClientRejected, true},
+		{"qBittorrent 5 tracker error status", []trackerEntry{{URL: a, Status: 5, Msg: refuse}}, domain.SourceClientRejected, true},
+		{"alternate healthy tracker", []trackerEntry{{URL: a, Status: 4, Msg: refuse}, {URL: b, Status: 2}}, domain.SourceNoFailure, true},
+		{"both refuse", []trackerEntry{{URL: a, Status: 4, Msg: refuse}, {URL: b, Status: 4, Msg: "Banned client"}}, domain.SourceClientRejected, true},
+		{"refusal beside unregistered", []trackerEntry{{URL: a, Status: 4, Msg: refuse}, {URL: b, Status: 4, Msg: "Unregistered torrent"}}, domain.SourceTrackerError, true},
+		{"refusal beside unreachable", []trackerEntry{{URL: a, Status: 4, Msg: refuse}, {URL: b, Status: 6}}, domain.SourceTrackerError, true},
+		{"refusal beside an uncontacted tracker", []trackerEntry{{URL: a, Status: 4, Msg: refuse}, {URL: b, Status: 1}}, "", false},
+	} {
+		got := classifyTrackers(tc.entries)
+		v, ok := got.Get()
+		if ok != tc.known || (ok && v != tc.want) {
+			t.Errorf("%s: %+v, want %q known=%v", tc.name, got, tc.want, tc.known)
+		}
+	}
+}

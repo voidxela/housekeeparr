@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -74,8 +75,12 @@ type Store struct {
 	warnings []string
 	now      func() time.Time
 
-	faultMu sync.Mutex
-	fault   error
+	execs atomic.Int64
+
+	faultMu    sync.Mutex
+	fault      error
+	faultAfter int // writes still allowed before fault applies
+	faultTimes int // writes that fail before fault clears; 0 = until cleared
 
 	// confirmed caches a fingerprint of complete transfers whose stored row
 	// is known to match (writer process only). It lets unchanged seeding
@@ -88,8 +93,21 @@ type Store struct {
 // it). It exists for fault-injection tests and operator drills of the
 // "state store unwritable" path; production code never calls it.
 func (s *Store) InjectWriteFault(err error) {
+	s.InjectWriteFaultAfter(0, err)
+}
+
+// InjectWriteFaultAfter lets the next n writes commit, then makes every
+// later Write fail with err, so tests can fail one exact journal commit.
+func (s *Store) InjectWriteFaultAfter(n int, err error) {
+	s.InjectWriteFaults(n, 0, err)
+}
+
+// InjectWriteFaults lets the next skip writes commit, then fails the
+// following times writes (0: every later write until cleared) with err: a
+// transient fault when times > 0.
+func (s *Store) InjectWriteFaults(skip, times int, err error) {
 	s.faultMu.Lock()
-	s.fault = err
+	s.fault, s.faultAfter, s.faultTimes = err, skip, times
 	s.faultMu.Unlock()
 }
 
@@ -377,6 +395,7 @@ type Tx struct {
 	ctx       context.Context
 	confirmed map[string]uint64
 	pending   map[string]uint64
+	execs     *atomic.Int64
 }
 
 // Write runs fn in a single write transaction.
@@ -386,6 +405,15 @@ func (s *Store) Write(ctx context.Context, fn func(*Tx) error) error {
 	}
 	s.faultMu.Lock()
 	fault := s.fault
+	switch {
+	case fault != nil && s.faultAfter > 0:
+		s.faultAfter--
+		fault = nil
+	case fault != nil && s.faultTimes > 0:
+		if s.faultTimes--; s.faultTimes == 0 {
+			s.fault = nil
+		}
+	}
 	s.faultMu.Unlock()
 	if fault != nil {
 		return fmt.Errorf("state store: %w", fault)
@@ -397,7 +425,7 @@ func (s *Store) Write(ctx context.Context, fn func(*Tx) error) error {
 	if s.confirmed == nil {
 		s.confirmed = map[string]uint64{}
 	}
-	wtx := &Tx{tx: tx, ctx: ctx, confirmed: s.confirmed, pending: map[string]uint64{}}
+	wtx := &Tx{tx: tx, ctx: ctx, confirmed: s.confirmed, pending: map[string]uint64{}, execs: &s.execs}
 	if err := fn(wtx); err != nil {
 		tx.Rollback()
 		return err
@@ -419,8 +447,15 @@ func (s *Store) Write(ctx context.Context, fn func(*Tx) error) error {
 }
 
 func (t *Tx) exec(q string, args ...any) (sql.Result, error) {
+	if t.execs != nil {
+		t.execs.Add(1)
+	}
 	return t.tx.ExecContext(t.ctx, q, args...)
 }
+
+// Statements returns how many write statements this store has executed
+// (for measurements of write volume).
+func (s *Store) Statements() int64 { return s.execs.Load() }
 func (t *Tx) query(q string, args ...any) (*sql.Rows, error) {
 	return t.tx.QueryContext(t.ctx, q, args...)
 }

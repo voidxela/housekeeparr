@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/voidxela/housekeeparr/internal/adapter"
-	"github.com/voidxela/housekeeparr/internal/config"
 	"github.com/voidxela/housekeeparr/internal/domain"
 	"github.com/voidxela/housekeeparr/internal/findings"
 	"github.com/voidxela/housekeeparr/internal/policy"
@@ -95,6 +94,7 @@ func (e *Engine) evaluateClient(tx *store.Tx, snap domain.TransferSnapshot, gone
 			for _, k := range []string{kindStalled, kindMetadata, kindError, kindSource} {
 				reasons[base+k] = fmt.Sprintf("Verified: the download completed (client state %s).", t.NativeState)
 			}
+			e.diagnoseTransfer(&ev, reasons, activeByKey, base, meta, t, nil, queueByTransfer[t.NativeID], now)
 			continue
 		}
 		rec := byID[t.NativeID]
@@ -192,6 +192,8 @@ func (e *Engine) evaluateClient(tx *store.Tx, snap domain.TransferSnapshot, gone
 			}
 		}
 
+		e.diagnoseTransfer(&ev, reasons, activeByKey, base, meta, t, obs, queue, now)
+
 		// Client-reported error.
 		errF, err := active(kindError)
 		if err != nil {
@@ -279,15 +281,15 @@ const recoveryLimitation = "Recovery fails and blocklists this grab in the media
 	"It runs only where the workflow is enabled and the manager and client versions are supported (see the action preview for the exact operations and prerequisites), " +
 	"and a replacement search does not establish that a better release exists."
 
+// modeEligibility is the finding's standing explanation of what may
+// happen. It is stored with the finding, so it states nothing that changes
+// with configuration: the current mode is shown beside it from the
+// configuration in force, and each decision is the action preview's or
+// the timestamped automatic evaluation's.
 func (e *Engine) modeEligibility(extra ...string) string {
 	var b strings.Builder
-	switch e.cfg.Mode {
-	case config.ModePaused:
-		b.WriteString("Paused: no automation will start. ")
-	default:
-		b.WriteString("Observe-only: Housekeeparr will not change anything in the media manager or the client. ")
-	}
-	b.WriteString("Automatic recovery is not implemented in this release.")
+	b.WriteString("Whether Housekeeparr acts on this depends on the operating mode and the policy for its scope when an action is previewed or evaluated: " +
+		"the action preview lists every prerequisite, and the latest automatic evaluation is recorded with its time.")
 	for _, x := range extra {
 		b.WriteString(" ")
 		b.WriteString(x)
@@ -702,6 +704,17 @@ func (e *Engine) importDraft(key string, meta ConnMeta, dl, state string, since 
 		sub.Connections = append(sub.Connections, items[0].MatchClientID)
 		evidence = append(evidence, domain.Evidence{Label: "Correlated transfer", Value: items[0].MatchNote})
 	}
+	steps := []string{
+		fmt.Sprintf("Review the item in %s → Activity → Queue; the message explains what could not be imported.", meta.Name),
+		fmt.Sprintf("Check whether the files %s expects are present in the download and readable by it (paths, permissions, extraction). Housekeeparr has not verified which manual step is safe for your version and does not change the queue.", meta.Name),
+	}
+	if pe, why, step := e.payloadAdvice(items, meta.Name); pe != nil {
+		evidence = append(evidence, *pe)
+		if why != "" {
+			summary += " " + why
+			steps = append([]string{step}, steps...)
+		}
+	}
 	next := now.Add(e.cfg.Polling.Interval.Duration)
 	return findings.Draft{
 		DedupKey: key, Type: domain.FindingImportAttention, Severity: sev,
@@ -713,11 +726,8 @@ func (e *Engine) importDraft(key string, meta ConnMeta, dl, state string, since 
 			Confidence:  fmt.Sprintf("Cause as reported by %s; Housekeeparr has not verified import history, files, or episode mapping, so the cause is explicitly uncertain. Reported after the %s import settling period.", meta.Name, policy.HumanDuration(eff.Settings.ImportSettle)),
 			Limitations: importLimitations(meta),
 			Eligibility: e.modeEligibility("No association will be cleared."),
-			NextSteps: []string{
-				fmt.Sprintf("Review the item in %s → Activity → Queue; the message explains what could not be imported.", meta.Name),
-				fmt.Sprintf("Check whether the files %s expects are present in the download and readable by it (paths, permissions, extraction). Housekeeparr has not verified which manual step is safe for your version and does not change the queue.", meta.Name),
-			},
-			Links: []domain.Link{{Label: meta.Name + " queue", URL: meta.BaseURL + "/activity/queue"}},
+			NextSteps:   steps,
+			Links:       []domain.Link{{Label: meta.Name + " queue", URL: meta.BaseURL + "/activity/queue"}},
 		},
 		PolicyID: eff.ID, PolicyRevision: eff.Revision, EvidenceAt: now, NextEvaluationAt: &next,
 	}

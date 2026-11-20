@@ -1,6 +1,6 @@
 {{define "content"}}{{with .Page}}
 <div class="title-row"><h1>Downloads</h1>
-<a class="small" href="{{if .All}}/downloads{{else}}/downloads?all=1{{end}}">{{if .All}}Hide complete{{else}}Include complete{{end}}</a></div>
+<a class="small" href="{{base}}/downloads{{if not .All}}?all=1{{end}}">{{if .All}}Hide complete{{else}}Include complete{{end}}</a></div>
 {{if .Transfers}}
 <ul class="downloads">
 {{range .Transfers}}{{$t := .Transfer}}

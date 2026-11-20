@@ -1034,3 +1034,67 @@ func TestTrackerReadLimitSurfacesAndResolvesCoverageFinding(t *testing.T) {
 		t.Fatalf("complete evidence did not resolve the coverage finding: %+v", f)
 	}
 }
+
+// A multi-episode recovery follows each episode's replacement separately:
+// separate single-episode replacements progress and complete on their own,
+// and the outcome reports the least advanced episode with every episode's
+// state in its note.
+func TestMultiEpisodeOutcomeFollowsEachEpisode(t *testing.T) {
+	const newA = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	const newB = "dddddddddddddddddddddddddddddddddddddddd"
+	h := newHarness(t, baseConfig)
+	h.cycle()
+	h.clock.Advance(time.Minute)
+	if err := h.st.Write(ctx, func(tx *store.Tx) error {
+		return tx.CreateOutcome(store.RecoveryOutcome{IntentID: 41, ManagerID: "sonarr", Content: []string{"episode:101", "episode:102"},
+			OldDownloadID: hash, StartedAt: h.clock.Now()})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	state := func() store.RecoveryOutcome {
+		t.Helper()
+		m, err := h.st.Outcomes(ctx, []int64{41})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m[41]
+	}
+	per := func(o store.RecoveryOutcome) map[string]string {
+		out := map[string]string{}
+		for _, c := range o.PerContent {
+			out[c.Content] = c.State
+		}
+		return out
+	}
+	// A replacement for the first episode only.
+	h.mgr.SetQueue(fake.Episode(5, newA, "Show.S01E01.Repack", "Example Show", 1, 1))
+	h.client.SetTransfers(fake.Transfer(newA, "Show.S01E01.Repack", domain.StateDownloading, 1*gib, 4*gib, t0))
+	h.run(20, 10)
+	o := state()
+	if p := per(o); p["episode:101"] != store.OutcomeGrabbed || p["episode:102"] != store.OutcomeAwaitingGrab || o.State != store.OutcomeAwaitingGrab {
+		t.Fatalf("first episode grabbed: %+v", o)
+	}
+	if o.NewDownloadID != newA || !strings.Contains(o.Note, "episode:101: grabbed") || !strings.Contains(o.Note, "episode:102: awaiting grab") {
+		t.Fatalf("summary: %q %q", o.NewDownloadID, o.Note)
+	}
+	// The second episode gets its own release; the first completes.
+	h.mgr.SetQueue(fake.Episode(5, newA, "Show.S01E01.Repack", "Example Show", 1, 1), fake.Episode(6, newB, "Show.S01E02.Repack", "Example Show", 1, 2))
+	h.client.SetTransfers(fake.Transfer(newA, "Show.S01E01.Repack", domain.StateComplete, 4*gib, 4*gib, t0),
+		fake.Transfer(newB, "Show.S01E02.Repack", domain.StateDownloading, 1*gib, 4*gib, t0))
+	h.run(20, 10)
+	if o := state(); per(o)["episode:101"] != store.OutcomeCompleted || per(o)["episode:102"] != store.OutcomeGrabbed || o.State != store.OutcomeGrabbed {
+		t.Fatalf("one complete, one grabbed: %+v", o)
+	}
+	h.client.Update(newB, func(tr *domain.Transfer) { tr.VerifiedBytes = domain.KnownValue[int64](2 * gib) })
+	h.run(10, 10)
+	if o := state(); per(o)["episode:102"] != store.OutcomeProgressing || o.State != store.OutcomeProgressing {
+		t.Fatalf("second progressing: %+v", o)
+	}
+	h.client.Update(newB, func(tr *domain.Transfer) {
+		tr.StateClass, tr.VerifiedBytes = domain.StateComplete, domain.KnownValue[int64](4*gib)
+	})
+	h.run(10, 10)
+	if o := state(); o.State != store.OutcomeCompleted || o.CompletedAt == nil || per(o)["episode:102"] != store.OutcomeCompleted {
+		t.Fatalf("both complete: %+v", o)
+	}
+}

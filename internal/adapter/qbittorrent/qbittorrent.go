@@ -218,7 +218,7 @@ func (c *Client) Probe(ctx context.Context) (adapter.Probe, error) {
 		adapter.CapFileSelection:     {Support: adapter.Supported, Note: "wanted size compared with total size"},
 		adapter.CapSwarmCounts:       {Support: adapter.Supported, Note: "tracker-reported counts; may be stale and do not prove piece availability"},
 		adapter.CapInfohashV2:        v2,
-		adapter.CapClientFileList:    {Support: adapter.NotImplemented, Note: "available upstream (/torrents/files); not used yet"},
+		adapter.CapClientFileList:    {Support: adapter.Supported, Note: "/torrents/files, read for a bounded number of settled import candidates"},
 	}
 	p.Write = adapter.Capabilities{
 		adapter.CapStopTransfer:  {Support: adapter.Supported, Note: "torrents/stop (5.x) or torrents/pause (4.x), retaining data"},
@@ -349,8 +349,9 @@ func (c *Client) readSourceFailure(ctx context.Context, hash string) domain.Sign
 
 func classifyTrackers(entries []trackerEntry) domain.Signal[domain.SourceFailure] {
 	realCount := 0
-	hasErrMsg := false
-	allUnregistered := true
+	// classes holds the classification of every tracker that answered with
+	// a failure; a rejection counts only when every such tracker agrees.
+	classes := map[domain.SourceFailure]bool{}
 	incomplete := false
 	for _, e := range entries {
 		if strings.HasPrefix(e.URL, "** [") {
@@ -370,12 +371,9 @@ func classifyTrackers(entries []trackerEntry) domain.Signal[domain.SourceFailure
 		// "unreachable", which is never a rejection.
 		switch {
 		case e.Status == 6:
-			hasErrMsg, allUnregistered = true, false
+			classes[domain.SourceTrackerError] = true
 		case (e.Status == 4 || e.Status == 5) && strings.TrimSpace(e.Msg) != "":
-			hasErrMsg = true
-			if domain.ClassifyTrackerError(e.Msg) != domain.SourceUnregistered {
-				allUnregistered = false
-			}
+			classes[domain.ClassifyTrackerError(e.Msg)] = true
 		default:
 			incomplete = true
 		}
@@ -386,16 +384,18 @@ func classifyTrackers(entries []trackerEntry) domain.Signal[domain.SourceFailure
 		}
 		return domain.KnownValue(domain.SourceNoFailure)
 	}
-	if hasErrMsg {
-		if allUnregistered {
+	if len(classes) == 0 {
+		return domain.UnknownValue[domain.SourceFailure]("no tracker has answered yet")
+	}
+	if len(classes) == 1 && !classes[domain.SourceTrackerError] {
+		for c := range classes {
 			if incomplete {
 				return domain.UnknownValue[domain.SourceFailure]("some trackers have no confirmed result")
 			}
-			return domain.KnownValue(domain.SourceUnregistered)
+			return domain.KnownValue(c)
 		}
-		return domain.KnownValue(domain.SourceTrackerError)
 	}
-	return domain.UnknownValue[domain.SourceFailure]("no tracker has answered yet")
+	return domain.KnownValue(domain.SourceTrackerError)
 }
 
 // stateClass maps qBittorrent 4.x and 5.x state strings.

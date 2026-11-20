@@ -621,7 +621,7 @@ start_sonarr() {
 		MANAGED_PROBES+=(TestSonarrManagedRemovalSemantics)
 		# The full recovery workflow runs through whichever client the
 		# managers use (--manager-client).
-		MANAGED_PROBES+=(TestSonarrRecoveryWorkflow TestSonarrMetadataRecoveryWorkflow TestSonarrPrivateRecoveryWorkflow TestSonarrPreservedDataFailureWorkflow TestSonarrPrivatePreservedDataFailureWorkflow TestSonarrProactiveSearch TestSonarrPartialPackWorkflow)
+		MANAGED_PROBES+=(TestSonarrRecoveryWorkflow TestSonarrMetadataRecoveryWorkflow TestSonarrPrivateRecoveryWorkflow TestSonarrPreservedDataFailureWorkflow TestSonarrPrivatePreservedDataFailureWorkflow TestSonarrProactiveSearch TestSonarrPartialPackWorkflow TestSonarrHistoryFeed TestSonarrMultiEpisodeQueueSemantics TestSonarrMultiEpisodeRecoveryWorkflow TestSonarrCoverage)
 	fi
 }
 
@@ -632,7 +632,7 @@ start_radarr() {
 	PROBES+=(TestRadarrQueueRemovalSemantics)
 	if [ "$STANDIN" = 1 ]; then
 		MANAGED_PROBES+=(TestRadarrManagedRemovalSemantics)
-		MANAGED_PROBES+=(TestRadarrRecoveryWorkflow TestRadarrMetadataRecoveryWorkflow TestRadarrPrivateRecoveryWorkflow TestRadarrPreservedDataFailureWorkflow TestRadarrPrivatePreservedDataFailureWorkflow TestRadarrProactiveSearch)
+		MANAGED_PROBES+=(TestRadarrRecoveryWorkflow TestRadarrMetadataRecoveryWorkflow TestRadarrPrivateRecoveryWorkflow TestRadarrPreservedDataFailureWorkflow TestRadarrPrivatePreservedDataFailureWorkflow TestRadarrProactiveSearch TestRadarrHistoryFeed TestRadarrCoverage)
 	fi
 }
 
@@ -665,6 +665,7 @@ if [ "$STANDIN" = 1 ] && has "$MANAGERS" sonarr && has "$MANAGERS" radarr; then
 	MANAGED_PROBES+=(TestAutomaticRecovery TestAutomaticPreservedDataFailure)
 	if [ "$DAEMON" = 1 ]; then MANAGED_PROBES+=(TestDaemonRecovery); fi
 fi
+TESTS+=(TestClientFileLists)
 PROBES+=("${MANAGED_PROBES[@]}")
 if [ -n "${ONLY:-}" ]; then
 	select_only() { local t; for t in "$@"; do [[ "$t" =~ $ONLY ]] && echo "$t"; done; return 0; }
