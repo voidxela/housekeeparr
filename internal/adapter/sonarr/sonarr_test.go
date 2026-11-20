@@ -99,7 +99,7 @@ func TestProbe(t *testing.T) {
 		t.Fatalf("probe %+v", p)
 	}
 	want := map[adapter.Capability]adapter.Support{adapter.CapFailGrab: adapter.Supported, adapter.CapDetachQueue: adapter.Supported,
-		adapter.CapSearchCommand: adapter.NotImplemented}
+		adapter.CapSearchCommand: adapter.Supported}
 	if len(p.Write) != len(want) {
 		t.Fatalf("write capabilities %+v", p.Write)
 	}

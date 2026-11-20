@@ -134,6 +134,7 @@ type Compatibility string
 
 const (
 	CompatTested      Compatibility = "tested"      // version within the tested matrix
+	CompatSupported   Compatibility = "supported"   // untested release in an API line with tested evidence
 	CompatUntested    Compatibility = "untested"    // reads attempted; claims withheld
 	CompatUnsupported Compatibility = "unsupported" // below minimum or incompatible API
 )

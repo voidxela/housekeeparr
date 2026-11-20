@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/voidxela/housekeeparr/internal/action"
+	"github.com/voidxela/housekeeparr/internal/adapter"
 	"github.com/voidxela/housekeeparr/internal/config"
 	"github.com/voidxela/housekeeparr/internal/domain"
 	"github.com/voidxela/housekeeparr/internal/findings"
@@ -144,10 +145,12 @@ type TransferCounts struct {
 
 // MilestoneLimitations are shown wherever operators look for actions.
 var MilestoneLimitations = []string{
-	"Observe mode (the default) never changes media managers or download clients. Outside it, writes are limited to workflows with a recorded " +
-		"real-instance test for the exact versions: today no-progress and metadata recovery for Sonarr 4.0.20 or Radarr 6.4.4 with qBittorrent 5.3.0, Transmission 4.0.6 or 4.1.4, Deluge 2.2.0, or rTorrent 0.9.8, and only when the manager redownloads failed grabs.",
-	"Preserved-data failure handling acts only on a tracker's confirmed \"not registered\" rejection, and only where it has been tested; partial-pack handling, missing-content searches, and notifications are planned for v1 but not implemented yet.",
-	"Observation is validated only for the released versions listed in docs/compatibility.md; other versions are untested.",
+	"Observe mode (the default) never changes media managers or download clients. Outside it, each workflow writes only where it is enabled " +
+		"and its versions are in an API line where it passed released-instance tests (Sonarr 4, Radarr 6, qBittorrent 4.1+ or 5, Transmission 4, " +
+		"Deluge 2, rTorrent 0.9.8+); other versions are observed only unless [automation] untested_versions = \"act\".",
+	"Recovery leaves replacement downloads to the manager, so it requires the manager's \"Redownload Failed\" setting. Preserved-data failure " +
+		"handling acts only on a tracker's confirmed \"not registered\" rejection. Partial-pack clearance is Sonarr only.",
+	"Lidarr, Usenet clients, and download or library content checks are not covered in v1.",
 }
 
 // Overview builds the landing summary.
@@ -254,6 +257,14 @@ func (s *Service) Connections(ctx context.Context) ([]ConnectionView, error) {
 			continue
 		}
 		v := ConnectionView{ConnectionRecord: r, Freshness: s.freshness(r.LastSuccessAt)}
+		if p := r.Probe; p != nil && p.Compatibility == adapter.CompatUntested {
+			if l, ok := action.LineOf(adapter.Kind(r.Kind), p.Version); ok {
+				cp := *p
+				cp.Compatibility = adapter.CompatSupported
+				cp.CompatNote = "not itself tested; in the " + l.Note + " line, where released-instance tests passed"
+				v.Probe = &cp
+			}
+		}
 		if r.LastSuccessAt != nil {
 			v.Age = policy.HumanDuration(s.now().Sub(*r.LastSuccessAt))
 		}

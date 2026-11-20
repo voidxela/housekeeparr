@@ -65,12 +65,12 @@ func (c *Client) Probe(ctx context.Context) (adapter.Probe, error) {
 	p.Read = adapter.Capabilities{
 		adapter.CapQueue:         {Support: adapter.Supported, Note: fmt.Sprintf("paginated /api/v3/queue, up to %d × %d rows", c.api.MaxPages, c.api.PageSize)},
 		adapter.CapHealth:        {Support: adapter.Supported, Note: "/api/v3/health"},
-		adapter.CapImportHistory: {Support: adapter.NotImplemented, Note: "not used yet"},
+		adapter.CapImportHistory: {Support: adapter.Supported, Note: "history is read for recovery evidence"},
 	}
 	p.Write = adapter.Capabilities{
 		adapter.CapFailGrab:      {Support: adapter.Supported, Note: "DELETE /api/v3/queue/{id} with every flag explicit; complete recovery workflow tested with qBittorrent 5.3.0, Transmission 4.0.6/4.1.4, Deluge 2.2.0, and rTorrent 0.9.8 (docs/compatibility.md)"},
 		adapter.CapDetachQueue:   {Support: adapter.Supported, Note: "same request with blocklist=false; durable only for rows with grab history"},
-		adapter.CapSearchCommand: {Support: adapter.NotImplemented, Note: "replacement searches are left to the manager (skipRedownload=false)"},
+		adapter.CapSearchCommand: {Support: adapter.Supported, Note: "movie searches for missing content; recovery replacements are left to the manager (skipRedownload=false)"},
 	}
 	p.Limitations = []string{"Import diagnostics are Radarr's own messages; Housekeeparr does not yet verify import history or files."}
 	return p, nil
