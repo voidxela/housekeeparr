@@ -406,9 +406,9 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 			Description: "Stop the torrent in the client, retaining it and its data, so it no longer occupies an active slot",
 		})
 		if t.StateClass == domain.StateMetadata {
-			p.Effects = append(p.Effects, "the torrent is stopped and kept in its current category; it has no payload data yet (metadata was never acquired)")
+			p.Effects = append(p.Effects, "the torrent is stopped and kept registered, with its category or label unchanged; it has no payload data yet (metadata was never acquired)")
 		} else {
-			p.Effects = append(p.Effects, "the torrent is stopped and kept, with all downloaded data, in its current category")
+			p.Effects = append(p.Effects, "the torrent is stopped and kept, with all downloaded data and its category or label unchanged")
 		}
 	}
 	// Any replacement is gated on current retained capacity, whether or not

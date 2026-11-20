@@ -102,7 +102,7 @@ type Redownload struct {
 // LiveChecks describes, for previews, what is re-read before every write.
 var LiveChecks = []string{
 	"the torrent is still registered, in the same state, with no new verified progress and the same file selection",
-	"privacy (public) and category are unchanged",
+	"privacy and category (where the client reports them) are unchanged since this preview",
 	"client and manager versions are unchanged since this preview",
 	"no other queue row in any manager refers to this torrent; the planned row is unchanged before the manager step",
 	"before the manager step: the content still exists and is monitored, and the manager reports no download-client or search-indexer failure",
