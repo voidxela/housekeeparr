@@ -192,6 +192,53 @@ type Manager struct {
 	w         managerWrites
 	ms        missingState
 	feed      []arr.HistoryRecord // AddHistory records
+	cov       coverageState
+}
+
+type coverageState struct {
+	groups    []domain.CoverageGroup
+	items     map[int64][]domain.CoverageItem
+	groupErr  error
+	itemErr   error
+	itemReads int
+}
+
+// SetCoverage sets the coverage groups and their items.
+func (m *Manager) SetCoverage(groups []domain.CoverageGroup, items map[int64][]domain.CoverageItem) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.cov.groups, m.cov.items = groups, items
+}
+
+// FailCoverage makes group-list or item reads fail.
+func (m *Manager) FailCoverage(groupErr, itemErr error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.cov.groupErr, m.cov.itemErr = groupErr, itemErr
+}
+
+// CoverageItemReads counts CoverageItems calls.
+func (m *Manager) CoverageItemReads() int { m.mu.Lock(); defer m.mu.Unlock(); return m.cov.itemReads }
+
+// CoverageGroups lists the coverage groups (engine.CoverageReader).
+func (m *Manager) CoverageGroups(context.Context) ([]domain.CoverageGroup, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.cov.groupErr != nil {
+		return nil, m.cov.groupErr
+	}
+	return append([]domain.CoverageGroup(nil), m.cov.groups...), nil
+}
+
+// CoverageItems lists one group's items (engine.CoverageReader).
+func (m *Manager) CoverageItems(_ context.Context, g domain.CoverageGroup, _ time.Time) ([]domain.CoverageItem, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.cov.itemReads++
+	if m.cov.itemErr != nil {
+		return nil, m.cov.itemErr
+	}
+	return append([]domain.CoverageItem(nil), m.cov.items[g.ID]...), nil
 }
 
 // NewManager creates a fake Sonarr-kind manager.
