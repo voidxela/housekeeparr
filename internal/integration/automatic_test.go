@@ -208,21 +208,19 @@ func TestAutomaticRecovery(t *testing.T) {
 		t.Logf("%s: diagnosed by the engine: finding #%d %q", tg.e.Key, s.findings[tg.e.Hash].ID, s.findings[tg.e.Hash].Title)
 	}
 
-	// Is this exact combination registered? The binary plans against the
-	// compiled registry; mirror it to know which outcome to require.
+	// Is this combination supported? The binary plans against the compiled
+	// registry and API lines; mirror it to know which outcome to require.
 	cp := s.probes[clientID]
 	if cp == nil {
 		t.Fatal("no client probe stored")
 	}
 	registered := func(m adapter.Kind, mid string) bool {
 		mp := s.probes[mid]
-		for _, tw := range action.Tested {
-			if mp != nil && tw.Workflow == policy.WorkflowNoProgressRecovery && tw.Manager == m && tw.ManagerVersion == strings.TrimPrefix(mp.Version, "v") &&
-				tw.Client == adapter.Kind(managerClientKind()) && tw.ClientVersion == strings.TrimPrefix(cp.Version, "v") {
-				return true
-			}
+		if mp == nil {
+			return false
 		}
-		return false
+		return action.VersionSupport(action.Tested, policy.WorkflowNoProgressRecovery, action.Side{Kind: m, Version: strings.TrimPrefix(mp.Version, "v")},
+			action.Side{Kind: adapter.Kind(managerClientKind()), Version: strings.TrimPrefix(cp.Version, "v")}, false).OK
 	}
 	eligible := registered(adapter.KindSonarr, "sonarr") && registered(adapter.KindRadarr, "radarr")
 
@@ -239,7 +237,7 @@ func TestAutomaticRecovery(t *testing.T) {
 	if !eligible {
 		// Every other combination the harness runs is registered; a
 		// refusal there is a registry or probe mismatch, not a pass.
-		t.Fatalf("%s %s is not registered with these manager versions; the automatic run cannot exercise it", managerClientKind(), cp.Version)
+		t.Fatalf("%s %s is not supported with these manager versions; the automatic run cannot exercise it", managerClientKind(), cp.Version)
 	}
 	if false {
 		// Unregistered combination: every pass refuses before any request,
