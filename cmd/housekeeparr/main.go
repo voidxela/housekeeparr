@@ -18,6 +18,7 @@ import (
 	"github.com/voidxela/housekeeparr/internal/action"
 	"github.com/voidxela/housekeeparr/internal/app"
 	"github.com/voidxela/housekeeparr/internal/config"
+	"github.com/voidxela/housekeeparr/internal/control"
 	"github.com/voidxela/housekeeparr/internal/engine"
 	"github.com/voidxela/housekeeparr/internal/notify"
 	"github.com/voidxela/housekeeparr/internal/store"
@@ -169,21 +170,68 @@ func openReadOnly(ctx context.Context, cfg *config.Config, errOut io.Writer) (*s
 }
 
 func openWriter(ctx context.Context, cfg *config.Config, errOut io.Writer) (*store.Store, int) {
+	st, _, code := openOrRoute(ctx, cfg, errOut, nil)
+	return st, code
+}
+
+// workerTimeout bounds how long a CLI command waits for the worker's
+// answer; a manual action answers once it has finished.
+const workerTimeout = 15 * time.Minute
+
+// openOrRoute opens the state store as its single writer or, when the
+// running worker owns it and req is set, sends req to the worker over its
+// control socket (SPEC §10) and returns the worker's answer instead. A
+// request whose answer is lost is reported as of unknown outcome and never
+// retried.
+func openOrRoute(ctx context.Context, cfg *config.Config, errOut io.Writer, req *control.Request) (*store.Store, *control.Response, int) {
 	st, err := store.Open(ctx, cfg.State.Dir, store.Options{})
 	if err != nil {
 		var le *store.LockedError
-		if errors.As(err, &le) {
+		if !errors.As(err, &le) {
 			fmt.Fprintln(errOut, err)
-			fmt.Fprintln(errOut, "Local changes such as ack/snooze must go through the running worker's web interface, or stop the worker first.")
-			return nil, exitStateBusy
+			return nil, nil, exitFailure
 		}
-		fmt.Fprintln(errOut, err)
-		return nil, exitFailure
+		if req == nil {
+			fmt.Fprintln(errOut, err)
+			fmt.Fprintln(errOut, "This command needs exclusive use of the state store; stop the worker first.")
+			return nil, nil, exitStateBusy
+		}
+		sctx, cancel := context.WithTimeout(ctx, workerTimeout)
+		defer cancel()
+		resp, err := control.Send(sctx, cfg.State.Dir, *req)
+		switch {
+		case errors.Is(err, control.ErrNoWorker):
+			fmt.Fprintln(errOut, le)
+			fmt.Fprintln(errOut, err)
+			fmt.Fprintln(errOut, "The process holding the store does not accept commands (a one-shot run, or an older worker); retry when it finishes, or use the web interface.")
+			return nil, nil, exitStateBusy
+		case err != nil:
+			fmt.Fprintln(errOut, err)
+			return nil, nil, exitFailure
+		}
+		return nil, &resp, exitOK
 	}
 	for _, w := range st.Warnings() {
 		fmt.Fprintln(errOut, "warning:", w)
 	}
-	return st, exitOK
+	return st, nil, exitOK
+}
+
+// reportRouted prints the running worker's answer to a routed command.
+func reportRouted(out, errOut io.Writer, resp *control.Response, success string) int {
+	switch {
+	case resp.OK:
+		fmt.Fprintln(out, success+" (by the running worker)")
+		return exitOK
+	case resp.NotFound:
+		fmt.Fprintln(errOut, resp.Error)
+		return exitProblem
+	case resp.Refused:
+		fmt.Fprintln(errOut, "refused by the running worker; nothing was sent:", resp.Error)
+		return exitProblem
+	}
+	fmt.Fprintln(errOut, "the running worker reported:", resp.Error)
+	return exitFailure
 }
 
 func newLogger(cfg *config.Config, w io.Writer) *slog.Logger {
@@ -337,6 +385,12 @@ func cmdRun(args []string, out, errOut io.Writer) int {
 	}
 	log.Info("housekeeparr worker starting", "version", version, "mode", cfg.Mode, "config_revision", cfg.Revision,
 		"connections", len(conns.Meta), "interval", cfg.Polling.Interval.Duration)
+	// Headless CLI mutations reach this worker over an owner-only socket.
+	if ctl, err := control.Listen(svc, cfg.State.Dir); err != nil {
+		log.Warn("control socket unavailable: CLI changes are refused while the worker runs", "err", err)
+	} else {
+		defer ctl.Close()
+	}
 	var srv *web.Server
 	if cfg.Web.Enabled && !*headless {
 		wo := web.Options{Listen: cfg.Web.Listen, Logger: log, AllowedHosts: cfg.Web.AllowedHosts, TLSCert: cfg.Web.TLSCert, TLSKey: cfg.Web.TLSKey,
@@ -586,9 +640,9 @@ func cmdActivity(args []string, out, errOut io.Writer) int {
 	return exitOK
 }
 
-func mutateCmd(name string, args []string, out, errOut io.Writer, extra func(*opts) func(*app.Service, int64) error) int {
+func mutateCmd(name string, args []string, out, errOut io.Writer, extra func(*opts) (func(*app.Service, int64) error, func(int64) control.Request)) int {
 	o := newFlags(name, errOut)
-	act := extra(o)
+	act, request := extra(o)
 	pos, err := o.parse(args)
 	if err != nil {
 		return exitUsage
@@ -601,7 +655,11 @@ func mutateCmd(name string, args []string, out, errOut io.Writer, extra func(*op
 	if cfg == nil {
 		return code
 	}
-	st, code := openWriter(context.Background(), cfg, errOut)
+	req := request(id)
+	st, resp, code := openOrRoute(context.Background(), cfg, errOut, &req)
+	if resp != nil {
+		return reportRouted(out, errOut, resp, fmt.Sprintf("finding %d updated", id))
+	}
 	if st == nil {
 		return code
 	}
@@ -619,30 +677,32 @@ func mutateCmd(name string, args []string, out, errOut io.Writer, extra func(*op
 }
 
 func cmdAck(args []string, out, errOut io.Writer) int {
-	return mutateCmd("ack", args, out, errOut, func(*opts) func(*app.Service, int64) error {
+	return mutateCmd("ack", args, out, errOut, func(*opts) (func(*app.Service, int64) error, func(int64) control.Request) {
 		return func(s *app.Service, id int64) error {
 			_, err := s.Acknowledge(context.Background(), id, app.ActorCLI)
 			return err
-		}
+		}, func(id int64) control.Request { return control.Request{Op: "ack", ID: id} }
 	})
 }
 
 func cmdReopen(args []string, out, errOut io.Writer) int {
-	return mutateCmd("reopen", args, out, errOut, func(*opts) func(*app.Service, int64) error {
+	return mutateCmd("reopen", args, out, errOut, func(*opts) (func(*app.Service, int64) error, func(int64) control.Request) {
 		return func(s *app.Service, id int64) error {
 			_, err := s.Reopen(context.Background(), id, app.ActorCLI)
 			return err
-		}
+		}, func(id int64) control.Request { return control.Request{Op: "reopen", ID: id} }
 	})
 }
 
 func cmdSnooze(args []string, out, errOut io.Writer) int {
-	return mutateCmd("snooze", args, out, errOut, func(o *opts) func(*app.Service, int64) error {
+	return mutateCmd("snooze", args, out, errOut, func(o *opts) (func(*app.Service, int64) error, func(int64) control.Request) {
 		d := o.fs.Duration("for", 24*time.Hour, "snooze duration (1h to 2160h)")
 		return func(s *app.Service, id int64) error {
-			_, err := s.Snooze(context.Background(), id, *d, app.ActorCLI)
-			return err
-		}
+				_, err := s.Snooze(context.Background(), id, *d, app.ActorCLI)
+				return err
+			}, func(id int64) control.Request {
+				return control.Request{Op: "snooze", ID: id, Duration: *d}
+			}
 	})
 }
 

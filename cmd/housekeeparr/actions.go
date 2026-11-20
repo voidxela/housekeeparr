@@ -9,6 +9,7 @@ import (
 
 	"github.com/voidxela/housekeeparr/internal/action"
 	"github.com/voidxela/housekeeparr/internal/app"
+	"github.com/voidxela/housekeeparr/internal/control"
 	"github.com/voidxela/housekeeparr/internal/domain"
 	"github.com/voidxela/housekeeparr/internal/engine"
 	"github.com/voidxela/housekeeparr/internal/policy"
@@ -18,16 +19,21 @@ import (
 
 // writerService opens the state store for writing (refusing with exit 3
 // while another process owns it).
-func writerService(o *opts) (*app.Service, func(), int) {
+// writerService opens the state store as its writer or, when the running
+// worker owns it, sends req to the worker and returns its answer instead.
+func writerService(o *opts, req control.Request) (*app.Service, func(), int, *control.Response) {
 	cfg, code := o.loadConfig()
 	if cfg == nil {
-		return nil, nil, code
+		return nil, nil, code, nil
 	}
-	st, code := openWriter(context.Background(), cfg, o.errOut)
+	st, resp, code := openOrRoute(context.Background(), cfg, o.errOut, &req)
+	if resp != nil {
+		return nil, nil, code, resp
+	}
 	if st == nil {
-		return nil, nil, code
+		return nil, nil, code, nil
 	}
-	return app.New(st, cfg, nil, nil), func() { st.Close() }, exitOK
+	return app.New(st, cfg, nil, nil), func() { st.Close() }, exitOK, nil
 }
 
 func cmdPreview(args []string, out, errOut io.Writer) int {
@@ -138,7 +144,10 @@ func cmdAct(args []string, out, errOut io.Writer) int {
 		fmt.Fprintln(errOut, "act requires --confirm; review `housekeeparr preview` first")
 		return exitUsage
 	}
-	svc, done, code := writerService(o)
+	svc, done, code, routed := writerService(o, control.Request{Op: "act", ID: id, Confirm: true})
+	if routed != nil {
+		return reportAct(out, errOut, o.json, routed)
+	}
 	if svc == nil {
 		return code
 	}
@@ -180,6 +189,35 @@ func cmdAct(args []string, out, errOut io.Writer) int {
 		fmt.Fprintf(out, "\naction #%d: %s %s\n", res.IntentID, res.State, res.Detail)
 	}
 	if res.State != store.IntentSucceeded {
+		return exitProblem
+	}
+	return exitOK
+}
+
+// reportAct prints a manual action the running worker carried out.
+func reportAct(out, errOut io.Writer, asJSON bool, resp *control.Response) int {
+	if asJSON {
+		writeJSON(out, map[string]any{"preview": resp.Preview, "result": resp.Result, "error": resp.Error, "by": "worker"})
+	} else if resp.Preview != nil {
+		printPreview(out, resp.Preview)
+	}
+	switch {
+	case resp.NotFound:
+		fmt.Fprintln(errOut, resp.Error)
+		return exitProblem
+	case resp.Refused:
+		fmt.Fprintln(errOut, "refused by the running worker; nothing was sent:", resp.Error)
+		return exitProblem
+	case resp.Error != "":
+		fmt.Fprintln(errOut, "the running worker reported:", resp.Error)
+	}
+	if resp.Result == nil {
+		return exitFailure
+	}
+	if !asJSON {
+		fmt.Fprintf(out, "\naction #%d: %s %s (by the running worker)\n", resp.Result.IntentID, resp.Result.State, resp.Result.Detail)
+	}
+	if resp.Result.State != store.IntentSucceeded {
 		return exitProblem
 	}
 	return exitOK
@@ -275,7 +313,10 @@ func cmdReview(args []string, out, errOut io.Writer) int {
 		return exitUsage
 	}
 	to := store.IntentState(strings.ToLower(*as))
-	svc, done, code := writerService(o)
+	svc, done, code, routed := writerService(o, control.Request{Op: "review", ID: id, To: string(to), Note: *note})
+	if routed != nil {
+		return reportRouted(out, errOut, routed, fmt.Sprintf("action #%d resolved as %s", id, to))
+	}
 	if svc == nil {
 		return code
 	}
@@ -298,7 +339,10 @@ func cmdRestoreAck(args []string, out, errOut io.Writer) int {
 		fmt.Fprintln(errOut, "restore-ack requires --confirm: it accepts this state database as authoritative even though it may predate actions already sent")
 		return exitUsage
 	}
-	svc, done, code := writerService(o)
+	svc, done, code, routed := writerService(o, control.Request{Op: "restore-ack", Confirm: true})
+	if routed != nil {
+		return reportRouted(out, errOut, routed, "restore acknowledged; the journal marker now matches this database")
+	}
 	if svc == nil {
 		return code
 	}
@@ -329,7 +373,10 @@ func cmdAttempts(args []string, out, errOut io.Writer) int {
 			fmt.Fprintln(errOut, "content must be \"<manager-id>|episode:<id>\" or \"<manager-id>|movie:<id>\"")
 			return exitUsage
 		}
-		svc, done, code := writerService(o)
+		svc, done, code, routed := writerService(o, control.Request{Op: "attempts-reset", Ref: pos[0], Note: *note})
+		if routed != nil {
+			return reportRouted(out, errOut, routed, "recovery attempts for "+pos[0]+" reset; earlier attempts remain in the history")
+		}
 		if svc == nil {
 			return code
 		}
@@ -540,7 +587,10 @@ func pauseOrResume(verb string, args []string, out, errOut io.Writer) int {
 		fmt.Fprintf(errOut, "unknown workflow %q (workflows: %s)\n", pos[0], workflowNames())
 		return exitUsage
 	}
-	svc, done, code := writerService(o)
+	svc, done, code, routed := writerService(o, control.Request{Op: verb, Workflow: string(wf), Note: *note})
+	if routed != nil {
+		return reportRouted(out, errOut, routed, string(wf)+" "+verb+"d")
+	}
 	if svc == nil {
 		return code
 	}
