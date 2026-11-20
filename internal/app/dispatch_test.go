@@ -48,6 +48,7 @@ no_progress_recovery = true
 acquisitions = %ACQ%
 acquisition_window = "1h"
 correlated_stalls = %CORR%
+%LIMITS%
 [polling]
 interval = "10m"
 jitter = "0s"
@@ -92,13 +93,23 @@ func newWorld(t *testing.T, mode string, acquisitions int) *world {
 // newWorldWith appends extra TOML (rules, overrides) to the configuration.
 func newWorldWith(t *testing.T, mode string, acquisitions int, extra string) *world {
 	t.Helper()
+	return newWorldLimits(t, mode, acquisitions, "", extra)
+}
+
+// noProbes keeps a correlated-stall hold closed, for tests of what the hold
+// counts.
+const noProbes = `correlated_probe_interval = "0s"`
+
+// newWorldLimits also adds lines to [automation.limits].
+func newWorldLimits(t *testing.T, mode string, acquisitions int, limits, extra string) *world {
+	t.Helper()
 	corr := "3"
 	if acquisitions < 0 {
 		// Negative: many acquisitions and no correlated-stall hold, for
 		// tests with many simultaneous stalls.
 		acquisitions, corr = 100, "1000"
 	}
-	src := strings.NewReplacer("%MODE%", mode, "%ACQ%", itoa(acquisitions), "%CORR%", corr).Replace(autoConfig) + extra
+	src := strings.NewReplacer("%MODE%", mode, "%ACQ%", itoa(acquisitions), "%CORR%", corr, "%LIMITS%", limits).Replace(autoConfig) + extra
 	cfg, _, err := config.Parse([]byte(src), "/x/housekeeparr.toml")
 	if err != nil {
 		t.Fatal(err)
@@ -259,7 +270,7 @@ func TestAutomaticDispatchDoesNotActWhenItMustNot(t *testing.T) {
 			w.stalled(hashA, 1, 1)
 			w.mgr.Fail(&adapter.Error{Class: adapter.ErrTransient, Op: "fake", Message: "down"})
 		}},
-		"correlated stalls on one client": {"automatic", func(w *world) {
+		"correlated stalls on a dark client": {"automatic", func(w *world) {
 			w.stalled(hashA, 1, 1)
 			w.stalled(hashB, 2, 2)
 			w.stalled(hashC, 3, 3)
@@ -267,7 +278,7 @@ func TestAutomaticDispatchDoesNotActWhenItMustNot(t *testing.T) {
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			w := newWorld(t, tc.mode, 20)
+			w := newWorldLimits(t, tc.mode, 20, noProbes, "")
 			tc.setup(w)
 			if name == "slow progress" {
 				for i := 0; i < 24; i++ {
@@ -294,9 +305,9 @@ func TestAutomaticDispatchDoesNotActWhenItMustNot(t *testing.T) {
 					t.Fatalf("evaluated outside automatic mode: %+v", d.Automation)
 				}
 			}
-			if name == "correlated stalls on one client" || name == "unmonitored content" {
+			if name == "correlated stalls on a dark client" || name == "unmonitored content" {
 				d, _ := w.svc.Finding(context.Background(), w.finding(hashA).ID)
-				want := map[string]string{"correlated stalls on one client": store.EvalHeld, "unmonitored content": store.EvalRefused}[name]
+				want := map[string]string{"correlated stalls on a dark client": store.EvalHeld, "unmonitored content": store.EvalRefused}[name]
 				if d.Automation == nil || d.Automation.Result != want {
 					t.Fatalf("automation %+v, want %s", d.Automation, want)
 				}
@@ -451,7 +462,7 @@ func TestManualActionRequiresDiagnosisUnderCurrentSettings(t *testing.T) {
 	w.stalled(hashA, 1, 1)
 	w.run(3 * time.Hour)
 	f := w.finding(hashA)
-	src := strings.NewReplacer("%MODE%", "paused", "%ACQ%", "20", "%CORR%", "3").Replace(autoConfig)
+	src := strings.NewReplacer("%MODE%", "paused", "%ACQ%", "20", "%CORR%", "3", "%LIMITS%", "").Replace(autoConfig)
 	cfg, _, err := config.Parse([]byte(src+"\n[policy]\nno_progress_window = \"24h\"\n"), "/x/housekeeparr.toml")
 	if err != nil {
 		t.Fatal(err)
@@ -504,7 +515,7 @@ func TestScopedSettingsDiagnosisIsCurrentUntilEdited(t *testing.T) {
 	p.run(time.Hour)
 	f := p.finding(hashA)
 	reload := func(extra string) *app.Service {
-		src := strings.NewReplacer("%MODE%", "paused", "%ACQ%", "20", "%CORR%", "3").Replace(autoConfig) + extra
+		src := strings.NewReplacer("%MODE%", "paused", "%ACQ%", "20", "%CORR%", "3", "%LIMITS%", "").Replace(autoConfig) + extra
 		cfg, _, err := config.Parse([]byte(src), "/x/housekeeparr.toml")
 		if err != nil {
 			t.Fatal(err)
@@ -700,7 +711,7 @@ func TestCorrelatedHoldIgnoresAlreadyRecoveredStalls(t *testing.T) {
 }
 
 func TestCorrelatedHoldCountsUnmanagedStalls(t *testing.T) {
-	w := newWorld(t, "automatic", 20)
+	w := newWorldLimits(t, "automatic", 20, noProbes, "")
 	w.stalled(hashA, 1, 1)
 	ts, _ := w.client.ListTransfers(context.Background())
 	// Three more stalled downloads no manager knows about: 4 of 4 stalled.
@@ -744,7 +755,7 @@ func TestUnknownPrivacyTorrentRecoveryEndToEnd(t *testing.T) {
 // plus hash). The same hash on another client, in a shared outage there,
 // still counts: three simultaneous stalls on qbit2 hold recovery.
 func TestRecoveredHashDoesNotHideOtherClientOutage(t *testing.T) {
-	w := newWorld(t, "automatic", 20)
+	w := newWorldLimits(t, "automatic", 20, noProbes, "")
 	w.stalled(hashA, 1, 1)
 	w.run(4 * time.Hour)
 	if len(w.mgr.Removals()) != 1 {
@@ -765,7 +776,7 @@ func TestRecoveredHashDoesNotHideOtherClientOutage(t *testing.T) {
 // associates it again. Once the same release is grabbed again it is a
 // candidate, so with two other stalls it is part of a 3-of-3 shared stall.
 func TestReassociatedRecoveredTransferCountsTowardHold(t *testing.T) {
-	w := newWorld(t, "automatic", 20)
+	w := newWorldLimits(t, "automatic", 20, noProbes, "")
 	w.stalled(hashA, 1, 1)
 	w.client.Update(hashA, func(tr *domain.Transfer) { tr.Private = domain.KnownValue(true) })
 	w.run(4 * time.Hour)

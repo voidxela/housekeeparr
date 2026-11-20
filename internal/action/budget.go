@@ -44,14 +44,19 @@ func acquisitionClaims(l policy.Limits, managerID string, contentKeys []string) 
 	}
 	for _, k := range contentKeys {
 		out = append(out, BudgetClaim{Kind: store.BudgetAttempts, Scope: AttemptScope(managerID, k), Label: "recovery attempts for " + managerID + "|" + k,
-			Limit: l.ContentAttempts, Units: 1, From: l.From("content_attempts")})
+			Window: l.ContentAttemptWindow, Limit: l.ContentAttempts, Units: 1, From: l.From("content_attempts")})
 	}
 	return out
 }
 
-// BudgetCheck explains a claim against its current usage. Pacing and
-// attempt exhaustion are explained differently: pacing defers eligible
-// work and returns by itself; exhausted attempts need review.
+// Returns reports whether the claim's allowance returns by itself as
+// older reservations leave its window (pacing, and windowed attempts);
+// otherwise exhaustion needs review and a reset.
+func (b BudgetClaim) Returns() bool { return b.Kind == store.BudgetPacing || b.Window > 0 }
+
+// BudgetCheck explains a claim against its current usage. Allowances that
+// return by themselves defer eligible work; exhausted attempts without a
+// window need review.
 func BudgetCheck(b BudgetClaim, u store.BudgetUsage) Check {
 	c := Check{Name: b.Label, Satisfied: u.Fits(b.Units), Hard: true}
 	switch b.Kind {
@@ -64,6 +69,17 @@ func BudgetCheck(b BudgetClaim, u store.BudgetUsage) Check {
 			}
 		}
 	case store.BudgetAttempts:
+		if b.Window > 0 {
+			c.Detail = fmt.Sprintf("%d of %d recovery attempts used in the last %s (limit from %s)", u.Used, u.Limit, policy.HumanDuration(b.Window), b.From)
+			if !c.Satisfied {
+				c.Detail += "; each attempt failed a release the evidence showed was not downloading, so this only spaces further replacements " +
+					"of the same content: the finding stays open"
+				if u.NextAt != nil {
+					c.Detail += " and becomes eligible again at " + u.NextAt.UTC().Format(time.RFC3339)
+				}
+			}
+			break
+		}
 		since := "ever"
 		if !u.Since.IsZero() {
 			since = "since the reset at " + u.Since.UTC().Format(time.RFC3339)

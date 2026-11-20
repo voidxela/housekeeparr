@@ -114,8 +114,12 @@ func TestPlanRefusals(t *testing.T) {
 		"content cooldown": {func(in *PlanInput) {
 			in.Cooldowns = map[string]store.CooldownRecord{"content:sonarr|episode:1": {Until: t0.Add(time.Hour), Reason: "action #2"}}
 		}, "not in cooldown"},
-		"no content id":          {func(in *PlanInput) { in.Queue[0].Latest.EpisodeID = 0 }, "content identity known"},
-		"retained count ceiling": {func(in *PlanInput) { in.Retained = store.RetainedUsage{Count: 25} }, "retained-data ceiling"},
+		"no content id": {func(in *PlanInput) { in.Queue[0].Latest.EpisodeID = 0 }, "content identity known"},
+		"retained count ceiling": {func(in *PlanInput) {
+			in.Limits = policy.DefaultLimits()
+			in.Limits.RetainedTransfers = 25
+			in.Retained = store.RetainedUsage{Count: 25}
+		}, "retained-data ceiling"},
 		"retained bytes ceiling": {func(in *PlanInput) {
 			in.Limits = policy.DefaultLimits()
 			in.Limits.RetainedBytes = 100

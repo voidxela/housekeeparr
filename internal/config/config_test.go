@@ -506,10 +506,10 @@ require_pieces_unavailable = false
 			contains: []string{"duplicate"},
 		},
 		{
-			name:     "limits cannot be disabled",
+			name:     "pacing cannot be disabled",
 			extra:    "\n[automation.limits]\nacquisitions = 0\n",
 			field:    "automation.limits.acquisitions",
-			contains: []string{"cannot be disabled"},
+			contains: []string{"between 1 and 1000"},
 		},
 		{
 			name:     "content attempts bounded",

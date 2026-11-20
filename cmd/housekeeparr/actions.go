@@ -411,7 +411,11 @@ func cmdRetained(args []string, out, errOut io.Writer) int {
 	if o.json {
 		return writeJSON(out, map[string]any{"retained": list, "usage": u, "limits": l})
 	}
-	fmt.Fprintf(out, "%d of %d retained transfers", u.Count, l.RetainedTransfers)
+	if l.RetainedTransfers > 0 {
+		fmt.Fprintf(out, "%d of %d retained transfers", u.Count, l.RetainedTransfers)
+	} else {
+		fmt.Fprintf(out, "%d retained transfers (no count ceiling)", u.Count)
+	}
 	if u.Running > 0 {
 		fmt.Fprintf(out, " (%d left running)", u.Running)
 	}

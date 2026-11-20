@@ -171,7 +171,7 @@ func TestPreviewAndActShareTheCoordinator(t *testing.T) {
 		t.Fatalf("no attempts prerequisite in %+v", pv.Proposal.Prerequisites)
 		return ""
 	}
-	if d := attempts(); !strings.HasPrefix(d, "1 of 3 recovery attempts used ever") {
+	if d := attempts(); !strings.HasPrefix(d, "1 of 3 recovery attempts used in the last 24h") {
 		t.Fatalf("attempts detail %q", d)
 	}
 	if err := svc.ResetAttempts(ctx, content, app.ActorCLI, ""); err == nil {
@@ -180,7 +180,7 @@ func TestPreviewAndActShareTheCoordinator(t *testing.T) {
 	if err := svc.ResetAttempts(ctx, content, app.ActorCLI, "checked the manager history"); err != nil {
 		t.Fatal(err)
 	}
-	if d := attempts(); !strings.HasPrefix(d, "0 of 3 recovery attempts used since the reset") {
+	if d := attempts(); !strings.HasPrefix(d, "0 of 3 recovery attempts used in the last 24h") {
 		t.Fatalf("attempts after reset %q", d)
 	}
 	if atts, resets, _ := svc.AttemptHistory(ctx, "attempts:", 0); len(atts) != 1 || len(resets) != 1 {

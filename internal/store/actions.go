@@ -297,12 +297,14 @@ const (
 	// returns as reservations age out.
 	BudgetPacing = "pacing"
 	// BudgetAttempts counts reservations since the scope's last explicit
-	// reset; it never returns by itself.
+	// reset and, when the budget has a Window, within that rolling window
+	// (allowance then returns as attempts age out); without a Window it
+	// never returns by itself.
 	BudgetAttempts = "attempts"
 )
 
 // Budget identifies one limit: a scope counted by kind, against limit
-// units (within Window for pacing).
+// units (within Window for pacing, and for attempts when set).
 type Budget struct {
 	Kind   string
 	Scope  string
@@ -317,8 +319,9 @@ type BudgetUsage struct {
 	// Since is the start of what is counted: the window start for pacing,
 	// the last reset (zero if never reset) for attempts.
 	Since time.Time `json:"since"`
-	// NextAt is when enough pacing allowance returns for units more; nil
-	// when they fit now, or for an attempts budget (which needs a reset).
+	// NextAt is when enough allowance returns for units more; nil when
+	// they fit now, or for an attempts budget without a window (which
+	// needs a reset).
 	NextAt *time.Time `json:"next_at,omitempty"`
 }
 
@@ -337,6 +340,9 @@ func budgetUsage(ctx context.Context, q querier, b Budget, units int, now time.T
 		}
 		if at.Valid {
 			u.Since = fromMS(at.Int64)
+		}
+		if b.Window > 0 && now.Add(-b.Window).After(u.Since) {
+			u.Since = now.Add(-b.Window)
 		}
 	default:
 		return u, fmt.Errorf("unknown budget kind %q", b.Kind)
@@ -363,7 +369,7 @@ func budgetUsage(ctx context.Context, q querier, b Budget, units int, now time.T
 	if err := rows.Err(); err != nil {
 		return u, err
 	}
-	if b.Kind == BudgetPacing && !u.Fits(units) {
+	if b.Window > 0 && !u.Fits(units) {
 		// Allowance returns as the oldest reservations leave the window.
 		excess := u.Used + units - u.Limit
 		for _, x := range uses {

@@ -82,45 +82,55 @@ missing_search = false
 
 [automation.limits]
 # Bounds on actions that start an acquisition (manual and automatic alike).
-# None can be disabled. The values below are implementation proposals, not
-# validated product defaults; adjust them to your installation.
+# Every limit that stops or slows an action exists for a stated safety
+# reason that outweighs leaving the collection incomplete; the defaults are
+# sized so a backlog of dead downloads is worked through in about a day.
 #
-# Pacing spreads eligible work over time across the installation: when it is
-# used up, findings stay open and become eligible again as older actions
-# leave the rolling window. It says nothing about any one item.
-# acquisitions = 20              # all managers, per window
-# manager_acquisitions = 20      # each manager connection, per window
+# Pacing bounds damage from a systematic misdiagnosis and load on indexers
+# (every replacement is a manager search across them): when it is used up,
+# findings stay open and become eligible again as older actions leave the
+# rolling window. It says nothing about any one item.
+# acquisitions = 100             # all managers, per window
+# manager_acquisitions = 100     # each manager connection, per window
 # acquisition_window = "24h"     # rolling; at most 168h and retention.audit_events
 #
-# Content attempts stop repeated ineffective replacement of one episode or
-# movie. They do not return with time: after this many recovery attempts the
-# finding needs review, then `housekeeparr attempts reset <manager>|episode:<id>
-# --note "..."` allows more. Exhaustion never means no other release exists.
+# Content attempts space repeated replacement of one episode or movie: at
+# most this many recovery attempts per rolling window, after which the
+# finding waits for the window. "0s" instead stops after this many attempts
+# until `housekeeparr attempts reset <manager>|episode:<id> --note "..."`.
+# Exhaustion never means no other release exists.
 # content_attempts = 3
+# content_attempt_window = "24h"
 #
-# At most this many automatic actions per observation cycle, one at a time.
-# actions_per_cycle = 1
+# At most this many automatic actions per observation cycle, one at a time,
+# each verified before the next.
+# actions_per_cycle = 5
 #
-# Hold automatic recovery on a client while at least this many downloads,
-# making up at least this share of its active downloads, are stalled
-# together: that suggests a shared cause, not bad releases.
+# Hold automatic recovery on a client when at least this many downloads,
+# making up at least this share of its active downloads, are stalled AND no
+# transfer there (seeding ones included) has a connected peer, a download
+# rate, or recent verified progress: that points to the client's network,
+# VPN or the client itself, where replacing releases would only blocklist
+# healthy ones. Any sign of a working client lifts the hold.
 # correlated_stalls = 3
 # correlated_percent = 50
 #
-# While such a hold is open but another download on that client made verified
-# progress within its window (so the client itself can download), one recovery
-# there passes as a probe per interval. "0s" keeps the hold closed instead.
+# While such a hold is open, one recovery there still passes per interval,
+# so a client whose every transfer is a dead release keeps progressing.
+# "0s" keeps the hold closed instead.
 # correlated_probe_interval = "1h"
 #
-# After a verified recovery, the transfer and its content are not acted on
-# again for this long.
-# success_cooldown = "24h"
+# After a verified recovery, its transfer and content are not acted on again
+# for this long, so the manager's own replacement search and grab settle
+# first. A replacement download still needs its own full diagnosis window.
+# success_cooldown = "1h"
 #
-# Recovery stops a transfer and keeps it, with its data, in the client. At
-# these ceilings recovery stops until retained transfers are removed in the
+# Recovery keeps failed transfers, with their data, in the client (it never
+# adds data: the payload was already there). Optional ceilings stop new
+# replacements once reached, until retained transfers are removed in the
 # client (`housekeeparr retained` lists them). Sizes are logical estimates;
 # free space is not measured.
-# retained_transfers = 25
+# retained_transfers = 0         # 0: no count ceiling
 # retained_gib = 0               # 0: no byte ceiling
 
 [state]

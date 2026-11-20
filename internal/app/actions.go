@@ -345,7 +345,7 @@ func (s *Service) AttemptSummaries(ctx context.Context) ([]AttemptSummary, error
 	if err != nil {
 		return nil, err
 	}
-	limit := s.cfg.Limits().ContentAttempts
+	limit, window := s.cfg.Limits().ContentAttempts, s.cfg.Limits().ContentAttemptWindow
 	last := map[string]time.Time{}
 	var order []string
 	for _, a := range atts {
@@ -364,7 +364,7 @@ func (s *Service) AttemptSummaries(ctx context.Context) ([]AttemptSummary, error
 	now := s.now()
 	var out []AttemptSummary
 	for _, scope := range order {
-		u, err := s.st.BudgetUsage(ctx, store.Budget{Kind: store.BudgetAttempts, Scope: scope, Limit: limit}, 1, now)
+		u, err := s.st.BudgetUsage(ctx, store.Budget{Kind: store.BudgetAttempts, Scope: scope, Window: window, Limit: limit}, 1, now)
 		if err != nil {
 			return nil, err
 		}

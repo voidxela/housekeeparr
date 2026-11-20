@@ -7,6 +7,7 @@ import (
 	"errors"
 	"hash/fnv"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/voidxela/housekeeparr/internal/domain"
@@ -157,6 +158,20 @@ func (t *Tx) SaveTransferSnapshot(snap domain.TransferSnapshot, runID string, mo
 			snap.ClientID, tr.NativeID, snap.ClientID, tr.NativeID, maxPerTransfer); err != nil {
 			return nil, err
 		}
+	}
+	// Complete transfers do not keep their peer and rate signals (see
+	// storedForm), so the latest listing's count of complete transfers in
+	// contact with a swarm is kept per client instead: it shows the client
+	// and its network work (the correlated-stall hold uses it).
+	contact := 0
+	for _, tr := range snap.Transfers {
+		if tr.StateClass == domain.StateComplete && inContact(tr) {
+			contact++
+		}
+	}
+	if _, err := t.exec("INSERT INTO meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+		"complete_contact:"+snap.ClientID, strconv.Itoa(contact)); err != nil {
+		return nil, err
 	}
 	if !snap.Complete {
 		return nil, nil
@@ -464,4 +479,32 @@ func fingerprint(t domain.Transfer) uint64 {
 		v = 1 // 0 is reserved for "not confirmed"
 	}
 	return v
+}
+
+func inContact(tr domain.Transfer) bool {
+	peers, _ := tr.ConnectedPeers.Get()
+	seeds, _ := tr.ConnectedSeeds.Get()
+	rate, _ := tr.DownloadRate.Get()
+	return peers > 0 || seeds > 0 || rate > 0
+}
+
+// CompleteContact returns, per client, how many complete transfers were in
+// contact with their swarm (connected peers or seeds, or a rate) in that
+// client's latest stored listing.
+func (s *Store) CompleteContact(ctx context.Context) (map[string]int, error) {
+	rows, err := s.r.QueryContext(ctx, "SELECT key, value FROM meta WHERE key LIKE 'complete_contact:%'")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			return nil, err
+		}
+		n, _ := strconv.Atoi(v)
+		out[strings.TrimPrefix(k, "complete_contact:")] = n
+	}
+	return out, rows.Err()
 }

@@ -126,13 +126,16 @@ type Limits struct {
 	// ManagerAcquisitions is the same limit for each manager connection.
 	ManagerAcquisitions int `json:"manager_acquisitions"`
 	// ContentAttempts is how many recovery attempts one episode or movie
-	// may have before review is required.
-	ContentAttempts int `json:"content_attempts"`
+	// may have within ContentAttemptWindow (rolling); when the window is
+	// zero, the allowance never returns by itself and review is required.
+	ContentAttempts      int           `json:"content_attempts"`
+	ContentAttemptWindow time.Duration `json:"content_attempt_window"`
 	// SuccessCooldown keeps a recovered transfer and its content from
 	// being acted on again for this long.
 	SuccessCooldown time.Duration `json:"success_cooldown"`
-	// RetainedTransfers is the most transfers recovery may keep stopped
-	// with their data (SPEC §7.1); at the ceiling, recovery stops.
+	// RetainedTransfers optionally bounds the transfers recovery keeps with
+	// their payload (SPEC §7.1); at the ceiling, recovery stops. 0 means no
+	// count ceiling is configured.
 	RetainedTransfers int `json:"retained_transfers"`
 	// RetainedBytes optionally bounds their known logical size; 0 means
 	// no byte ceiling is configured.
@@ -142,22 +145,22 @@ type Limits struct {
 	ActionsPerCycle int `json:"actions_per_cycle"`
 	// CorrelatedStalls and CorrelatedPercent hold automatic recovery on a
 	// client when at least that many downloads, making up at least that
-	// share of its active downloads, are stalled together (a shared cause
+	// share of its active downloads, are stalled together and no transfer
+	// on the client shows network contact or progress (a client-wide cause
 	// rather than bad releases).
 	CorrelatedStalls  int `json:"correlated_stalls"`
 	CorrelatedPercent int `json:"correlated_percent"`
 	// CorrelatedProbeInterval lets one automatic recovery per interval
-	// through a correlated-stall hold on a client while another download
-	// there makes verified progress (the client itself is downloading, so
-	// a client-wide cause is refuted); zero disables probes.
+	// through a correlated-stall hold, so a client whose every transfer is
+	// a dead release still progresses; zero disables probes.
 	CorrelatedProbeInterval time.Duration `json:"correlated_probe_interval"`
 	Sources                 []Source      `json:"sources"`
 }
 
 // DefaultLimits returns the proposed limits.
 func DefaultLimits() Limits {
-	return Limits{Acquisitions: 20, AcquisitionWindow: 24 * time.Hour, ManagerAcquisitions: 20, ContentAttempts: 3, SuccessCooldown: 24 * time.Hour,
-		RetainedTransfers: 25, ActionsPerCycle: 1, CorrelatedStalls: 3, CorrelatedPercent: 50, CorrelatedProbeInterval: time.Hour}
+	return Limits{Acquisitions: 100, AcquisitionWindow: 24 * time.Hour, ManagerAcquisitions: 100, ContentAttempts: 3, ContentAttemptWindow: 24 * time.Hour,
+		SuccessCooldown: time.Hour, ActionsPerCycle: 5, CorrelatedStalls: 3, CorrelatedPercent: 50, CorrelatedProbeInterval: time.Hour}
 }
 
 // From returns where a limit setting came from.

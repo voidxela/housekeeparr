@@ -360,3 +360,35 @@ func TestFingerprintCacheNeverHidesChanges(t *testing.T) {
 		t.Fatal("re-added transfer not marked present")
 	}
 }
+
+// Complete transfers drop their peer signals from storage, so the latest
+// listing's count of complete transfers in contact is kept per client.
+func TestCompleteContactCountsSeedingTransfersWithPeers(t *testing.T) {
+	s := openTest(t, t.TempDir())
+	at := time.Date(2026, 11, 20, 0, 0, 0, 0, time.UTC)
+	seed := transfer("a", domain.StateComplete, 100)
+	seed.ConnectedPeers = domain.KnownValue[int64](2)
+	idle := transfer("b", domain.StateComplete, 100)
+	idle.ConnectedPeers = domain.KnownValue[int64](0)
+	dl := transfer("c", domain.StateDownloading, 10)
+	dl.ConnectedPeers = domain.KnownValue[int64](5)
+	for _, ts := range [][]domain.Transfer{{seed, idle, dl}, {idle, dl}} {
+		if err := s.Write(ctx, func(tx *Tx) error {
+			_, err := tx.SaveTransferSnapshot(domain.TransferSnapshot{ClientID: "qbit", CollectedAt: at, Transfers: ts, Complete: true}, "r", 0, 1000)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		got, err := s.CompleteContact(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := 0
+		if len(ts) == 3 {
+			want = 1
+		}
+		if got["qbit"] != want {
+			t.Fatalf("contact %v, want %d (only complete transfers with peers count)", got, want)
+		}
+	}
+}

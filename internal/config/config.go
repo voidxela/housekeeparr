@@ -157,6 +157,7 @@ type LimitsConfig struct {
 	AcquisitionWindow   *Duration `toml:"acquisition_window"`
 	ManagerAcquisitions *int      `toml:"manager_acquisitions"`
 	ContentAttempts     *int      `toml:"content_attempts"`
+	ContentAttemptWin   *Duration `toml:"content_attempt_window"`
 	SuccessCooldown     *Duration `toml:"success_cooldown"`
 	RetainedTransfers   *int      `toml:"retained_transfers"`
 	RetainedGiB         *int64    `toml:"retained_gib"`
@@ -188,6 +189,10 @@ func (c *Config) Limits() policy.Limits {
 	if c2.ContentAttempts != nil {
 		l.ContentAttempts = *c2.ContentAttempts
 		set("content_attempts", strconv.Itoa(l.ContentAttempts))
+	}
+	if c2.ContentAttemptWin != nil {
+		l.ContentAttemptWindow = c2.ContentAttemptWin.Duration
+		set("content_attempt_window", l.ContentAttemptWindow.String())
 	}
 	if c2.SuccessCooldown != nil {
 		l.SuccessCooldown = c2.SuccessCooldown.Duration
@@ -224,7 +229,7 @@ func validateLimits(errf errFunc, cfg *Config) {
 	l := cfg.Limits()
 	intIn := func(field string, v, lo, hi int) {
 		if v < lo || v > hi {
-			errf("automation.limits."+field, "must be between %d and %d (limits cannot be disabled)", lo, hi)
+			errf("automation.limits."+field, "must be between %d and %d", lo, hi)
 		}
 	}
 	intIn("acquisitions", l.Acquisitions, 1, 1000)
@@ -235,8 +240,13 @@ func validateLimits(errf errFunc, cfg *Config) {
 	} else if l.AcquisitionWindow > cfg.Retention.AuditEvents.Duration {
 		errf("automation.limits.acquisition_window", "must not exceed retention.audit_events, or pacing history would be pruned while still counted")
 	}
-	intIn("retained_transfers", l.RetainedTransfers, 1, 10000)
-	intIn("actions_per_cycle", l.ActionsPerCycle, 1, 10)
+	if w := l.ContentAttemptWindow; w != 0 && (w < time.Hour || w > 30*24*time.Hour) {
+		errf("automation.limits.content_attempt_window", "must be 0s (attempts return only after a reset) or between 1h and 720h")
+	} else if w > cfg.Retention.AuditEvents.Duration {
+		errf("automation.limits.content_attempt_window", "must not exceed retention.audit_events, or attempt history would be pruned while still counted")
+	}
+	intIn("retained_transfers", l.RetainedTransfers, 0, 100000)
+	intIn("actions_per_cycle", l.ActionsPerCycle, 1, 50)
 	intIn("correlated_stalls", l.CorrelatedStalls, 2, 10000)
 	intIn("correlated_percent", l.CorrelatedPercent, 1, 100)
 	if p := l.CorrelatedProbeInterval; p != 0 && (p < 10*time.Minute || p > 24*time.Hour) {

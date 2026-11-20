@@ -263,47 +263,30 @@ func TestAutomaticRecovery(t *testing.T) {
 		return
 	}
 
-	// The first pass dispatches exactly one action (actions_per_cycle is
-	// 1); the other eligible finding waits for the next cycle.
+	// The first pass dispatches both eligible findings (the default
+	// actions_per_cycle is 5), one at a time, each verified before the next.
 	runOnce("automatic pass 1")
 	s = read()
-	if len(s.intents) != 1 {
-		t.Fatalf("pass 1 journaled %d actions, want exactly 1", len(s.intents))
+	if len(s.intents) != 2 {
+		t.Fatalf("pass 1 journaled %d actions, want both eligible findings", len(s.intents))
 	}
 	first := s.intents[0]
-	var firstHash, otherHash string
+	firstHash := ""
 	for _, tg := range targets {
 		ev := s.evals[tg.e.Hash]
 		if ev == nil {
 			t.Fatalf("%s: no automatic evaluation after pass 1", tg.e.Key)
 		}
 		t.Logf("pass 1: %s: %s %s", tg.e.Key, ev.Result, ev.Detail)
-		switch ev.Result {
-		case store.EvalDispatched:
+		if ev.Result != store.EvalDispatched {
+			t.Fatalf("%s: pass 1 result %s (%s), want dispatched", tg.e.Key, ev.Result, ev.Detail)
+		}
+		if ev.IntentID == first.ID {
 			firstHash = tg.e.Hash
-			if ev.IntentID != first.ID {
-				t.Fatalf("%s: dispatched intent %d, journal has %d", tg.e.Key, ev.IntentID, first.ID)
-			}
-		case store.EvalWaiting:
-			otherHash = tg.e.Hash
-		default:
-			t.Fatalf("%s: pass 1 result %s (%s), want one dispatched and one waiting", tg.e.Key, ev.Result, ev.Detail)
 		}
 	}
-	if firstHash == "" || otherHash == "" {
-		t.Fatal("pass 1 did not dispatch one finding and defer the other")
-	}
-	if first.Origin != string(action.OriginAutomatic) || first.State != store.IntentSucceeded {
-		t.Fatalf("intent %d: origin %s state %s (%s)", first.ID, first.Origin, first.State, first.Explanation)
-	}
-
-	runOnce("automatic pass 2")
-	s = read()
-	if len(s.intents) != 2 {
-		t.Fatalf("after pass 2: %d actions, want 2", len(s.intents))
-	}
-	if ev := s.evals[otherHash]; ev == nil || ev.Result != store.EvalDispatched {
-		t.Fatalf("pass 2: waiting finding not dispatched: %+v", ev)
+	if firstHash == "" {
+		t.Fatalf("no evaluation names intent %d", first.ID)
 	}
 	for _, in := range s.intents {
 		if in.Origin != string(action.OriginAutomatic) || in.State != store.IntentSucceeded {
@@ -312,7 +295,7 @@ func TestAutomaticRecovery(t *testing.T) {
 	}
 
 	// Later cycles send nothing more for either finding.
-	for i := 3; i <= 4; i++ {
+	for i := 2; i <= 3; i++ {
 		runOnce(fmt.Sprintf("automatic pass %d", i))
 	}
 	if s = read(); len(s.intents) != 2 {
