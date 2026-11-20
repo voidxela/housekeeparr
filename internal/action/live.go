@@ -178,14 +178,19 @@ func Revalidate(p Proposal, i int, live Live) []Check {
 		add("ownership unchanged", false, fmt.Sprintf("after the grab was failed, %s; it belongs to someone else now", describeRows(live.Associations)))
 	case failedBefore:
 		add("ownership unchanged", true, "no queue row refers to the torrent any more, as expected after failing the grab")
-	case len(live.Associations) != 1:
-		add("ownership unchanged", false, fmt.Sprintf("planned one association, now %s", describeRows(live.Associations)))
+	case len(live.Associations) == 0:
+		add("ownership unchanged", false, "planned an association, now none")
 	default:
-		r := live.Associations[0]
+		// The same rows: one per planned content item (several for a
+		// multi-episode release), all of the planned manager and download,
+		// including the queue item the request names.
 		keys := contentKeys(live.Associations)
-		same := r.ManagerID == pl.ManagerID && r.QueueID == pl.QueueID && strings.EqualFold(r.DownloadID, pl.DownloadID) &&
-			strings.Join(keys, ",") == strings.Join(pl.Content, ",")
-		add("ownership unchanged", same, fmt.Sprintf("planned %s queue item %d for %s, now %s", pl.ManagerID, pl.QueueID,
+		same, target := len(live.Associations) == len(pl.Content) && strings.Join(keys, ",") == strings.Join(pl.Content, ","), false
+		for _, r := range live.Associations {
+			same = same && r.ManagerID == pl.ManagerID && strings.EqualFold(r.DownloadID, pl.DownloadID)
+			target = target || r.QueueID == pl.QueueID
+		}
+		add("ownership unchanged", same && target, fmt.Sprintf("planned %s queue item %d for %s, now %s", pl.ManagerID, pl.QueueID,
 			strings.Join(pl.Content, ", "), describeRows(live.Associations)))
 	}
 
@@ -204,8 +209,13 @@ func Revalidate(p Proposal, i int, live Live) []Check {
 				ok = ok && c.Exists && c.Monitored
 				details = append(details, c.Key+": "+c.Detail)
 			}
-			add("content monitored", ok, strings.Join(details, "; ")+
-				" (a replacement is only wanted, and only searched by the manager, for existing monitored content)")
+			why := " (a replacement is only wanted, and only searched by the manager, for existing monitored content)"
+			if len(pl.Content) > 1 {
+				why = " (a replacement is only wanted for existing monitored content; for a multi-episode release the manager's replacement search " +
+					"covers every episode it contains, including unmonitored ones (observed on Sonarr 4.0.20), so a release with an unmonitored " +
+					"episode is left to you)"
+			}
+			add("content monitored", ok, strings.Join(details, "; ")+why)
 		}
 		const owns = "manager searches for the replacement"
 		switch rd := live.Redownload; {

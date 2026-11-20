@@ -21,6 +21,10 @@ type TestedWorkflow struct {
 	ManagerVersion string
 	Client         adapter.Kind
 	ClientVersion  string
+	// MultiEpisode records that recovery of one release covering several
+	// episodes passed for these versions as well; a multi-episode plan is
+	// checked only against such entries.
+	MultiEpisode bool
 }
 
 // Tested is the registry of supported versionss. Each entry is backed
@@ -213,6 +217,8 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 		}
 	}
 	var row *store.QueueRecord
+	var multi []store.QueueRecord // rows of a multi-episode release, by episode
+	multiLabel := ""
 	var unknownContent []string
 	for _, q := range present {
 		if key, ok := q.Latest.ContentKey(); ok {
@@ -231,9 +237,19 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 			"so nothing more is done here: stop or remove it in the client when you no longer want it", in.RecoveredBy))
 	case len(present) == 0:
 		add("one manager association", false, true, "no manager queue item is correlated with this transfer, so there is no grab to fail")
+	case isPack(present) && wf == policy.WorkflowNoProgressRecovery:
+		rows, label, why := multiEpisode(present, in.ManagerKind)
+		if rows == nil {
+			add("one manager association", false, true, fmt.Sprintf("this download has %d %s queue items, but it is not a recognised multi-episode release (%s); "+
+				"season packs and other multi-item downloads stay observation-only", len(present), present[0].ManagerID, why))
+			break
+		}
+		multi, multiLabel, row = rows, label, &rows[0]
+		add("one manager association", true, true, fmt.Sprintf("%s queue items for %s are one release covering %d episodes (%s), correlated with this transfer",
+			row.ManagerID, multiLabel, len(rows), row.Latest.Title))
 	case isPack(present):
-		add("one manager association", false, true, fmt.Sprintf("this release covers %d %s items (a multi-episode pack); failing it affects every one of them, "+
-			"and pack recovery has not been tested, so it stays observation-only", len(present), present[0].ManagerID))
+		add("one manager association", false, true, fmt.Sprintf("this release covers %d %s items; failing it affects every one of them, and %s of "+
+			"a multi-item release has not been tested, so it stays observation-only", len(present), present[0].ManagerID, wf))
 	default:
 		add("one manager association", false, true, fmt.Sprintf("%d queue items relate to this transfer or the correlation is not exact; ownership is ambiguous", len(present)))
 	}
@@ -256,8 +272,16 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 		// Without a manager association there is nothing to version-check;
 		// the association check already explains the refusal.
 		if row != nil {
-			sup := VersionSupport(in.Tested, wf, Side{in.ManagerKind, mv}, Side{in.ClientKind, cv}, in.UntestedVersions)
-			add("supported versions", sup.OK, true, sup.Detail)
+			tested := in.Tested
+			if multi != nil {
+				tested = multiEpisodeTested(tested)
+			}
+			sup := VersionSupport(tested, wf, Side{in.ManagerKind, mv}, Side{in.ClientKind, cv}, in.UntestedVersions)
+			detail := sup.Detail
+			if multi != nil {
+				detail = "multi-episode recovery: " + detail
+			}
+			add("supported versions", sup.OK, true, detail)
 		}
 	}
 
@@ -376,7 +400,7 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 	// the exact release is blocklisted, removeFromClient=false keeps the
 	// torrent and data, and skipRedownload=false makes the manager the sole
 	// owner of the replacement search.
-	if row != nil {
+	if row != nil && multi == nil {
 		p.Operations = append(p.Operations, Operation{
 			Op: "manager.queue.fail",
 			Target: raw(map[string]any{"manager_id": row.ManagerID, "queue_id": row.QueueID, "download_id": row.DownloadID,
@@ -387,6 +411,28 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 		})
 		p.Effects = append(p.Effects, fmt.Sprintf("%s blocklists this exact release (%q) and stops tracking it", row.ManagerID, row.Latest.Title),
 			fmt.Sprintf("%s starts its own replacement search (manager-native redownload); Housekeeparr does not search as well", row.ManagerID))
+	}
+	if multi != nil {
+		var eps []int64
+		for _, q := range multi {
+			eps = append(eps, q.Latest.EpisodeID)
+		}
+		// One request for the download: on Sonarr, failing one episode's row
+		// fails the whole download (docs/compatibility.md, "Multi-episode
+		// queue semantics").
+		p.Operations = append(p.Operations, Operation{
+			Op: "manager.queue.fail",
+			Target: raw(map[string]any{"manager_id": row.ManagerID, "queue_id": row.QueueID, "download_id": row.DownloadID,
+				"title": row.Latest.Title, "series_id": row.Latest.SeriesID, "episode_id": row.Latest.EpisodeID, "episode_ids": eps}),
+			Request: raw(map[string]bool{"removeFromClient": false, "blocklist": true, "skipRedownload": false, "changeCategory": false}),
+			Expect:  raw(map[string]any{"queue_rows_absent": len(multi), "release_blocklisted": true, "history_event": "downloadFailed"}),
+			Description: fmt.Sprintf("Mark the grab failed in %s through one episode's queue item: Sonarr fails the whole download, removing all %d "+
+				"episodes' queue items and blocklisting this release, keeping the torrent in the client", row.ManagerID, len(multi)),
+		})
+		p.Effects = append(p.Effects,
+			fmt.Sprintf("%s blocklists this exact release (%q) for every episode it covers (%s) and stops tracking it", row.ManagerID, row.Latest.Title, multiLabel),
+			fmt.Sprintf("%s starts one replacement search covering all %d episodes (manager-native redownload); it includes an episode that already "+
+				"has a file, for which the manager's own upgrade rules decide; Housekeeparr does not search as well", row.ManagerID, len(multi)))
 	}
 	if !stop {
 		p.Effects = append(p.Effects, "the torrent is not stopped: it stays active in the client with all its data and keeps seeding what it has")
@@ -417,6 +463,11 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 		var keys []string
 		if key, ok := row.Latest.ContentKey(); ok {
 			keys = append(keys, key)
+		}
+		for _, q := range multi[min(1, len(multi)):] {
+			if key, ok := q.Latest.ContentKey(); ok {
+				keys = append(keys, key)
+			}
 		}
 		p.Budgets = acquisitionClaims(limits, row.ManagerID, keys)
 		p.SideEffects = append(p.SideEffects, fmt.Sprintf("one manager replacement search may query every enabled indexer in %s and grab a release; "+
