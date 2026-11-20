@@ -12,15 +12,28 @@ package integration
 // file.
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/voidxela/housekeeparr/internal/action"
+	"github.com/voidxela/housekeeparr/internal/adapter"
+	"github.com/voidxela/housekeeparr/internal/config"
+	"github.com/voidxela/housekeeparr/internal/domain"
+	"github.com/voidxela/housekeeparr/internal/engine"
+	"github.com/voidxela/housekeeparr/internal/policy"
+	"github.com/voidxela/housekeeparr/internal/store"
+	"github.com/voidxela/housekeeparr/internal/workflow"
 )
 
 type episodeRow struct {
@@ -301,6 +314,41 @@ func probeMultiEpisode(t *testing.T, a arrAPI, me managedEntry, scenario string,
 		}
 	}
 
+	// The semantics observed on Sonarr 4.0.20.3014 (docs/compatibility.md,
+	// "Multi-episode queue semantics"), which the planner relies on: one row
+	// per episode; failing one row fails the whole download, durably; one
+	// blocklist entry for every episode; one downloadFailed per episode and
+	// no new grab; exactly one replacement EpisodeSearch for every episode.
+	want := slices.Sorted(slices.Values(covered))
+	var rowEps []int64
+	for _, r := range rows {
+		rowEps = append(rowEps, r.EpisodeID)
+	}
+	if !slices.Equal(slices.Sorted(slices.Values(rowEps)), want) {
+		t.Errorf("%s: rows before for episodes %v, want %v", scenario, rowEps, want)
+	}
+	if len(obs.RowsImmediately) != 0 || len(obs.RowsAfter) != 0 {
+		t.Errorf("%s: rows left after failing one: immediately %+v, after refreshes %+v", scenario, obs.RowsImmediately, obs.RowsAfter)
+	}
+	if len(obs.Blocklist) != 1 || !slices.Equal(slices.Sorted(slices.Values(obs.Blocklist[0].EpisodeIDs)), want) {
+		t.Errorf("%s: blocklist %+v, want one entry for episodes %v", scenario, obs.Blocklist, want)
+	}
+	failed, grabbed := 0, 0
+	for _, h := range obs.History {
+		switch h.EventType {
+		case "downloadFailed":
+			failed++
+		case "grabbed":
+			grabbed++
+		}
+	}
+	if failed != len(covered) || grabbed != len(covered) {
+		t.Errorf("%s: history has %d downloadFailed and %d grabbed, want %d each", scenario, failed, grabbed, len(covered))
+	}
+	if len(obs.Searches) != 1 || obs.Searches[0].Name != "EpisodeSearch" || !slices.Equal(slices.Sorted(slices.Values(obs.Searches[0].Body.EpisodeIDs)), want) {
+		t.Errorf("%s: replacement searches %+v, want one EpisodeSearch for %v", scenario, obs.Searches, want)
+	}
+
 	// Preservation and durability are required regardless of semantics.
 	if !ok {
 		t.Errorf("%s: torrent no longer registered after removeFromClient=false", scenario)
@@ -323,23 +371,39 @@ func probeMultiEpisode(t *testing.T, a arrAPI, me managedEntry, scenario string,
 // which is recorded as the grab's release source.
 func grabMulti(t *testing.T, a arrAPI, me managedEntry, searchEp int64) {
 	t.Helper()
-	st := a.commandBody(map[string]any{"name": "EpisodeSearch", "episodeIds": []int64{searchEp}})
-	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); time.Sleep(2 * time.Second) {
-		if len(a.episodeRows(me.Hash)) > 0 {
-			t.Logf("%s: grabbed by EpisodeSearch (%s)", me.Key, st)
-			return
-		}
-	}
-	code, b := a.do(http.MethodGet, "/api/v3/release", url.Values{"episodeId": {fmt.Sprint(searchEp)}}, nil)
-	var rels []struct {
+	type candidate struct {
 		GUID       string   `json:"guid"`
 		IndexerID  int64    `json:"indexerId"`
 		Title      string   `json:"title"`
 		Rejected   bool     `json:"rejected"`
 		Rejections []string `json:"rejections"`
 	}
-	if code != 200 || json.Unmarshal(b, &rels) != nil {
-		t.Fatalf("%s: interactive search: HTTP %d %s", me.Key, code, truncate(b))
+	var rels []candidate
+	for attempt := 1; attempt <= 3; attempt++ {
+		st := a.commandBody(map[string]any{"name": "EpisodeSearch", "episodeIds": []int64{searchEp}})
+		for deadline := time.Now().Add(20 * time.Second); time.Now().Before(deadline); time.Sleep(2 * time.Second) {
+			if len(a.episodeRows(me.Hash)) > 0 {
+				t.Logf("%s: grabbed by EpisodeSearch attempt %d (%s)", me.Key, attempt, st)
+				return
+			}
+		}
+		code, b := a.do(http.MethodGet, "/api/v3/release", url.Values{"episodeId": {fmt.Sprint(searchEp)}}, nil)
+		rels = nil
+		if code != 200 || json.Unmarshal(b, &rels) != nil {
+			t.Fatalf("%s: interactive search: HTTP %d %s", me.Key, code, truncate(b))
+		}
+		// An acceptable release that was not grabbed can be the manager
+		// settling right after a change (see waitGrab): search again. A
+		// rejected one is grabbed interactively below.
+		rejected := true
+		for _, r := range rels {
+			if r.Title == me.Name {
+				rejected = r.Rejected
+			}
+		}
+		if rejected {
+			break
+		}
 	}
 	for _, r := range rels {
 		if r.Title != me.Name {
@@ -367,4 +431,281 @@ func sanitizeHistoryData(d map[string]string) map[string]string {
 		}
 	}
 	return out
+}
+
+// TestSonarrMultiEpisodeRecoveryWorkflow runs no-progress recovery of a
+// stalled multi-episode release through Housekeeparr's planner,
+// coordinator, executor and adapters on the released instances: one
+// manager request fails the whole download; each episode gets its own lock,
+// attempt reservation, cooldown and outcome; a private torrent is left
+// running; the payload is unchanged byte for byte. A release with an
+// unmonitored episode is refused before anything is sent. Only the stall
+// diagnosis is supplied, as in runRecoveryMode.
+func TestSonarrMultiEpisodeRecoveryWorkflow(t *testing.T) {
+	mm := managedManifest(t)
+	a := arrAPI{t: t, base: env(t, "HK_IT_SONARR_URL"), key: env(t, "HK_IT_SONARR_KEY")}
+	prepareManager(t, a, env(t, "HK_IT_WORK")+"/library/tv", []int{5000, 5040})
+	sid := ensureSeries(t, a)
+	ep := map[int]int64{}
+	for n := 7; n <= 14; n++ {
+		ep[n] = int64(episodeID(t, a, sid, 3, n))
+	}
+	t.Cleanup(func() {
+		var all []int64
+		for _, id := range ep {
+			all = append(all, id)
+		}
+		a.setMonitored(all, false)
+	})
+	a.setMonitored([]int64{ep[7], ep[8], ep[9], ep[10], ep[11], ep[12], ep[13], ep[14]}, true)
+
+	t.Run("both monitored", func(t *testing.T) {
+		runMultiRecovery(t, a, mm["tv-s03e07e08-multi"], ep[7], []int64{ep[7], ep[8]}, "", true)
+	})
+	t.Run("private, left running", func(t *testing.T) {
+		runMultiRecovery(t, a, mm["tv-s03e09e10-multi-private"], ep[9], []int64{ep[9], ep[10]}, policy.PrivateKeepRunning, true)
+	})
+	t.Run("second unmonitored is refused", func(t *testing.T) {
+		// Grabbed while both are monitored; the second is unmonitored before
+		// the recovery, as a user might.
+		runMultiRecovery(t, a, mm["tv-s03e11e12-multi"], ep[11], []int64{ep[11], ep[12]}, "", false, func() { a.setMonitored([]int64{ep[12]}, false) })
+	})
+	t.Run("first already has a file", func(t *testing.T) {
+		var series struct {
+			Path string `json:"path"`
+		}
+		a.mustJSON(http.MethodGet, fmt.Sprintf("/api/v3/series/%d", sid), nil, nil, &series)
+		seed := filepath.Join(filepath.Dir(env(t, "HK_IT_MANIFEST")), "library-seed", "Housekeeparr.Fixture.Show.S03E13.720p.HDTV.x264-HKFIX.mkv")
+		b, err := os.ReadFile(seed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dst := filepath.Join(series.Path, "Season 03", filepath.Base(seed))
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(dst, b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		for deadline := time.Now().Add(90 * time.Second); !a.episode(ep[13]).HasFile; time.Sleep(2 * time.Second) {
+			a.commandBody(map[string]any{"name": "RescanSeries", "seriesId": sid})
+			if time.Now().After(deadline) {
+				t.Fatalf("S03E13 never picked up the library file %s", dst)
+			}
+		}
+		runMultiRecovery(t, a, mm["tv-s03e13e14-multi"], ep[14], []int64{ep[13], ep[14]}, "", true)
+	})
+}
+
+func runMultiRecovery(t *testing.T, a arrAPI, me managedEntry, searchEp int64, covered []int64, private policy.PrivateMode, wantSent bool, beforePlan ...func()) {
+	t.Helper()
+	ctx := context.Background()
+	e := me.asEntry()
+	grabMulti(t, a, me, searchEp)
+	settleIncomplete(t, me)
+	for _, f := range beforePlan {
+		f()
+	}
+	dir := t.TempDir()
+	dcMap, clientBlock := managerTOMLConfig(t)
+	clientID, clientKind := map[string]string{"qbittorrent": "qbit", "transmission": "tr", "deluge": "deluge", "rtorrent": "rt"}[managerClientKind()],
+		adapter.Kind(managerClientKind())
+	src := "version = 1\n[polling]\njitter = \"0s\"\n[[sonarr]]\nid = \"sonarr\"\nurl = \"" + env(t, "HK_IT_SONARR_URL") +
+		"\"\napi_key = \"env:HK_IT_SONARR_KEY\"\n" + dcMap + "\n" + clientBlock
+	cfg, _, err := config.Parse([]byte(src), filepath.Join(dir, "h.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	secrets, _ := cfg.ResolvedSecrets(nil)
+	conns, err := engine.Build(cfg, secrets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(ctx, dir, store.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	eng, err := engine.New(ctx, engine.Options{Config: cfg, Store: st, Conns: conns, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), RunKind: "once", Version: "it"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Every episode's row is stored and exactly correlated.
+	var stored *store.TransferRecord
+	var rows []store.QueueRecord
+	for i := 0; i < 3; i++ {
+		for _, c := range eng.Cycle(ctx, nil).Connections {
+			if !c.OK {
+				t.Fatalf("cycle %s: %s", c.ID, c.Error)
+			}
+		}
+		stored, _ = st.Transfer(ctx, clientID, e.Hash)
+		rows, _ = st.QueueItems(ctx, store.QueueFilter{ClientID: clientID, NativeID: e.Hash})
+		matched := 0
+		for _, r := range rows {
+			if r.MatchStatus == store.MatchMatched {
+				matched++
+			}
+		}
+		if stored != nil && matched == len(covered) && len(rows) == len(covered) {
+			break
+		}
+	}
+	if stored == nil || len(rows) != len(covered) {
+		t.Fatalf("engine did not record one correlated row per episode: %+v %+v", stored, rows)
+	}
+	var cp, mp *adapter.Probe
+	recs, _ := st.Connections(ctx)
+	for _, c := range recs {
+		switch c.ID {
+		case clientID:
+			cp = c.Probe
+		case "sonarr":
+			mp = c.Probe
+		}
+	}
+	stored.Assessment = &policy.Assessment{Status: policy.StatusQualified, Diagnosis: policy.DiagnosisNoProgress, Headline: "supplied by the integration test",
+		PolicyRevision: policy.Settings{}.Revision()}
+	wf := policy.WorkflowNoProgressRecovery
+	pol := policy.Effective{Mode: "automatic", Revision: "it", Automation: []policy.WorkflowPermission{{Workflow: wf, Enabled: true, From: "integration test"}},
+		UnknownPrivacy: []policy.WorkflowPermission{{Workflow: wf, Enabled: true, From: "integration test"}}}
+	pol.PrivateRecovery, pol.PrivateRecoveryFrom = policy.PrivateKeepRunning, "integration test"
+	in := action.PlanInput{
+		Finding: domain.Finding{ID: 1, Type: domain.FindingTransferStalled, State: domain.FindingOpen}, Transfer: stored, Queue: rows, Policy: pol,
+		Origin: action.OriginAutomatic, ClientKind: clientKind, ClientProbe: cp, ManagerKind: adapter.KindSonarr, ManagerProbe: mp,
+		PollInterval: 10 * time.Minute, Now: time.Now().UTC(),
+		Tested: []action.TestedWorkflow{{Workflow: wf, Manager: adapter.KindSonarr, ManagerVersion: strings.TrimPrefix(mp.Version, "v"),
+			Client: clientKind, ClientVersion: strings.TrimPrefix(cp.Version, "v"), MultiEpisode: true}},
+	}
+	p, np := action.Plan(in)
+	if np != nil {
+		t.Fatal(np.Reason)
+	}
+	if !p.Eligible() {
+		t.Fatalf("multi-episode proposal not eligible: %+v", p.Blockers())
+	}
+	priv, known := stored.Latest.Private.Get()
+	keepRunning := p.PrivateMode == policy.PrivateKeepRunning
+	if private != "" && (!keepRunning || (known && !priv)) {
+		t.Fatalf("private fixture planned as %q (privacy %v)", p.PrivateMode, stored.Latest.Private)
+	}
+	if private == "" && known && priv {
+		t.Fatal("public fixture reported private")
+	}
+	if len(p.Operations) == 0 || p.Operations[0].Op != "manager.queue.fail" {
+		t.Fatalf("operations %+v", p.Operations)
+	}
+	var want []string
+	for _, id := range covered {
+		want = append(want, fmt.Sprintf("episode:%d", id))
+	}
+	slices.Sort(want)
+	if !slices.Equal(p.Planned.Content, want) {
+		t.Fatalf("planned content %v, want %v", p.Planned.Content, want)
+	}
+
+	ex := workflow.FromConnections(conns.Clients, conns.Managers, cfg.ActionTiming)
+	co := &action.Coordinator{Store: st, Executor: ex, Actor: "integration"}
+	before, _ := clientState(t, e.Hash)
+	digest := payloadDigest(t, e)
+	start := time.Now().UTC().Add(-time.Second)
+	res, err := co.Execute(ctx, *p)
+	intent, _ := st.Intent(ctx, res.IntentID)
+	b, _ := json.MarshalIndent(intent.Steps, "", " ")
+	t.Logf("result %+v err=%v\nsteps %s", res, err, b)
+
+	if !wantSent {
+		// Refused live before the manager step: nothing sent, the rows and
+		// the torrent untouched.
+		if err == nil || res.State == store.IntentSucceeded {
+			t.Fatalf("a release with an unmonitored episode was recovered: %+v %v", res, err)
+		}
+		for _, s := range intent.Steps {
+			if s.DispatchedAt != nil {
+				t.Fatalf("step %s was sent", s.Op)
+			}
+		}
+		if !strings.Contains(err.Error(), "including unmonitored ones") && !strings.Contains(fmt.Sprint(res), "including unmonitored ones") {
+			t.Errorf("refusal does not explain the unmonitored episode: %v %+v", err, res)
+		}
+		if n := len(a.episodeRows(e.Hash)); n != len(covered) {
+			t.Errorf("%d rows after a refusal, want %d", n, len(covered))
+		}
+		if d := payloadDigest(t, e); d != digest {
+			t.Errorf("payload changed: %s → %s", digest, d)
+		}
+		if bl := a.blocklistRecords(e.Name); len(bl) != 0 {
+			t.Errorf("blocklisted after a refusal: %+v", bl)
+		}
+		return
+	}
+	if err != nil || res.State != store.IntentSucceeded {
+		t.Fatalf("workflow did not succeed: %+v %v", res, err)
+	}
+	for i := 0; i < 2; i++ {
+		a.command("RefreshMonitoredDownloads")
+		time.Sleep(3 * time.Second)
+	}
+	if rows := a.episodeRows(e.Hash); len(rows) != 0 {
+		t.Errorf("rows left after the recovery: %+v", rows)
+	}
+	if bl := a.blocklistRecords(e.Name); len(bl) != 1 || !slices.Equal(slices.Sorted(slices.Values(bl[0].EpisodeIDs)), slices.Sorted(slices.Values(covered))) {
+		t.Errorf("blocklist %+v, want one entry for %v", bl, covered)
+	}
+	var searches []commandRecord
+	for deadline := time.Now().Add(60 * time.Second); ; time.Sleep(2 * time.Second) {
+		searches = nil
+		for _, c := range a.commandsSince(start) {
+			if c.Trigger == "unspecified" {
+				searches = append(searches, c)
+			}
+		}
+		if len(searches) > 0 || time.Now().After(deadline) {
+			break
+		}
+	}
+	if len(searches) != 1 || searches[0].Name != "EpisodeSearch" || !slices.Equal(slices.Sorted(slices.Values(searches[0].Body.EpisodeIDs)), slices.Sorted(slices.Values(covered))) {
+		t.Errorf("replacement searches %+v, want one EpisodeSearch for %v", searches, covered)
+	}
+	after, ok := clientState(t, e.Hash)
+	wantState := domain.StatePaused
+	if keepRunning {
+		wantState = before.StateClass
+	}
+	if !ok || after.StateClass != wantState || after.Category != before.Category {
+		t.Errorf("client after: present=%v %s/%s category %v (was %s, %v)", ok, after.NativeState, after.StateClass, after.Category, before.StateClass, before.Category)
+	}
+	if d := payloadDigest(t, e); d != digest {
+		t.Errorf("payload changed: %s → %s", digest, d)
+	}
+	// Per episode: a released lock, a cooldown, a reserved attempt, and an
+	// outcome followed separately.
+	for _, k := range want {
+		lock := action.ContentLock("sonarr", k)
+		if h, _ := st.LockHolder(ctx, lock); h != 0 {
+			t.Errorf("%s still held", lock)
+		}
+		if _, _, ok, _ := st.Cooldown(ctx, lock); !ok {
+			t.Errorf("no cooldown on %s", lock)
+		}
+	}
+	usage, _, err := st.AttemptCounts(ctx, "attempts:", 0, 0, time.Now(), 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range want {
+		scope, found := action.AttemptScope("sonarr", k), false
+		for _, u := range usage {
+			found = found || u.Scope == scope && u.Used >= 1
+		}
+		if !found {
+			t.Errorf("no attempt recorded for %s: %+v", scope, usage)
+		}
+	}
+	oc, _ := st.Outcomes(ctx, []int64{res.IntentID})
+	if o := oc[res.IntentID]; len(o.PerContent) != len(covered) {
+		t.Errorf("outcome %+v, want one per episode", o)
+	} else {
+		t.Logf("outcome: %s — %s; search %s", o.State, o.Note, o.Search.State)
+	}
 }

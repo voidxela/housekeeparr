@@ -621,7 +621,7 @@ start_sonarr() {
 		MANAGED_PROBES+=(TestSonarrManagedRemovalSemantics)
 		# The full recovery workflow runs through whichever client the
 		# managers use (--manager-client).
-		MANAGED_PROBES+=(TestSonarrRecoveryWorkflow TestSonarrMetadataRecoveryWorkflow TestSonarrPrivateRecoveryWorkflow TestSonarrPreservedDataFailureWorkflow TestSonarrPrivatePreservedDataFailureWorkflow TestSonarrProactiveSearch TestSonarrPartialPackWorkflow TestSonarrHistoryFeed TestSonarrMultiEpisodeQueueSemantics)
+		MANAGED_PROBES+=(TestSonarrRecoveryWorkflow TestSonarrMetadataRecoveryWorkflow TestSonarrPrivateRecoveryWorkflow TestSonarrPreservedDataFailureWorkflow TestSonarrPrivatePreservedDataFailureWorkflow TestSonarrProactiveSearch TestSonarrPartialPackWorkflow TestSonarrHistoryFeed TestSonarrMultiEpisodeQueueSemantics TestSonarrMultiEpisodeRecoveryWorkflow)
 	fi
 }
 
