@@ -32,6 +32,7 @@ type fakeExec struct {
 	sent        []string
 	observed    []string
 	onDispatch  func(op string)
+	onBaseline  func(op string)
 }
 
 func newFake() *fakeExec {
@@ -70,6 +71,12 @@ func matching(p Proposal, failed bool) Live {
 }
 
 func (f *fakeExec) Baseline(_ context.Context, st store.Step) (json.RawMessage, error) {
+	f.mu.Lock()
+	hook := f.onBaseline
+	f.mu.Unlock()
+	if hook != nil {
+		hook(st.Op)
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.baselineErr[st.Op]; err != nil {

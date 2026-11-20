@@ -95,6 +95,17 @@ work through the release list, but they cannot find a healthy copy that
 the indexers do not offer. Proposal area 1
 ([feature expansion](proposals/feature-expansion-2026-11.md)) targets this.
 
+## Review remediation — 2026-11-20 (second review and implementation plan)
+
+The [Gemini review](reviews/review-2026-11-20.md) of `0c46fa4` (runtime code
+`30ab743`) and the independent implementation plan that corrected it are
+worked through on a short-lived branch from `dev`, in the plan's order.
+Each confirmed defect has a regression test that fails on `30ab743`.
+
+| Item | Finding and fix | Evidence |
+| --- | --- | --- |
+| Journal failures (plan item 1) | `Coordinator.run` discarded errors from its terminal, skipped-step and reservation-release writes and reported a terminal state that was not durable. `ErrJournal` said "no request was sent" even after a request was sent. `DispatchAutomatic` counted such an error as a dispatched candidate and went on to the next one; the worker then ran a proactive search. Now every journal write in `run` is checked. Skipped steps and the terminal state commit in one transaction. A `*JournalError` carries the intent, the stage and whether a request may have taken effect. The result keeps the last durable state. Recovery dispatch stops the pass on a journal error. It saves the evaluation and notification if the store accepts them. The worker's write phase (`Service.DispatchPass`) then starts no search, and logs whether a request may have taken effect. `run --once` exits 1. `DispatchSearches` reconciles first, like recovery dispatch and manual actions (L4). Reconciliation now settles a definitely refused first step as failed and returns its budget; before, it marked it uncertain. | `internal/action/journal_test.go` fails each journal write in turn: the reservation, the high-water marker, the write before the first dispatch, the outcome after upstream acceptance, the write before the second dispatch, and the terminal commits after success, uncertainty and definite refusal. For each, it checks the outbound requests, the durable intent, lock and budget, and what the error tells the operator. It then reconciles on the same database and checks that nothing is re-sent. `internal/app/journal_test.go` covers both pre-send and post-send failures with transient and persistent faults. A second recovery (other manager and client) and a missing-episode search are both eligible in that pass. At `30ab743`, the worker-equivalent sequence with a transient fault sent **2** manager requests and a search. It reported "no request was sent" and returned no error. Now one request is sent and the pass stops. After a restart, the sent request is observed as succeeded and held for review, never repeated, and the unrelated recovery runs once. A scoped refusal (unmonitored content) still lets the other recovery and the search run. |
+
 ## Default-timing validation — 2026-11-19 (continuation)
 
 `review/remediation` (`21638d8`, tested as `63cda18`) was fast-forwarded

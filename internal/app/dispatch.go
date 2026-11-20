@@ -120,6 +120,12 @@ func (s *Service) DispatchAutomatic(ctx context.Context, fresh map[string]bool) 
 			c := &action.Coordinator{Store: s.st, Executor: s.executor, Gate: gate{s}, Now: s.now, Actor: "automation"}
 			res, err := c.Execute(ctx, *pv.Proposal)
 			var ref *action.RefusedError
+			if errors.Is(err, action.ErrJournal) {
+				// A journal integrity failure is not a scoped refusal: no
+				// further acquisition is started in this pass. What is known
+				// is still recorded and notified where the store allows.
+				return s.journalFailure(ctx, rep, f, ev, res, err, now)
+			}
 			switch {
 			case errors.As(err, &ref):
 				ev.Result, ev.Detail = store.EvalRefused, "nothing was sent: "+ref.Error()
@@ -178,6 +184,35 @@ func (s *Service) DispatchAutomatic(ctx context.Context, fresh map[string]bool) 
 		rep.Evaluations = append(rep.Evaluations, ev)
 	}
 	return rep, nil
+}
+
+// journalFailure ends a dispatch pass on a journal failure. The operator
+// is told whether a request may have taken effect; the evaluation and its
+// notification are saved if the store accepts them (best effort: the store
+// may be what failed), and the error is returned so that the caller starts
+// no other acquisition until reconciliation succeeds.
+func (s *Service) journalFailure(ctx context.Context, rep DispatchReport, f domain.Finding, ev store.AutomationEvaluation,
+	res action.Result, err error, now time.Time) (DispatchReport, error) {
+	if action.MaybeSent(err) {
+		ev.Result, ev.IntentID = store.EvalDispatched, res.IntentID
+		ev.Detail = fmt.Sprintf("action #%d: a request was sent, but its outcome could not be recorded (last recorded state %s); "+
+			"it is settled by observation at the next reconciliation and never re-sent; automatic actions stopped for this pass: %v",
+			res.IntentID, res.State, err)
+	} else {
+		ev.Result, ev.IntentID = store.EvalRefused, res.IntentID
+		ev.Detail = "nothing was sent: " + err.Error() + "; automatic actions stopped for this pass"
+	}
+	rep.Evaluations = append(rep.Evaluations, ev)
+	_ = s.st.Write(ctx, func(tx *store.Tx) error {
+		if err := tx.SaveEvaluation(ev); err != nil {
+			return err
+		}
+		if note, ok := automationNotice(f, ev, res.State, now); ok {
+			return notify.EnqueueEvent(tx, s.cfg.Notify, note, now)
+		}
+		return nil
+	})
+	return rep, fmt.Errorf("finding %d: %w", f.ID, err)
 }
 
 // candidates returns active, unsnoozed findings with a workflow whose
@@ -570,6 +605,8 @@ func automationNotice(f domain.Finding, ev store.AutomationEvaluation, outcome s
 		case store.IntentSucceeded:
 		case store.IntentUncertain:
 			sev, verb = domain.SeverityError, "Action needs review"
+		case store.IntentReserved, store.IntentExecuting, store.IntentReconciling:
+			sev, verb = domain.SeverityError, "Action outcome not recorded"
 		default:
 			sev, verb = domain.SeverityWarning, "Action did not complete"
 		}

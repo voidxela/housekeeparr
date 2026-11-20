@@ -83,7 +83,10 @@ type world struct {
 	// restart replaces the engine and service as a new worker process on
 	// the same state store would (a new run, no monotonic continuity).
 	restart func()
+	ex      *workflow.Recovery
 }
+
+func (w *world) executor() *workflow.Recovery { return w.ex }
 
 func newWorld(t *testing.T, mode string, acquisitions int) *world {
 	t.Helper()
@@ -141,6 +144,7 @@ func newWorldLimits(t *testing.T, mode string, acquisitions int, limits, extra s
 	ex := workflow.FromConnections(conns.Clients, conns.Managers, cfg.ActionTiming)
 	ex.Settle, ex.Poll = 50*time.Millisecond, 5*time.Millisecond
 	w.svc.SetExecutor(ex)
+	w.ex = ex
 	w.restart = func() {
 		eng, err := engine.New(context.Background(), engine.Options{Config: cfg, Store: w.st, Conns: conns, Clock: w.clock,
 			Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), RunKind: "test", Version: "test"})

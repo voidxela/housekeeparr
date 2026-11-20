@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/voidxela/housekeeparr/internal/action"
 	"github.com/voidxela/housekeeparr/internal/app"
 	"github.com/voidxela/housekeeparr/internal/config"
 	"github.com/voidxela/housekeeparr/internal/engine"
@@ -275,27 +276,34 @@ func cmdRun(args []string, out, errOut io.Writer) int {
 	// and automatic execution are serialised by the same lock.
 	svc := app.New(st, cfg, nil, eng)
 	svc.SetExecutor(workflow.FromConnections(conns.Clients, conns.Managers, cfg.ActionTiming))
+	var passErr error
 	dispatch := func(ctx context.Context, rep engine.CycleReport) {
-		r, err := svc.DispatchAutomatic(ctx, rep.Fresh())
+		pr := svc.DispatchPass(ctx, rep.Fresh())
+		passErr = pr.Err()
+		r := pr.Recovery
+		for _, e := range r.Evaluations {
+			log.Info("automatic evaluation", "finding", e.FindingID, "result", e.Result, "action", e.IntentID, "detail", e.Detail)
+		}
 		switch {
-		case err != nil:
-			log.Error("automatic dispatch failed; nothing further was sent this cycle", "err", err)
+		case pr.RecoveryErr != nil:
+			logWriteFailure(log, "automatic dispatch", pr.RecoveryErr)
 		case r.Skipped != "":
 			log.Debug("automatic dispatch skipped", "reason", r.Skipped)
 		default:
-			for _, e := range r.Evaluations {
-				log.Info("automatic evaluation", "finding", e.FindingID, "result", e.Result, "action", e.IntentID, "detail", e.Detail)
-			}
 			for scope, why := range r.Breakers {
 				log.Warn("automation held", "scope", scope, "reason", why)
 			}
 		}
-		// At most one proactive search per pass (SPEC §9.1).
-		if sr, err := svc.DispatchSearches(ctx, rep.Fresh()); err != nil {
-			log.Error("proactive search failed; nothing further was sent this cycle", "err", err)
-		} else if sr.Sent != "" {
+		// At most one proactive search per pass (SPEC §9.1), and none after
+		// a recovery pass that stopped on an error.
+		switch sr := pr.Search; {
+		case pr.SearchSkipped != "":
+			log.Warn("proactive search skipped", "reason", pr.SearchSkipped)
+		case pr.SearchErr != nil:
+			logWriteFailure(log, "proactive search", pr.SearchErr)
+		case sr.Sent != "":
 			log.Info("proactive search", "content", sr.Sent, "action", sr.IntentID, "outcome", sr.Outcome)
-		} else if len(sr.Waiting) > 0 {
+		case len(sr.Waiting) > 0:
 			log.Debug("proactive search waiting", "reasons", sr.Waiting)
 		}
 		// Notifications go out after the cycle and dispatch; a failing
@@ -320,10 +328,16 @@ func cmdRun(args []string, out, errOut io.Writer) int {
 		}
 		stopRun("one-shot cycle complete")
 		if o.json {
-			return writeJSON(out, rep)
+			if code := writeJSON(out, rep); code != exitOK || passErr != nil {
+				return exitFailure
+			}
+			return exitOK
 		}
 		printCycle(out, rep)
-		if rep.StoreError != "" {
+		if rep.StoreError != "" || passErr != nil {
+			if passErr != nil {
+				fmt.Fprintln(errOut, "write phase:", passErr)
+			}
 			return exitFailure
 		}
 		for _, c := range rep.Connections {
@@ -698,4 +712,16 @@ func cmdConfig(args []string, out, errOut io.Writer) int {
 		return exitUsage
 	}
 	return exitOK
+}
+
+// logWriteFailure reports a write-phase failure truthfully: whether a
+// request may already have taken effect, and that no further acquisition
+// is started until reconciliation succeeds.
+func logWriteFailure(log *slog.Logger, phase string, err error) {
+	if action.MaybeSent(err) {
+		log.Error(phase+" stopped: a request was sent but its outcome could not be recorded; it will be settled by observation and never re-sent; "+
+			"no further acquisition is started until the journal is reconciled", "err", err)
+		return
+	}
+	log.Error(phase+" stopped before sending anything further; no further acquisition is started until the journal is reconciled", "err", err)
 }

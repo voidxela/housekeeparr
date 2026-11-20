@@ -51,6 +51,7 @@ type managerWrites struct {
 	searchState string // status of queued replacement searches (default "completed")
 	redownload  *arr.RedownloadSettings
 	clock       func() time.Time
+	afterRemove func()
 }
 
 func (m *Manager) now() time.Time {
@@ -135,6 +136,26 @@ func (m *Manager) Commands(context.Context) ([]arr.Command, error) {
 // RemoveQueueItem removes a queue row as the released managers do for a
 // managed grab, never touching the client (removeFromClient must be false).
 func (m *Manager) RemoveQueueItem(_ context.Context, queueID int64, f arr.RemoveFlags) error {
+	err := m.removeQueueItem(queueID, f)
+	m.mu.Lock()
+	hook := m.w.afterRemove
+	m.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	return err
+}
+
+// AfterRemove runs fn after every queue removal has taken its effect and
+// before the response returns (fault injection: the request reached the
+// manager, then the local process failed).
+func (m *Manager) AfterRemove(fn func()) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.w.afterRemove = fn
+}
+
+func (m *Manager) removeQueueItem(queueID int64, f arr.RemoveFlags) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.w.removals = append(m.w.removals, f)
