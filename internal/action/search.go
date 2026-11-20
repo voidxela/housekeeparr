@@ -109,16 +109,7 @@ func PlanSearch(in SearchPlanInput) *Proposal {
 	}
 	add("not backing off", due, d)
 	add("no search in progress", in.Searching == "", nonEmpty(in.Searching, "no other Housekeeparr search is running (one at a time)"))
-	var held []string
-	for _, l := range p.Locks {
-		if h := in.Locks[l]; h != 0 {
-			held = append(held, fmt.Sprintf("action #%d holds %s", h, l))
-		}
-		if c, ok := in.Cooldowns[l]; ok && in.Now.Before(c.Until) {
-			held = append(held, fmt.Sprintf("%s in cooldown until %s (%s)", l, c.Until.UTC().Format(time.RFC3339), c.Reason))
-		}
-	}
-	add("no conflicting action", len(held) == 0, nonEmpty(strings.Join(held, "; "), "nothing holds "+p.Locks[0]))
+	p.Prerequisites = append(p.Prerequisites, lockChecks(p.Locks, in.Locks, in.Cooldowns, in.Now, "")...)
 	// A partial pack's follow-up is permitted by partial_pack (SPEC §8);
 	// every other search by missing_search. The search mechanics (and the
 	// tested registry) are the same.

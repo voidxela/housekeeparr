@@ -365,17 +365,7 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 	}
 
 	// --- exclusivity --------------------------------------------------------
-	var held, cooling []string
-	for _, l := range p.Locks {
-		if h := in.Locks[l]; h != 0 {
-			held = append(held, fmt.Sprintf("action #%d holds %s; it must finish or be reviewed first", h, l))
-		}
-		if c, ok := in.Cooldowns[l]; ok && in.Now.Before(c.Until) {
-			cooling = append(cooling, fmt.Sprintf("%s until %s (%s)", l, c.Until.UTC().Format(time.RFC3339), c.Reason))
-		}
-	}
-	add("no conflicting action", len(held) == 0, true, nonEmpty(strings.Join(held, "; "), "no other action holds "+strings.Join(p.Locks, " or ")))
-	add("not in cooldown", len(cooling) == 0, true, nonEmpty(strings.Join(cooling, "; "), "no cooldown on "+strings.Join(p.Locks, " or ")))
+	p.Prerequisites = append(p.Prerequisites, lockChecks(p.Locks, in.Locks, in.Cooldowns, in.Now, "; it must finish or be reviewed first")...)
 
 	// --- policy -------------------------------------------------------------
 	p.Prerequisites = append(p.Prerequisites, PolicyCheck(in.Policy, wf, in.Origin), PauseCheck(in.Paused, wf))
@@ -439,6 +429,37 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 	return p, nil
 }
 
+// lockChecks are the exclusivity checks for lock subjects: no other action
+// holds one, and none is in a success cooldown. The cooldown check clears
+// by itself when the latest applicable cooldown ends.
+func lockChecks(locks []string, held map[string]int64, cooldowns map[string]store.CooldownRecord, now time.Time, heldNote string) []Check {
+	var holders, cooling []string
+	var until *time.Time
+	for _, l := range locks {
+		if h := held[l]; h != 0 {
+			holders = append(holders, fmt.Sprintf("action #%d holds %s%s", h, l, heldNote))
+		}
+		if c, ok := cooldowns[l]; ok && now.Before(c.Until) {
+			cooling = append(cooling, fmt.Sprintf("%s until %s (%s)", l, c.Until.UTC().Format(time.RFC3339), c.Reason))
+			if until == nil || c.Until.After(*until) {
+				u := c.Until
+				until = &u
+			}
+		}
+	}
+	lock := Check{Name: "no conflicting action", Satisfied: len(holders) == 0, Hard: true,
+		Detail: nonEmpty(strings.Join(holders, "; "), "no other action holds "+strings.Join(locks, " or "))}
+	if !lock.Satisfied {
+		lock.Code = CodeLock
+	}
+	cool := Check{Name: "not in cooldown", Satisfied: len(cooling) == 0, Hard: true,
+		Detail: nonEmpty(strings.Join(cooling, "; "), "no cooldown on "+strings.Join(locks, " or "))}
+	if !cool.Satisfied {
+		cool.Code, cool.Until = CodeCooldown, until
+	}
+	return []Check{lock, cool}
+}
+
 // PauseCheck refuses a workflow an operator paused: unlike disabled
 // automation, a pause stops manual actions too. Planning and the per-write
 // gate use it.
@@ -446,7 +467,7 @@ func PauseCheck(paused *store.WorkflowPause, wf policy.Workflow) Check {
 	if paused == nil {
 		return Check{Name: "workflow not paused", Satisfied: true, Hard: true, Detail: "not paused"}
 	}
-	return Check{Name: "workflow not paused", Hard: true, Detail: fmt.Sprintf("%s was paused by %s at %s: %s (resume it to allow actions again)",
+	return Check{Name: "workflow not paused", Hard: true, Code: CodePaused, Detail: fmt.Sprintf("%s was paused by %s at %s: %s (resume it to allow actions again)",
 		wf, paused.Actor, paused.PausedAt.UTC().Format(time.RFC3339), paused.Note)}
 }
 
@@ -455,7 +476,7 @@ func PauseCheck(paused *store.WorkflowPause, wf policy.Workflow) Check {
 func PolicyCheck(pol policy.Effective, wf policy.Workflow, origin Origin) Check {
 	if origin == OriginAutomatic {
 		ok, reasons := pol.Permits(wf)
-		return Check{Name: "automation permitted by policy", Satisfied: ok, Detail: strings.Join(nonEmptyList(reasons, "permitted"), "; ")}
+		return Check{Name: "automation permitted by policy", Satisfied: ok, Code: CodePolicy, Detail: strings.Join(nonEmptyList(reasons, "permitted"), "; ")}
 	}
 	var reasons []string
 	if pol.Mode == "observe" || pol.Mode == "" {
@@ -471,7 +492,7 @@ func PolicyCheck(pol policy.Effective, wf policy.Workflow, origin Origin) Check 
 			}
 		}
 	}
-	return Check{Name: "manual action permitted by policy", Satisfied: len(reasons) == 0, Detail: strings.Join(nonEmptyList(reasons, "permitted"), "; ")}
+	return Check{Name: "manual action permitted by policy", Satisfied: len(reasons) == 0, Code: CodePolicy, Detail: strings.Join(nonEmptyList(reasons, "permitted"), "; ")}
 }
 
 func planned(in PlanInput, cv, mv string, row *store.QueueRecord, present []store.QueueRecord) Planned {
@@ -579,7 +600,7 @@ func capacityCheck(u store.RetainedUsage, l policy.Limits) Check {
 		d = strings.Join(over, "; ") + ". " + d + ". No replacement is requested in this scope until retained transfers are cleaned up " +
 			"outside Housekeeparr (see housekeeparr retained) or the ceiling is raised"
 	}
-	return Check{Name: "retained-data ceiling", Satisfied: len(over) == 0, Hard: true, Detail: d + capacityLimits}
+	return Check{Name: "retained-data ceiling", Satisfied: len(over) == 0, Hard: true, Code: CodeCapacity, Detail: d + capacityLimits}
 }
 
 // roomCheck is the incremental cost: the transfer this action leaves
@@ -617,7 +638,7 @@ func roomCheck(in PlanInput, l policy.Limits, t *store.TransferRecord, stop bool
 	if !stop {
 		d += "; a running transfer keeps downloading and seeding, so its use can grow up to its logical size"
 	}
-	return Check{Name: "room to retain this transfer", Satisfied: ok, Hard: true, Detail: d}
+	return Check{Name: "room to retain this transfer", Satisfied: ok, Hard: true, Code: CodeCapacity, Detail: d}
 }
 
 // payloadCount is the retained transfers the count ceiling applies to:

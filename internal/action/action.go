@@ -53,7 +53,28 @@ type Check struct {
 	// Hard checks are safety prerequisites that no rule, override, or
 	// manual request can waive.
 	Hard bool `json:"hard"`
+	// Code classifies an unsatisfied check for automation decisions and
+	// explanations; "" is an ordinary prerequisite.
+	Code CheckCode `json:"code,omitempty"`
+	// Until is when an unsatisfied check clears by itself (an allowance or
+	// cooldown expiring); nil when it does not.
+	Until *time.Time `json:"until,omitempty"`
 }
+
+// CheckCode is a stable reason code for a prerequisite.
+type CheckCode string
+
+const (
+	CodePolicy   CheckCode = "policy"   // mode, emergency stop, exclusion or workflow permission
+	CodePaused   CheckCode = "paused"   // an operator paused the workflow
+	CodeCapacity CheckCode = "capacity" // a retained count or byte ceiling, or room for this transfer
+	CodeCooldown CheckCode = "cooldown" // a success cooldown on a lock subject
+	CodePacing   CheckCode = "pacing"   // an acquisition pacing allowance
+	// CodeAttempts is a per-content attempt allowance; with Until it
+	// returns by itself (rolling window), without it only a reset helps.
+	CodeAttempts CheckCode = "attempts"
+	CodeLock     CheckCode = "lock" // another action holds a lock subject
+)
 
 // Operation is one intended external operation. Request must carry every
 // consequential flag explicitly; Expect is the postcondition to verify.

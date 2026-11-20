@@ -245,7 +245,15 @@ func (s *Service) sendSearch(ctx context.Context, it store.MissingRecord, p *act
 	}
 	if errors.As(err, &ref) || (err != nil && res.IntentID == 0) {
 		rep.Waiting = append(rep.Waiting, fmt.Sprintf("%s|%s refused before anything was sent: %v", it.ManagerID, it.ContentKey, err))
-		return rep, nil
+		// Rotate: a live refusal (for example content unmonitored since the
+		// list was read) sits out the next pass, so the same leading items
+		// cannot use up every pass's live evaluations. Its search count and
+		// backoff are unchanged; the next list read settles it.
+		next := s.now().Add(2 * s.cfg.Polling.Interval.Duration)
+		note := fmt.Sprintf("refused by its live check before anything was sent (%v); reconsidered after the next pass", err)
+		return rep, s.st.Write(ctx, func(tx *store.Tx) error {
+			return tx.SetMissingSearch(it.ManagerID, it.ContentKey, it.State, note, nil, nil, &next, false)
+		})
 	}
 	if err != nil {
 		return rep, err

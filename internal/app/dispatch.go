@@ -16,8 +16,11 @@ import (
 	"github.com/voidxela/housekeeparr/internal/store"
 )
 
-// Limit the live reads spent evaluating recovery proposals in one cycle.
-const maxLiveEvaluations = 5
+// maxLiveRefusals is the live-read headroom a pass has beyond its action
+// slots: up to this many candidates refused by their live re-read (nothing
+// sent) cost no slot, while live reads per pass stay bounded at
+// actions_per_cycle + maxLiveRefusals.
+const maxLiveRefusals = 5
 
 // DispatchReport summarises one automatic dispatch pass.
 type DispatchReport struct {
@@ -43,7 +46,8 @@ func (r DispatchReport) Dispatched() int {
 // cycle; findings depending on any other connection wait. At most the
 // configured number of actions are dispatched per pass, one at a time,
 // oldest finding first while rotating across managers; a candidate
-// refused before any write does not use a slot. Each evaluated finding's
+// refused by its live re-read (nothing sent) does not use a slot, and at
+// most maxLiveRefusals such refusals are read per pass. Each evaluated finding's
 // result is persisted so the decision stays visible.
 func (s *Service) DispatchAutomatic(ctx context.Context, fresh map[string]bool) (DispatchReport, error) {
 	var rep DispatchReport
@@ -71,7 +75,7 @@ func (s *Service) DispatchAutomatic(ctx context.Context, fresh map[string]bool) 
 		return rep, nil
 	}
 	now := s.now()
-	breakers, corr, err := s.breakers(ctx, now)
+	breakers, corr, err := s.breakers(ctx, now, fresh)
 	if err != nil {
 		return rep, err
 	}
@@ -81,7 +85,7 @@ func (s *Service) DispatchAutomatic(ctx context.Context, fresh map[string]bool) 
 		return rep, err
 	}
 	limit := s.cfg.Limits().ActionsPerCycle
-	dispatched, live := 0, 0
+	dispatched, refused := 0, 0
 	for _, f := range cands {
 		if ctx.Err() != nil {
 			break
@@ -112,11 +116,14 @@ func (s *Service) DispatchAutomatic(ctx context.Context, fresh map[string]bool) 
 			if h, ok := corr["client:"+pv.Proposal.Planned.ClientID]; ok {
 				ev.NextAt = h.next
 			}
-		case dispatched >= limit || live >= max(maxLiveEvaluations, limit):
+		case dispatched >= limit:
 			ev.Result = store.EvalWaiting
-			ev.Detail = fmt.Sprintf("eligible; this pass already used its %d action slot(s) or live-evaluation bound; it is considered again next cycle", limit)
+			ev.Detail = fmt.Sprintf("eligible; this pass already used its %d action slot(s) (actions_per_cycle); it is considered again next cycle", limit)
+		case dispatched+refused >= limit+maxLiveRefusals:
+			ev.Result = store.EvalWaiting
+			ev.Detail = fmt.Sprintf("eligible; %d candidates before it were refused by their live re-read in this pass, using up the bound on live reads "+
+				"(actions_per_cycle + %d); it is considered again next cycle, ahead of them", refused, maxLiveRefusals)
 		default:
-			live++
 			c := &action.Coordinator{Store: s.st, Executor: s.executor, Gate: gate{s}, Now: s.now, Actor: "automation"}
 			res, err := c.Execute(ctx, *pv.Proposal)
 			var ref *action.RefusedError
@@ -128,8 +135,10 @@ func (s *Service) DispatchAutomatic(ctx context.Context, fresh map[string]bool) 
 			}
 			switch {
 			case errors.As(err, &ref):
+				refused++
 				ev.Result, ev.Detail = store.EvalRefused, "nothing was sent: "+ref.Error()
 			case err != nil && res.IntentID == 0:
+				refused++
 				ev.Result, ev.Detail = store.EvalRefused, "nothing was sent: "+err.Error()
 			default:
 				dispatched++
@@ -146,13 +155,18 @@ func (s *Service) DispatchAutomatic(ctx context.Context, fresh map[string]bool) 
 				}
 				ev.Detail = fmt.Sprintf("action #%d %s: %s", res.IntentID, res.State, res.Detail)
 				if probe != "" {
-					// The probe is used: the rest of the client stays held.
 					ev.Detail = "correlated-stall probe: " + ev.Detail
-					h := corr[probe]
-					h.probe = false
-					next := now.Add(s.cfg.Limits().CorrelatedProbeInterval)
-					h.next = &next
-					corr[probe] = h
+					// The probe is used only if the manager request may have
+					// taken effect, counted as after a restart.
+					if in, err := s.st.Intent(ctx, res.IntentID); err != nil {
+						return rep, err
+					} else if probeSpent(in) {
+						h := corr[probe]
+						h.probe = false
+						next := now.Add(s.cfg.Limits().CorrelatedProbeInterval)
+						h.next = &next
+						corr[probe] = h
+					}
 				}
 				if err != nil {
 					ev.Detail += " (" + err.Error() + ")"
@@ -297,60 +311,52 @@ func (s *Service) candidates(ctx context.Context, fresh map[string]bool) ([]doma
 }
 
 // classify turns an ineligible proposal's blockers into a persisted
-// result: pacing defers until its allowance returns, exhausted attempts
-// need review, the retained ceiling needs cleanup, policy forbids.
-func (s *Service) classify(ctx context.Context, p *action.Proposal, now time.Time) (string, string, *time.Time) {
+// result from their reason codes (never from their wording):
+//   - policy or a pause forbids it: not permitted;
+//   - every blocker clears by itself (pacing, a rolling attempt window, a
+//     cooldown): deferred until the latest of their expiries;
+//   - what remains is only a retained ceiling or room: at the ceiling;
+//   - what remains is only a reset-only attempt allowance: needs review,
+//     because a reset can address it;
+//   - otherwise ineligible, listing every independent blocker.
+func (s *Service) classify(_ context.Context, p *action.Proposal, _ time.Time) (string, string, *time.Time) {
+	blockers := p.Blockers()
 	var names []string
-	for _, b := range p.Blockers() {
+	for _, b := range blockers {
 		names = append(names, b.Name+": "+b.Detail)
 	}
 	detail := strings.Join(names, "; ")
-	has := func(prefix string) bool {
-		for _, b := range p.Blockers() {
-			if strings.HasPrefix(b.Name, prefix) {
-				return true
+	var next *time.Time
+	var lasting []action.Check
+	for _, b := range blockers {
+		if b.Code == action.CodePolicy || b.Code == action.CodePaused {
+			return store.EvalNotPermitted, detail, nil
+		}
+		if b.Until != nil {
+			if next == nil || b.Until.After(*next) {
+				next = b.Until
+			}
+			continue
+		}
+		lasting = append(lasting, b)
+	}
+	only := func(code action.CheckCode) bool {
+		for _, b := range lasting {
+			if b.Code != code {
+				return false
 			}
 		}
-		return false
+		return len(lasting) > 0
 	}
 	switch {
-	case has("automation permitted by policy"), has("workflow not paused"):
-		return store.EvalNotPermitted, detail, nil
-	case has("retained-data ceiling"):
-		return store.EvalAtCeiling, detail, nil
-	case len(p.Blockers()) > 0 && allReturning(p):
-		var next *time.Time
-		for _, b := range p.Budgets {
-			if !b.Returns() {
-				continue
-			}
-			if u, err := s.st.BudgetUsage(ctx, b.Budget(), b.Units, now); err == nil && u.NextAt != nil && (next == nil || u.NextAt.After(*next)) {
-				next = u.NextAt
-			}
-		}
+	case len(blockers) > 0 && len(lasting) == 0:
 		return store.EvalDeferred, detail, next
-	}
-	if has("recovery attempts for") {
+	case only(action.CodeCapacity):
+		return store.EvalAtCeiling, detail, nil
+	case only(action.CodeAttempts):
 		return store.EvalNeedsReview, detail, nil
 	}
 	return store.EvalIneligible, detail, nil
-}
-
-// allReturning reports whether every blocker is a budget whose allowance
-// returns by itself (pacing, or windowed attempts).
-func allReturning(p *action.Proposal) bool {
-	returning := map[string]bool{}
-	for _, b := range p.Budgets {
-		if b.Returns() {
-			returning[b.Label] = true
-		}
-	}
-	for _, c := range p.Blockers() {
-		if !returning[c.Name] {
-			return false
-		}
-	}
-	return true
 }
 
 // actionBreakers returns the scopes ("client:<id>", "manager:<id>") automation
@@ -424,7 +430,13 @@ type correlatedHold struct {
 	next    *time.Time
 }
 
-func (s *Service) breakers(ctx context.Context, now time.Time) (map[string]string, map[string]correlatedHold, error) {
+// breakers returns the scopes automation must not act in. Uncertain-action
+// and repeated-refusal breakers are durable and apply whatever the
+// freshness of the evidence; a correlated-stall hold is evidence about a
+// client's network, so it is evaluated only for clients listed completely
+// in this cycle (fresh). A client without such a listing holds nothing new
+// and dispatches nothing (its findings are not candidates).
+func (s *Service) breakers(ctx context.Context, now time.Time, fresh map[string]bool) (map[string]string, map[string]correlatedHold, error) {
 	out, err := s.actionBreakers(ctx, now)
 	if err != nil {
 		return nil, nil, err
@@ -464,6 +476,9 @@ func (s *Service) breakers(ctx context.Context, now time.Time) (map[string]strin
 	}
 	active, stalled := map[string]int{}, map[string]int{}
 	for _, t := range ts {
+		if !fresh[t.ClientID] {
+			continue
+		}
 		peers, _ := t.Latest.ConnectedPeers.Get()
 		seeds, _ := t.Latest.ConnectedSeeds.Get()
 		rate, _ := t.Latest.DownloadRate.Get()
@@ -527,8 +542,9 @@ func (s *Service) breakers(ctx context.Context, now time.Time) (map[string]strin
 	return out, corr, nil
 }
 
-// lastAutomaticByClient returns, per client, the newest automatic action
-// created since the given time.
+// lastAutomaticByClient returns, per client, when the newest correlated-
+// stall probe since the given time was created: an automatic recovery
+// whose manager request may have taken effect (probeSpent).
 func (s *Service) lastAutomaticByClient(ctx context.Context, since time.Time) (map[string]time.Time, error) {
 	ins, err := s.st.Intents(ctx, store.IntentFilter{Origin: string(action.OriginAutomatic), UpdatedSince: since})
 	if err != nil {
@@ -536,7 +552,7 @@ func (s *Service) lastAutomaticByClient(ctx context.Context, since time.Time) (m
 	}
 	out := map[string]time.Time{}
 	for _, in := range ins {
-		if in.CreatedAt.Before(since) {
+		if in.CreatedAt.Before(since) || !probeSpent(in) {
 			continue
 		}
 		for _, sc := range intentScopes(in) {
@@ -546,6 +562,32 @@ func (s *Service) lastAutomaticByClient(ctx context.Context, since time.Time) (m
 		}
 	}
 	return out, nil
+}
+
+// recoveryWorkflows replace a release through the manager; only they probe
+// a correlated-stall hold.
+var recoveryWorkflows = map[string]bool{string(policy.WorkflowNoProgressRecovery): true, string(policy.WorkflowMetadataRecovery): true,
+	string(policy.WorkflowPreservedDataFailure): true}
+
+// probeSpent reports whether an intent used a correlated-stall probe: a
+// recovery whose manager request was sent and was not definitely refused,
+// so it did, or may have, failed a grab. A cancelled baseline, a definite
+// rejection, or a pack clearance spends nothing; a request whose outcome
+// is unknown counts (and its uncertain-action breaker holds the scope).
+func probeSpent(in store.Intent) bool {
+	if !recoveryWorkflows[in.Workflow] {
+		return false
+	}
+	for _, st := range in.Steps {
+		if st.Op != "manager.queue.fail" {
+			continue
+		}
+		switch st.State {
+		case store.StepSucceeded, store.StepUncertain, store.StepDispatching:
+			return true
+		}
+	}
+	return false
 }
 
 // intentScopes returns the client and manager scopes an intent touched.
