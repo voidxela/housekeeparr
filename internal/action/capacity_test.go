@@ -46,6 +46,11 @@ func TestRetainedCapacityGatesEveryReplacement(t *testing.T) {
 		{name: "retained of unknown size", bytes: true, usage: store.RetainedUsage{Count: 1, UnknownSize: 1}, size: ptr(1), gate: false, room: true},
 		{name: "no-payload records leave room", bytes: true, usage: store.RetainedUsage{Count: 2, NoPayload: 2}, size: ptr(1), gate: true, room: true},
 		{name: "this transfer of unknown size", bytes: true, usage: store.RetainedUsage{}, size: nil, gate: true, room: false},
+		// Production trial, 2026-11-20: one burst of dead grabs stopped 50
+		// magnets before metadata. They hold no payload, so they do not use
+		// the count ceiling (SPEC §7.1).
+		{name: "no-payload records do not count", usage: store.RetainedUsage{Count: limitCount + 10, NoPayload: 11}, gate: true, room: true},
+		{name: "payload records alone reach the ceiling", usage: store.RetainedUsage{Count: limitCount + 10, NoPayload: 10}, gate: false, room: false},
 	}
 	for vname, variant := range variants {
 		for _, tc := range cases {
@@ -104,3 +109,22 @@ func TestPreviewDescribesCurrentTracking(t *testing.T) {
 }
 
 func ptr(v int64) *int64 { return &v }
+
+// A magnet stopped before its metadata arrived adds nothing to the count
+// ceiling, so metadata recovery fits even when the ceiling is reached by one.
+func TestMetadataStopFitsAtTheCountCeiling(t *testing.T) {
+	in := metadataInput()
+	in.Limits = policy.DefaultLimits()
+	in.Limits.RetainedTransfers = 25
+	in.Retained = store.RetainedUsage{Count: 25, NoPayload: 1}
+	p, _ := Plan(in)
+	g, r := find(p.Prerequisites, "retained-data ceiling"), find(p.Prerequisites, "room to retain this transfer")
+	if g == nil || !g.Satisfied || r == nil || !r.Satisfied || !strings.Contains(r.Detail, "not counted") {
+		t.Fatalf("gate %+v\nroom %+v", g, r)
+	}
+	in.Retained = store.RetainedUsage{Count: 25}
+	p, _ = Plan(in)
+	if g := find(p.Prerequisites, "retained-data ceiling"); g == nil || g.Satisfied {
+		t.Fatalf("a reached ceiling of payload-holding transfers still gates: %+v", g)
+	}
+}

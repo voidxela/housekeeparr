@@ -562,8 +562,8 @@ func retainedAdds(t *store.TransferRecord, stop bool) (int64, bool) {
 // transfers of unknown size make the total unknown, which is not room.
 func capacityCheck(u store.RetainedUsage, l policy.Limits) Check {
 	var over []string
-	if u.Count >= l.RetainedTransfers {
-		over = append(over, fmt.Sprintf("the retained-transfer ceiling is reached (%d of %d, from %s)", u.Count, l.RetainedTransfers, l.From("retained_transfers")))
+	if n := payloadCount(u); n >= l.RetainedTransfers {
+		over = append(over, fmt.Sprintf("the retained-transfer ceiling is reached (%d of %d holding payload, from %s)", n, l.RetainedTransfers, l.From("retained_transfers")))
 	}
 	if l.RetainedBytes > 0 {
 		switch {
@@ -590,8 +590,16 @@ func roomCheck(in PlanInput, l policy.Limits, t *store.TransferRecord, stop bool
 	if stop {
 		how = "stopped and kept"
 	}
-	ok := u.Count+1 <= l.RetainedTransfers
-	d := fmt.Sprintf("this transfer is %s and counted as retained: %d of %d transfers afterwards", how, u.Count+1, l.RetainedTransfers)
+	after := payloadCount(u) + 1
+	d := fmt.Sprintf("this transfer is %s and counted as retained: %d of %d transfers holding payload afterwards", how, after, l.RetainedTransfers)
+	if stop && t.StateClass == domain.StateMetadata {
+		// Stopped before metadata, it holds no payload and cannot obtain
+		// any while stopped; it is listed but not counted (SPEC §7.1).
+		after--
+		d = fmt.Sprintf("this transfer is stopped before its metadata arrived, so it holds no payload: it is listed as retained but not counted (%d of %d transfers holding payload)",
+			after, l.RetainedTransfers)
+	}
+	ok := after <= l.RetainedTransfers
 	if l.RetainedBytes > 0 {
 		size, known := retainedAdds(t, stop)
 		switch {
@@ -612,8 +620,12 @@ func roomCheck(in PlanInput, l policy.Limits, t *store.TransferRecord, stop bool
 	return Check{Name: "room to retain this transfer", Satisfied: ok, Hard: true, Detail: d}
 }
 
+// payloadCount is the retained transfers the count ceiling applies to:
+// those stopped before metadata arrived hold no payload and are excluded.
+func payloadCount(u store.RetainedUsage) int { return u.Count - u.NoPayload }
+
 func usageDetail(u store.RetainedUsage, l policy.Limits) string {
-	d := fmt.Sprintf("%d of %d retained transfers (limit from %s)", u.Count, l.RetainedTransfers, l.From("retained_transfers"))
+	d := fmt.Sprintf("%d of %d retained transfers holding payload (limit from %s)", payloadCount(u), l.RetainedTransfers, l.From("retained_transfers"))
 	if u.Running > 0 {
 		d += fmt.Sprintf(", %d of them left running", u.Running)
 	}
@@ -622,7 +634,7 @@ func usageDetail(u store.RetainedUsage, l policy.Limits) string {
 		d += fmt.Sprintf(", %d of unknown size", u.UnknownSize)
 	}
 	if u.NoPayload > 0 {
-		d += fmt.Sprintf(", %d stopped before metadata (no payload)", u.NoPayload)
+		d += fmt.Sprintf("; %d more stopped before metadata (no payload, not counted)", u.NoPayload)
 	}
 	if l.RetainedBytes > 0 {
 		d += fmt.Sprintf("; byte ceiling %s (from %s)", gib(l.RetainedBytes), l.From("retained_gib"))
