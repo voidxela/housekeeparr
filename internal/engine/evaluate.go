@@ -94,6 +94,7 @@ func (e *Engine) evaluateClient(tx *store.Tx, snap domain.TransferSnapshot, gone
 			for _, k := range []string{kindStalled, kindMetadata, kindError, kindSource} {
 				reasons[base+k] = fmt.Sprintf("Verified: the download completed (client state %s).", t.NativeState)
 			}
+			e.diagnoseTransfer(&ev, reasons, activeByKey, base, meta, t, nil, queueByTransfer[t.NativeID], now)
 			continue
 		}
 		rec := byID[t.NativeID]
@@ -190,6 +191,8 @@ func (e *Engine) evaluateClient(tx *store.Tx, snap domain.TransferSnapshot, gone
 				carry(srcF, o)
 			}
 		}
+
+		e.diagnoseTransfer(&ev, reasons, activeByKey, base, meta, t, obs, queue, now)
 
 		// Client-reported error.
 		errF, err := active(kindError)

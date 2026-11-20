@@ -15,6 +15,10 @@ const (
 	kindMetadata = "metadata"
 	kindError    = "error"
 	kindSource   = "source"
+	// kindClientRefused and kindCompleteBlocked are diagnoses that also
+	// apply to complete transfers.
+	kindClientRefused   = "client_refused"
+	kindCompleteBlocked = "complete_blocked"
 )
 
 // Baseline keys recorded when a stall is established.
