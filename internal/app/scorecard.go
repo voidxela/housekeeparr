@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -337,27 +338,67 @@ func (s *Service) recoveryReplacements(ctx context.Context, now time.Time) (Reco
 	}
 	for _, o := range ocs {
 		out.Recoveries++
-		if o.NewDownloadID == "" {
+		// One replacement download, or, for a multi-episode recovery, one
+		// per episode that may differ (schema 24).
+		type grab struct {
+			id string
+			at *time.Time
+		}
+		var grabs []grab
+		seen := map[string]bool{}
+		for _, c := range o.PerContent {
+			if c.NewDownloadID != "" && !seen[strings.ToUpper(c.NewDownloadID)] {
+				seen[strings.ToUpper(c.NewDownloadID)] = true
+				grabs = append(grabs, grab{c.NewDownloadID, c.GrabbedAt})
+			}
+		}
+		if len(o.PerContent) == 0 && o.NewDownloadID != "" {
+			grabs = append(grabs, grab{o.NewDownloadID, o.GrabbedAt})
+		}
+		if len(grabs) == 0 {
 			out.NoGrab++
 			continue
 		}
 		out.Grabbed++
-		evs, err := s.st.HistoryForDownloads(ctx, o.ManagerID, []string{strings.ToUpper(o.NewDownloadID)})
-		if err != nil {
-			return out, err
+		var results []string
+		for _, g := range grabs {
+			evs, err := s.st.HistoryForDownloads(ctx, o.ManagerID, []string{strings.ToUpper(g.id)})
+			if err != nil {
+				return out, err
+			}
+			as := acquisitions(evs, now)
+			switch {
+			case len(as) == 1:
+				results = append(results, as[0].Outcome)
+			case g.at != nil && now.Sub(*g.at) < ScorecardMaturity:
+				results = append(results, OutcomePending)
+			default:
+				// The grab record is not in the history read (yet): unknown.
+				results = append(results, OutcomeUnknown)
+			}
 		}
-		as := acquisitions(evs, now)
-		switch {
-		case len(as) == 1:
-			out.Outcomes[as[0].Outcome]++
-		case o.GrabbedAt != nil && now.Sub(*o.GrabbedAt) < ScorecardMaturity:
-			out.Outcomes[OutcomePending]++
-		default:
-			// The grab record is not in the history read (yet): unknown.
-			out.Outcomes[OutcomeUnknown]++
-		}
+		out.Outcomes[combineOutcomes(results)]++
 	}
 	return out, nil
+}
+
+// combineOutcomes is one recovery's result from its replacement downloads'
+// results: their common result, pending or unknown while any is, and
+// otherwise partial (some of the content imported, some not).
+func combineOutcomes(rs []string) string {
+	same := true
+	for _, r := range rs {
+		same = same && r == rs[0]
+	}
+	switch {
+	case same:
+		return rs[0]
+	case slices.Contains(rs, OutcomePending):
+		return OutcomePending
+	case slices.Contains(rs, OutcomeUnknown):
+		return OutcomeUnknown
+	}
+	return OutcomePartial
 }
 
 const sourceScope = "source:"
