@@ -55,6 +55,19 @@ type Options struct {
 	ReadHeaderTimeout, ReadTimeout, WriteTimeout, IdleTimeout time.Duration
 }
 
+// OptionsFromConfig builds the server options for a configured [web]
+// section; password is the resolved web.password secret ("" for none).
+func OptionsFromConfig(c config.WebConfig, password string, log *slog.Logger) Options {
+	o := Options{Listen: c.Listen, Logger: log, AllowedHosts: c.AllowedHosts, TLSCert: c.TLSCert, TLSKey: c.TLSKey,
+		TrustedProxy: c.TrustedProxy, BasePath: c.BasePath, ReadHeaderTimeout: c.ReadHeaderTimeout.Duration, ReadTimeout: c.ReadTimeout.Duration,
+		WriteTimeout: c.WriteTimeout.Duration, IdleTimeout: c.IdleTimeout.Duration}
+	if c.Password != "" {
+		o.Auth = &Auth{Username: c.Username, Password: password,
+			SessionTTL: c.SessionTTL.Duration, SignInWindow: c.SignInWindow.Duration, SignInFailures: c.SignInFailures}
+	}
+	return o
+}
+
 // Server serves the interface.
 type Server struct {
 	svc     *app.Service
