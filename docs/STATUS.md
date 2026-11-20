@@ -66,6 +66,10 @@ incomplete (SPEC §5). The audit:
 | Repeated-refusal breaker | Unchanged | Unchanged | Avoids repeating a request the application rejects (for example a revoked key) |
 | Multi-episode pack recovery | Observation only | Unchanged for now | Failing a stalled pack row has no released-instance evidence yet; none is stalled on the host. Next: a fixture test, then enable |
 
+`2a61ae4` passed `TestAutomaticRecovery` on released Sonarr, Radarr and
+Transmission 4.0.5, and runs on the host with the built-in limits (the
+trial's limit overrides were removed).
+
 ### Results after three hours of automatic operation
 
 At the checkpoint (2026-11-20 04:16 local), Housekeeparr had dispatched 41
