@@ -8,7 +8,7 @@
 # removed on exit.
 #
 # Usage: scripts/it/run.sh [--clients LIST] [--managers LIST] [--manager-client CLIENT]
-#                          [--qbt 5.3.0|4.6.7] [--tr 4.0.6|4.1.4] [--capture] [--keep]
+#                          [--qbt 5.3.0|4.6.7] [--tr 4.0.5|4.0.6|4.1.4] [--capture] [--keep]
 #   --clients         comma-separated: qbittorrent,transmission,deluge,rtorrent (default qbittorrent)
 #   --managers        comma-separated: sonarr,radarr, or none (default sonarr)
 #   --manager-client  qbittorrent|transmission|deluge|rtorrent (default qbittorrent; must be in --clients)

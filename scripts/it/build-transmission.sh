@@ -4,7 +4,7 @@
 # client build, or system installation. Build tools may come from the host or
 # from Debian packages extracted (not installed) into $CACHE/sysroot.
 #
-# Usage: scripts/it/build-transmission.sh 4.0.6|4.1.4 [jobs]
+# Usage: scripts/it/build-transmission.sh 4.0.5|4.0.6|4.1.4 [jobs]
 set -euo pipefail
 VERSION=$1
 JOBS=${2:-3}
