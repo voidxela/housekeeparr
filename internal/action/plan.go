@@ -253,8 +253,12 @@ func Plan(in PlanInput) (*Proposal, *NoPlan) {
 	// --- version support ------------------------------------------------------
 	cv, mv := probeVersion(in.ClientProbe), probeVersion(in.ManagerProbe)
 	{
-		sup := VersionSupport(in.Tested, wf, Side{in.ManagerKind, mv}, Side{in.ClientKind, cv}, in.UntestedVersions)
-		add("supported versions", sup.OK && row != nil, true, sup.Detail)
+		// Without a manager association there is nothing to version-check;
+		// the association check already explains the refusal.
+		if row != nil {
+			sup := VersionSupport(in.Tested, wf, Side{in.ManagerKind, mv}, Side{in.ClientKind, cv}, in.UntestedVersions)
+			add("supported versions", sup.OK, true, sup.Detail)
+		}
 	}
 
 	// --- finding and evidence -----------------------------------------------
