@@ -665,6 +665,7 @@ if [ "$STANDIN" = 1 ] && has "$MANAGERS" sonarr && has "$MANAGERS" radarr; then
 	MANAGED_PROBES+=(TestAutomaticRecovery TestAutomaticPreservedDataFailure)
 	if [ "$DAEMON" = 1 ]; then MANAGED_PROBES+=(TestDaemonRecovery); fi
 fi
+TESTS+=(TestClientFileLists)
 PROBES+=("${MANAGED_PROBES[@]}")
 if [ -n "${ONLY:-}" ]; then
 	select_only() { local t; for t in "$@"; do [[ "$t" =~ $ONLY ]] && echo "$t"; done; return 0; }
