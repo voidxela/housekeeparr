@@ -103,6 +103,7 @@ func TestSourceFailureClassification(t *testing.T) {
 		{2, "Unregistered torrent", domain.SourceUnregistered, true, domain.StateDownloading},
 		{2, "torrent not registered with this tracker", domain.SourceUnregistered, true, domain.StateDownloading},
 		{2, "Passkey not found", domain.SourceTrackerError, true, domain.StateDownloading},
+		{2, "blacklisted client, update or change client", domain.SourceClientRejected, true, domain.StateDownloading},
 		{2, "Connection refused", domain.SourceTrackerError, true, domain.StateDownloading},
 		{3, "No data found! Ensure your drives are connected", "", false, domain.StateError},
 	} {

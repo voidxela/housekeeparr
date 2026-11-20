@@ -139,9 +139,22 @@ const (
 	// SourceUnregistered: a tracker reports the torrent is not registered
 	// (removed, deleted, or unknown to it). The only qualifying cause.
 	SourceUnregistered SourceFailure = "unregistered"
+	// SourceClientRejected: a tracker refuses this client or its version
+	// (for example "blacklisted client, update or change client"). The
+	// release is not dead: replacing it does not fix the client.
+	SourceClientRejected SourceFailure = "client_rejected"
 	// SourceTrackerError: any other tracker error; never qualifying.
 	SourceTrackerError SourceFailure = "tracker_error"
 )
+
+// clientRejectedPhrases are lower-cased tracker failure reasons that mean
+// the tracker refuses the client software or its version. Deliberately
+// small: each names the client and a refusal.
+var clientRejectedPhrases = []string{
+	"blacklisted client", "client is blacklisted", "client blacklisted", "banned client", "client is banned", "client banned",
+	"client not allowed", "client is not allowed", "client not whitelisted", "client is not whitelisted", "unsupported client",
+	"client is not supported", "client version not allowed", "client version is not allowed", "update or change client",
+}
 
 // unregisteredPhrases are lower-cased tracker failure reasons that mean
 // the tracker does not (or no longer) know the torrent. The set is
@@ -158,6 +171,11 @@ func ClassifyTrackerError(msg string) SourceFailure {
 	for _, p := range unregisteredPhrases {
 		if strings.Contains(m, p) {
 			return SourceUnregistered
+		}
+	}
+	for _, p := range clientRejectedPhrases {
+		if strings.Contains(m, p) {
+			return SourceClientRejected
 		}
 	}
 	return SourceTrackerError
