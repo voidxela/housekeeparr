@@ -29,6 +29,13 @@
   </a>
 </section>
 
+{{with .Holds}}{{if .Holds}}
+<section class="card" aria-labelledby="h-holds">
+  <h2 id="h-holds">Automation held</h2>
+  <p class="muted small">As of the last automatic pass, {{clock .EvaluatedAt}}. Each hold names its evidence; it lifts by itself or after the review it names.</p>
+  <ul>{{range .Holds}}<li><code>{{.Scope}}</code>: {{.Reason}}{{if .Correlated}}{{if .Probing}}{{with .NextProbe}} <span class="muted small">(next probe {{clock .}})</span>{{else}} <span class="muted small">(a probe may pass now)</span>{{end}}{{else}} <span class="muted small">(probes are off)</span>{{end}}{{end}}</li>{{end}}</ul>
+</section>
+{{end}}{{end}}
 <div class="grid-2">
 <section class="card" aria-labelledby="h-top">
   <div class="card-head"><h2 id="h-top">Most important</h2><a href="{{base}}/attention" class="small">All findings →</a></div>

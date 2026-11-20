@@ -193,10 +193,8 @@ func (s *Server) page(fn pageFunc) http.HandlerFunc {
 		name, title, data, err := fn(r)
 		ld := layoutData{Title: title, Nav: name, Demo: s.svc.Origin() == store.OriginDemo, CSRF: s.csrfToken(r), Authed: s.auth != nil,
 			Mode: s.svc.Mode(), Now: s.svc.Now(), Page: data, Notice: s.noticeFor(r.URL.Query().Get("notice"))}
-		if c, cerr := s.svc.Overview(r.Context()); cerr == nil {
-			ld.Attention = c.Counts.Open + c.Counts.Acknowledged
-			ld.Worker = &c.Worker
-			ld.Warnings = c.Warnings
+		if c, cerr := s.svc.Layout(r.Context()); cerr == nil {
+			ld.Attention, ld.Worker, ld.Warnings = c.Attention, c.Worker, c.Warnings
 		}
 		status := http.StatusOK
 		if err != nil {

@@ -60,6 +60,16 @@ func printOverview(w io.Writer, o *app.Overview) {
 		fmt.Fprintln(w, "*** DEMO DATA — synthetic, not observations of your services ***")
 	}
 	fmt.Fprintf(w, "Mode:     %s (configuration revision %s): %s\n", o.ModeStatus.Label, o.ConfigRevision, o.ModeStatus.Note)
+	if h := o.Holds; h != nil && len(h.Holds) > 0 {
+		fmt.Fprintf(w, "Automation held (last pass %s):\n", ts(&h.EvaluatedAt))
+		for _, x := range h.Holds {
+			line := "  " + x.Scope + ": " + x.Reason
+			if x.Correlated && x.NextProbe != nil {
+				line += " (next probe " + ts(x.NextProbe) + ")"
+			}
+			fmt.Fprintln(w, line)
+		}
+	}
 	fmt.Fprintf(w, "Worker:   %s — %s\n", o.Worker.State, o.Worker.Explanation)
 	if len(o.Automation) > 0 {
 		var parts []string

@@ -57,11 +57,11 @@ func (s *Service) DispatchAutomatic(ctx context.Context, fresh map[string]bool) 
 	}
 	if s.cfg.Mode != "automatic" {
 		rep.Skipped = "mode is " + string(s.cfg.Mode) + "; automatic dispatch runs only in automatic mode"
-		return rep, nil
+		return rep, s.saveHolds(ctx, AutomationHolds{EvaluatedAt: s.now(), Skipped: rep.Skipped})
 	}
 	if s.cfg.Automation.EmergencyStop {
 		rep.Skipped = "emergency stop is set"
-		return rep, nil
+		return rep, s.saveHolds(ctx, AutomationHolds{EvaluatedAt: s.now(), Skipped: rep.Skipped})
 	}
 	s.execMu.Lock()
 	defer s.execMu.Unlock()
@@ -80,6 +80,18 @@ func (s *Service) DispatchAutomatic(ctx context.Context, fresh map[string]bool) 
 		return rep, err
 	}
 	rep.Breakers = breakers
+	holds := AutomationHolds{EvaluatedAt: now}
+	for sc, why := range breakers {
+		h := Hold{Scope: sc, Reason: why}
+		if c, ok := corr[sc]; ok {
+			h.Correlated, h.Probing, h.NextProbe = true, c.probing, c.next
+		}
+		holds.Holds = append(holds.Holds, h)
+	}
+	sort.Slice(holds.Holds, func(i, j int) bool { return holds.Holds[i].Scope < holds.Holds[j].Scope })
+	if err := s.saveHolds(ctx, holds); err != nil {
+		return rep, err
+	}
 	cands, err := s.candidates(ctx, fresh)
 	if err != nil {
 		return rep, err
@@ -227,6 +239,42 @@ func (s *Service) journalFailure(ctx context.Context, rep DispatchReport, f doma
 		return nil
 	})
 	return rep, fmt.Errorf("finding %d: %w", f.ID, err)
+}
+
+// AutomationHolds is what the last automatic pass held, and when it was
+// evaluated: shown on the overview and in status between passes.
+type AutomationHolds struct {
+	EvaluatedAt time.Time `json:"evaluated_at"`
+	// Skipped is why the pass did not evaluate anything (mode, stop).
+	Skipped string `json:"skipped,omitempty"`
+	Holds   []Hold `json:"holds,omitempty"`
+}
+
+// Hold is one held scope.
+type Hold struct {
+	Scope  string `json:"scope"`
+	Reason string `json:"reason"`
+	// Correlated holds are correlated-stall holds; NextProbe is when the
+	// next probe recovery may pass (nil: one may pass now, or probes off).
+	Correlated bool       `json:"correlated,omitempty"`
+	Probing    bool       `json:"probing,omitempty"`
+	NextProbe  *time.Time `json:"next_probe,omitempty"`
+}
+
+const holdsKey = "automation_holds"
+
+func (s *Service) saveHolds(ctx context.Context, h AutomationHolds) error {
+	return s.st.Write(ctx, func(tx *store.Tx) error { return tx.SetMetaJSON(holdsKey, h) })
+}
+
+// LastHolds returns the holds of the last automatic pass, if any.
+func (s *Service) LastHolds(ctx context.Context) (*AutomationHolds, error) {
+	var h AutomationHolds
+	ok, err := s.st.MetaJSON(ctx, holdsKey, &h)
+	if err != nil || !ok {
+		return nil, err
+	}
+	return &h, nil
 }
 
 // candidates returns active, unsnoozed findings with a workflow whose

@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -73,6 +74,8 @@ type Store struct {
 	readOnly bool
 	warnings []string
 	now      func() time.Time
+
+	execs atomic.Int64
 
 	faultMu    sync.Mutex
 	fault      error
@@ -392,6 +395,7 @@ type Tx struct {
 	ctx       context.Context
 	confirmed map[string]uint64
 	pending   map[string]uint64
+	execs     *atomic.Int64
 }
 
 // Write runs fn in a single write transaction.
@@ -421,7 +425,7 @@ func (s *Store) Write(ctx context.Context, fn func(*Tx) error) error {
 	if s.confirmed == nil {
 		s.confirmed = map[string]uint64{}
 	}
-	wtx := &Tx{tx: tx, ctx: ctx, confirmed: s.confirmed, pending: map[string]uint64{}}
+	wtx := &Tx{tx: tx, ctx: ctx, confirmed: s.confirmed, pending: map[string]uint64{}, execs: &s.execs}
 	if err := fn(wtx); err != nil {
 		tx.Rollback()
 		return err
@@ -443,8 +447,15 @@ func (s *Store) Write(ctx context.Context, fn func(*Tx) error) error {
 }
 
 func (t *Tx) exec(q string, args ...any) (sql.Result, error) {
+	if t.execs != nil {
+		t.execs.Add(1)
+	}
 	return t.tx.ExecContext(t.ctx, q, args...)
 }
+
+// Statements returns how many write statements this store has executed
+// (for measurements of write volume).
+func (s *Store) Statements() int64 { return s.execs.Load() }
 func (t *Tx) query(q string, args ...any) (*sql.Rows, error) {
 	return t.tx.QueryContext(t.ctx, q, args...)
 }

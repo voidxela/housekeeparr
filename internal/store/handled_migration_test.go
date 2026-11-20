@@ -117,7 +117,7 @@ func TestRetainedDispositionAndRefresh(t *testing.T) {
 		t.Fatalf("running, unknown size: %+v (a running transfer can obtain payload)", u)
 	}
 	write(func(tx *Tx) error {
-		return tx.RecordRetained(RetainedTransfer{ClientID: "q", NativeID: "a", IntentID: 1, Disposition: RetainedStopped, RetainedAt: time.Unix(2, 0)})
+		return tx.RecordRetained(RetainedTransfer{ClientID: "q", NativeID: "a", IntentID: 1, Disposition: RetainedStopped, NoPayload: true, RetainedAt: time.Unix(2, 0)})
 	})
 	if u, _ := s.RetainedUsage(ctx); u.Count != 1 || u.Running != 0 || u.NoPayload != 1 {
 		t.Fatalf("stopped, no payload: %+v", u)
@@ -600,5 +600,48 @@ func TestCooldownStartsAfterUpgrade(t *testing.T) {
 				t.Errorf("recorded ends: %+v", cs)
 			}
 		})
+	}
+}
+
+// No payload is counted only on positive evidence (P3): recorded at
+// retention, or, for a row from before that was recorded, the client still
+// listing the transfer as acquiring metadata. A stopped transfer with an
+// unknown wanted size and zero verified bytes is otherwise of unknown size.
+func TestRetainedNoPayloadNeedsPositiveEvidence(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	db := buildSchema(t, dir, "0022", 21)
+	for _, q := range []string{
+		// Legacy rows: one still a magnet in the client, one a stopped
+		// download whose wanted size was never known.
+		`INSERT INTO retained_transfers(client_id, native_id, intent_id, verified_bytes, retained_at, disposition) VALUES
+		 ('q','magnet',1,0,1,'stopped'), ('q','download',2,0,1,'stopped')`,
+		`INSERT INTO transfers(client_id, native_id, name, state_class, present, first_seen, last_seen, latest_json) VALUES
+		 ('q','magnet','M','metadata',1,1,1,'{}'), ('q','download','D','paused',1,1,1,'{}')`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(ctx, dir, Options{})
+	if err != nil {
+		t.Fatalf("upgrade from schema 21: %v", err)
+	}
+	defer s.Close()
+	if u, _ := s.RetainedUsage(ctx); u.Count != 2 || u.NoPayload != 1 || u.UnknownSize != 1 {
+		t.Fatalf("legacy rows: %+v, want the listed magnet without payload and the download of unknown size", u)
+	}
+	zero := int64(0)
+	if err := s.Write(ctx, func(tx *Tx) error {
+		return tx.RecordRetained(RetainedTransfer{ClientID: "q", NativeID: "new-magnet", IntentID: 3, Disposition: RetainedStopped,
+			VerifiedBytes: &zero, NoPayload: true, RetainedAt: time.Unix(2, 0)})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if u, _ := s.RetainedUsage(ctx); u.Count != 3 || u.NoPayload != 2 || u.UnknownSize != 1 {
+		t.Fatalf("with a recorded no-payload row: %+v", u)
 	}
 }

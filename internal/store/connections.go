@@ -207,3 +207,27 @@ func (t *Tx) ResetBackoff() error {
 	_, err := t.exec("UPDATE connections SET next_attempt_at=NULL")
 	return err
 }
+
+// SetMetaJSON stores v as JSON under key in the meta table.
+func (t *Tx) SetMetaJSON(key string, v any) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	_, err = t.exec("INSERT INTO meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", key, string(b))
+	return err
+}
+
+// MetaJSON decodes the JSON stored under key into v; ok is false when
+// nothing is stored.
+func (s *Store) MetaJSON(ctx context.Context, key string, v any) (bool, error) {
+	var raw string
+	err := s.r.QueryRowContext(ctx, "SELECT value FROM meta WHERE key=?", key).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, json.Unmarshal([]byte(raw), v)
+}

@@ -990,6 +990,8 @@ func recordRetained(tx *store.Tx, id int64, subject json.RawMessage, st store.St
 			zero := int64(0)
 			r.VerifiedBytes = &zero
 		}
+		// Positive provenance: stopped before its metadata arrived.
+		r.NoPayload = st.Op == "client.stop" && pl.StateClass == domain.StateMetadata
 	}
 	return tx.RecordRetained(r)
 }

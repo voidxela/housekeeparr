@@ -304,13 +304,26 @@ func (e *Engine) persist(tx *store.Tx, results []*fetched, now time.Time, maxGap
 			// Sizes of transfers still retained follow the listing: one
 			// left running, or resumed by the operator, may obtain metadata
 			// or download more (SPEC §7.1).
+			// The client's active retained set is read once; only its
+			// members whose listed sizes changed are written.
+			retained, err := tx.ActiveRetained(f.transfer.ClientID)
+			if err != nil {
+				return nil, nil, err
+			}
 			for _, t := range f.transfer.Transfers {
+				rec, ok := retained[t.NativeID]
+				if !ok {
+					continue
+				}
 				var wanted, verified *int64
 				if v, ok := t.WantedBytes.Get(); ok {
 					wanted = &v
 				}
 				if v, ok := t.VerifiedBytes.Get(); ok {
 					verified = &v
+				}
+				if !rec.Changes(wanted, verified) {
+					continue
 				}
 				if err := tx.RefreshRetained(t.ClientID, t.NativeID, wanted, verified); err != nil {
 					return nil, nil, err

@@ -136,6 +136,35 @@ type Overview struct {
 	Capabilities   []string              `json:"milestone_limitations"`
 	// Automation counts findings by their latest automatic evaluation.
 	Automation map[string]int `json:"automation,omitempty"`
+	// Holds is what the last automatic pass held, with its time.
+	Holds *AutomationHolds `json:"holds,omitempty"`
+}
+
+// LayoutSummary is what every page's frame shows: cheap counts and the
+// worker's state, without the overview's connection and transfer reads.
+type LayoutSummary struct {
+	Attention int
+	Worker    *Worker
+	Warnings  []string
+}
+
+// Layout returns the page-frame summary.
+func (s *Service) Layout(ctx context.Context) (*LayoutSummary, error) {
+	c, err := s.st.CountFindings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	w, err := s.Worker(ctx)
+	if err != nil {
+		return nil, err
+	}
+	l := &LayoutSummary{Attention: c.Open + c.Acknowledged, Worker: w, Warnings: append([]string(nil), s.st.Warnings()...)}
+	if s.engine != nil {
+		if err := s.engine.LastCycleError(); err != nil {
+			l.Warnings = append(l.Warnings, "State store error: "+err.Error()+". No observations or findings are being updated until it is fixed.")
+		}
+	}
+	return l, nil
 }
 
 // ModeStatus is the operating mode as configured now, in the one
@@ -214,6 +243,9 @@ func (s *Service) Overview(ctx context.Context) (*Overview, error) {
 		return nil, err
 	}
 	if o.Automation, err = s.st.EvaluationCounts(ctx); err != nil {
+		return nil, err
+	}
+	if o.Holds, err = s.LastHolds(ctx); err != nil {
 		return nil, err
 	}
 	trs, err := s.st.Transfers(ctx, store.TransferFilter{PresentOnly: true})
@@ -299,7 +331,7 @@ func (s *Service) Connections(ctx context.Context) ([]ConnectionView, error) {
 		}
 		v := ConnectionView{ConnectionRecord: r, Freshness: s.freshness(r.LastSuccessAt)}
 		if p := r.Probe; p != nil && p.Compatibility == adapter.CompatUntested {
-			if l, ok := action.LineOf(adapter.Kind(r.Kind), p.Version); ok {
+			if l, ok := action.SupportedLine(adapter.Kind(r.Kind), p.Version); ok {
 				cp := *p
 				cp.Compatibility = adapter.CompatSupported
 				cp.CompatNote = "not itself tested; in the " + l.Note + " line, where released-instance tests passed"
