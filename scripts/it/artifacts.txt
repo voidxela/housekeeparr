@@ -123,3 +123,5 @@ deb:libuv1t64 1.50.0-2 aarch64 a9be0f24d7686ba94a6ef4f3c638079c6b39c4263306860d5
 deb:libuv1t64 1.50.0-2 x86_64 5fec8035002e0c745b64d1c5b3e1dc42790d1a77574315b976cf3e4aab9ddc0a https://deb.debian.org/debian/pool/main/libu/libuv1/libuv1t64_1.50.0-2_amd64.deb debian-trixie-signed-packages
 deb:ninja-build 1.12.1-1+b1 aarch64 4afc3194ca4d4f051893f169daa48ba9eac769d76f3f13839e5ad0a9688b5fe6 apt:ninja-build=1.12.1-1+b1 debian-trixie-archive
 deb:ninja-build 1.12.1-1 x86_64 bc172ce9270bd6fcd6d5335a83ff9d3c7ba0d13ec624cfdfa1b5aa06901dc453 https://deb.debian.org/debian/pool/main/n/ninja-build/ninja-build_1.12.1-1_amd64.deb debian-trixie-signed-packages
+# nginx for scripts/it/nginx.sh (reverse-proxy acceptance); sha256 matches the trixie Packages index.
+deb:nginx 1.26.3-3+deb13u7 aarch64 7f16b94981318a5fd253d4cc0d4fe2878b7a43849aac31aba8564762633bd2f9 apt:nginx=1.26.3-3+deb13u7 debian-trixie-archive
