@@ -47,6 +47,25 @@ was deployed, and runs on the host.
 | The retained-transfer count ceiling counted magnets stopped before metadata, which hold no data, so a client full of dead magnets reached the ceiling and blocked recovery. The count ceiling and the room check now exclude no-payload transfers. | `c2b5835` |
 | Status, findings and previews carried milestone-era claims: recovery "not verified for any version", missing searches "not implemented", `search_command=not_implemented`, "privacy (public)" for unknown privacy, and version refusals on unmanaged transfers. | `d3e9bfc`, `f0cdc00`, `8aa3ab7`, `985c127` |
 
+### Blocking-rule audit (user decision 2026-11-20)
+
+The user rejected safety rules that keep Housekeeparr from fixing a large
+backlog of stalled downloads. Every rule that refuses or delays an action
+must now have a safety reason that outweighs leaving the collection
+incomplete (SPEC §5). The audit:
+
+| Rule | Before | Now | Why it remains |
+| --- | --- | --- | --- |
+| Correlated-stall hold | Opened on stall share alone; probes only with progress or peers elsewhere | Opens only when no transfer on the client (seeding included) has a peer, a rate or recent progress; one probe per hour even then | Recovering on a client that reaches no swarm only blocklists healthy releases. Any working transfer refutes that |
+| Success cooldown | 24 h on the transfer and its content | 1 h | Lets the manager's own replacement search and grab settle. The replacement's diagnosis window already gives it time; 24 h held dead replacements for a day (seen on the host: 37 findings in cooldown) |
+| Content attempts | 3, then review and a manual reset | 3 per rolling 24 h; `content_attempt_window = "0s"` restores the reset | Spaces repeated replacement of one item, bounding damage from a misdiagnosis of that item, without stopping it |
+| Acquisition pacing | 20 a day, all managers and each | 100 a day | Bounds a systematic misdiagnosis and indexer load (each replacement is a manager search) |
+| Actions per cycle | 1 | 5, one at a time; an uncertain or failed result stops further writes to the same applications for the rest of the pass | Each write is verified before the next |
+| Retained-count ceiling | 25, then all recovery stopped | Off by default, optional | Recovery never adds data (the payload was already in the client), so the ceiling prevented no harm |
+| Uncertain action breaker | Holds its client and manager until reviewed | Unchanged | Never resend an acquisition whose effect is unknown; also the counterweight to line-based version support |
+| Repeated-refusal breaker | Unchanged | Unchanged | Avoids repeating a request the application rejects (for example a revoked key) |
+| Multi-episode pack recovery | Observation only | Unchanged for now | Failing a stalled pack row has no released-instance evidence yet; none is stalled on the host. Next: a fixture test, then enable |
+
 ### Results after three hours of automatic operation
 
 At the checkpoint (2026-11-20 04:16 local), Housekeeparr had dispatched 41
