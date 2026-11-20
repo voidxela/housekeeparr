@@ -67,6 +67,7 @@ var (
 		"web.connected":            true,
 		"daemon.get_version":       true,
 		"core.get_torrents_status": true,
+		"core.get_torrent_status":  true,
 		"core.pause_torrent":       true,
 	}
 	writeMethods = map[string]bool{
@@ -212,9 +213,9 @@ func (c *Client) Probe(ctx context.Context) (adapter.Probe, error) {
 		adapter.CapPrivacy:           {Support: adapter.Supported, Note: "private; reported as false without metadata, so treated as unknown then"},
 		adapter.CapMetadataState:     {Support: adapter.Supported, Note: "num_pieces = 0 means metadata is not yet available (no dedicated state)"},
 		adapter.CapFileSelection:     {Support: adapter.Supported, Note: "file_priorities"},
+		adapter.CapClientFileList:    {Support: adapter.Supported, Note: "core.get_torrent_status files and file_priorities, read for a bounded number of settled import candidates"},
 		adapter.CapSwarmCounts:       {Support: adapter.Supported, Note: "tracker-reported counts; may be stale"},
 		adapter.CapInfohashV2:        {Support: adapter.NotSupported, Note: "torrent id is the v1 infohash"},
-		adapter.CapClientFileList:    {Support: adapter.NotImplemented},
 	}
 	p.Write = adapter.ReadOnlyWrites(adapter.CapTransferLabel)
 	p.Write[adapter.CapStopTransfer] = adapter.CapabilityStatus{Support: adapter.Supported, Note: "core.pause_torrent, retaining data"}

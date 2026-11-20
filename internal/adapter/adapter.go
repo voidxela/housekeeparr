@@ -199,6 +199,13 @@ type DownloadClient interface {
 	ListTransfers(ctx context.Context) (domain.TransferSnapshot, error)
 }
 
+// FileLister is a client that lists one transfer's files (read only). It
+// is called for a bounded number of settled import candidates per cycle,
+// never for every transfer.
+type FileLister interface {
+	Files(ctx context.Context, nativeID string) ([]domain.TransferFile, error)
+}
+
 // MediaManager is a read-only media manager adapter.
 type MediaManager interface {
 	Connection

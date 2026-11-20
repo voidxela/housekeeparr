@@ -218,7 +218,7 @@ func (c *Client) Probe(ctx context.Context) (adapter.Probe, error) {
 		adapter.CapFileSelection:     {Support: adapter.Supported, Note: "wanted size compared with total size"},
 		adapter.CapSwarmCounts:       {Support: adapter.Supported, Note: "tracker-reported counts; may be stale and do not prove piece availability"},
 		adapter.CapInfohashV2:        v2,
-		adapter.CapClientFileList:    {Support: adapter.NotImplemented, Note: "available upstream (/torrents/files); not used yet"},
+		adapter.CapClientFileList:    {Support: adapter.Supported, Note: "/torrents/files, read for a bounded number of settled import candidates"},
 	}
 	p.Write = adapter.Capabilities{
 		adapter.CapStopTransfer:  {Support: adapter.Supported, Note: "torrents/stop (5.x) or torrents/pause (4.x), retaining data"},

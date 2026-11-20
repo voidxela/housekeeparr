@@ -191,6 +191,16 @@ func (t Transfer) Progress() (float64, bool) {
 	return float64(v) / float64(w), true
 }
 
+// TransferFile is one file of a transfer as its client lists it. Path is
+// relative to the transfer's save location, with "/" separators. Wanted is
+// whether the user selected it for download; unknown where the client does
+// not say.
+type TransferFile struct {
+	Path   string       `json:"path"`
+	Size   int64        `json:"size"`
+	Wanted Signal[bool] `json:"wanted"`
+}
+
 // TransferSnapshot is the result of one successful listing.
 type TransferSnapshot struct {
 	ClientID    string     `json:"client_id"`
