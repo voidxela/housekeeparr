@@ -711,23 +711,12 @@ func validate(cfg *Config, md toml.MetaData) []Problem {
 				errf("web.allowed_hosts", "%q must be a bare host name", h)
 			}
 		}
-		host, port, err := net.SplitHostPort(w.Listen)
-		if err != nil {
-			errf("web.listen", "must be host:port, e.g. 127.0.0.1:8484")
-		} else {
-			if p, err := strconv.Atoi(port); err != nil || p < 1 || p > 65535 {
-				errf("web.listen", "invalid port %q", port)
-			}
-			if !isLoopbackHost(host) {
-				switch {
-				case w.Password == "":
-					errf("web.listen", "%q is not a loopback address; remote exposure requires authentication: set web.password (a secret reference)", host)
-				case len(w.AllowedHosts) == 0:
-					errf("web.allowed_hosts", "required when listening on %q: the host names the interface is reached by", host)
-				case w.TLSCert == "" && !w.TrustedProxy:
-					errf("web.listen", "%q is not a loopback address; set tls_cert/tls_key, or trusted_proxy = true when a reverse proxy terminates TLS", host)
-				}
-			}
+		for _, p := range CheckWebExposure(WebExposure{Listen: w.Listen, Password: w.Password != "", AllowedHosts: w.AllowedHosts,
+			TLS: w.TLSCert != "", TrustedProxy: w.TrustedProxy}) {
+			errf(p.Field, "%s", p.Message)
+		}
+		if _, port, err := net.SplitHostPort(w.Listen); err == nil && port == "0" {
+			errf("web.listen", "invalid port %q", port)
 		}
 		if cfg.Web.Username == "" {
 			cfg.Web.Username = "admin"
@@ -1255,6 +1244,67 @@ func validateExclusions(errf errFunc, cfg *Config, clientIDs, managerIDs map[str
 			}
 		}
 	}
+}
+
+// WebExposure describes how the web listener is reached (SPEC §12).
+type WebExposure struct {
+	Listen       string
+	Password     bool
+	AllowedHosts []string
+	TLS          bool
+	TrustedProxy bool
+}
+
+// ExposureProblem is one unmet requirement of a web listener.
+type ExposureProblem struct{ Field, Message string }
+
+func (p ExposureProblem) Error() string { return p.Field + ": " + p.Message }
+
+// CheckWebExposure applies the listener rules shared by configuration
+// validation and the web server, so neither can accept an exposure the
+// other refuses:
+//   - a loopback listener without a declared proxy is local-only: it
+//     needs nothing else (TLS on loopback, and base_path, which is only
+//     routing, do not expose it);
+//   - a non-loopback listener, or one behind a declared reverse proxy
+//     (trusted_proxy, even on loopback), is reachable from elsewhere: it
+//     needs a password and the host names it is reached by;
+//   - a non-loopback listener also needs TLS here or at the proxy.
+func CheckWebExposure(x WebExposure) []ExposureProblem {
+	host, port, err := net.SplitHostPort(x.Listen)
+	if err != nil {
+		return []ExposureProblem{{"web.listen", "must be host:port, e.g. 127.0.0.1:8484"}}
+	}
+	var out []ExposureProblem
+	if p, err := strconv.Atoi(port); err != nil || p < 0 || p > 65535 {
+		out = append(out, ExposureProblem{"web.listen", fmt.Sprintf("invalid port %q", port)})
+	}
+	host = strings.Trim(host, "[]")
+	remote := !IsLoopbackHost(host)
+	why := ""
+	switch {
+	case remote:
+		why = fmt.Sprintf("%q is not a loopback address", host)
+	case x.TrustedProxy:
+		why = "trusted_proxy = true declares a reverse proxy that makes the interface reachable from other machines"
+	default:
+		return out
+	}
+	if !x.Password {
+		out = append(out, ExposureProblem{"web.password", why + "; that requires authentication: set web.password (a secret reference)"})
+	}
+	if len(x.AllowedHosts) == 0 {
+		out = append(out, ExposureProblem{"web.allowed_hosts", why + "; list the host names the interface is reached by"})
+	}
+	if remote && !x.TLS && !x.TrustedProxy {
+		out = append(out, ExposureProblem{"web.listen", why + "; set tls_cert/tls_key, or trusted_proxy = true when a reverse proxy terminates TLS"})
+	}
+	return out
+}
+
+// IsLoopbackHost reports whether host is a loopback literal or "localhost".
+func IsLoopbackHost(host string) bool {
+	return isLoopbackHost(host)
 }
 
 // isLoopbackHost reports whether host is a loopback literal or "localhost".

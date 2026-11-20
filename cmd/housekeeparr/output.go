@@ -59,7 +59,7 @@ func printOverview(w io.Writer, o *app.Overview) {
 	if o.Origin == "demo" {
 		fmt.Fprintln(w, "*** DEMO DATA — synthetic, not observations of your services ***")
 	}
-	fmt.Fprintf(w, "Mode:     %s (configuration revision %s)\n", o.Mode, o.ConfigRevision)
+	fmt.Fprintf(w, "Mode:     %s (configuration revision %s): %s\n", o.ModeStatus.Label, o.ConfigRevision, o.ModeStatus.Note)
 	fmt.Fprintf(w, "Worker:   %s — %s\n", o.Worker.State, o.Worker.Explanation)
 	if len(o.Automation) > 0 {
 		var parts []string
@@ -159,8 +159,9 @@ func printFinding(w io.Writer, d *app.FindingDetail) {
 	}
 	section("Limitations", f.Detail.Limitations)
 	if f.Detail.Eligibility != "" {
-		section("What Housekeeparr will do", []string{f.Detail.Eligibility})
+		section("What Housekeeparr will do", []string{"Mode now: " + d.Mode.Label + ": " + d.Mode.Note, f.Detail.Eligibility})
 	}
+
 	section("Next steps", f.Detail.NextSteps)
 	var links []string
 	for _, l := range f.Detail.Links {

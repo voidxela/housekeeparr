@@ -27,7 +27,7 @@
       <a href="{{base}}/connections" {{if eq .Nav "connections"}}aria-current="page"{{end}}>Connections &amp; policy</a>
     </nav>
     <div class="side-foot">
-      <span class="mode mode-{{.Mode}}" title="Operating mode">{{if eq .Mode "paused"}}Paused{{else}}Observe-only{{end}}</span>
+      <span class="mode mode-{{if .Mode.EmergencyStop}}estop{{else}}{{.Mode.Mode}}{{end}}" title="Operating mode: {{.Mode.Note}}">{{.Mode.Label}}</span>
       {{if .Authed}}<form method="post" action="{{base}}/logout" class="logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button type="submit" class="secondary small">Sign out</button></form>{{end}}
       {{with .Worker}}
       <span class="worker worker-{{.State}}" title="{{.Explanation}}"><span class="dot" aria-hidden="true"></span>Worker {{.State}}{{if .HeartbeatAge}} · {{.HeartbeatAge}}{{end}}</span>
@@ -39,7 +39,7 @@
     <div class="banner banner-warn" role="status"><span class="glyph" aria-hidden="true">▲</span> <span><strong>Evidence is not being refreshed.</strong> {{.Explanation}}</span></div>
     {{end}}{{end}}
     {{range .Warnings}}<div class="banner banner-error" role="alert"><span class="glyph" aria-hidden="true">■</span> <span>{{.}}</span></div>{{end}}
-    {{if .Notice}}<div class="banner banner-info" role="status"><span class="glyph" aria-hidden="true">●</span> <span>{{.Notice}}</span></div>{{end}}
+    {{if .Notice}}<div class="banner banner-info" role="status" data-notice><span class="glyph" aria-hidden="true">●</span> <span>{{.Notice}}</span></div>{{end}}
     {{template "content" .}}
     <footer class="page-foot">Rendered {{clock .Now}} from local state · <span data-updated></span></footer>
   </main>

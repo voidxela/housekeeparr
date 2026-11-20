@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/voidxela/housekeeparr/internal/adapter"
-	"github.com/voidxela/housekeeparr/internal/config"
 	"github.com/voidxela/housekeeparr/internal/domain"
 	"github.com/voidxela/housekeeparr/internal/findings"
 	"github.com/voidxela/housekeeparr/internal/policy"
@@ -279,15 +278,15 @@ const recoveryLimitation = "Recovery fails and blocklists this grab in the media
 	"It runs only where the workflow is enabled and the manager and client versions are supported (see the action preview for the exact operations and prerequisites), " +
 	"and a replacement search does not establish that a better release exists."
 
+// modeEligibility is the finding's standing explanation of what may
+// happen. It is stored with the finding, so it states nothing that changes
+// with configuration: the current mode is shown beside it from the
+// configuration in force, and each decision is the action preview's or
+// the timestamped automatic evaluation's.
 func (e *Engine) modeEligibility(extra ...string) string {
 	var b strings.Builder
-	switch e.cfg.Mode {
-	case config.ModePaused:
-		b.WriteString("Paused: no automation will start. ")
-	default:
-		b.WriteString("Observe-only: Housekeeparr will not change anything in the media manager or the client. ")
-	}
-	b.WriteString("Automatic recovery is not implemented in this release.")
+	b.WriteString("Whether Housekeeparr acts on this depends on the operating mode and the policy for its scope when an action is previewed or evaluated: " +
+		"the action preview lists every prerequisite, and the latest automatic evaluation is recorded with its time.")
 	for _, x := range extra {
 		b.WriteString(" ")
 		b.WriteString(x)

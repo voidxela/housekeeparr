@@ -152,19 +152,23 @@ listen = "127.0.0.1:8484"
 # sign-ins within 15 minutes pause sign-in.
 # password = "file:/home/me/.config/housekeeparr/web-password"
 #
-# Remote access (a non-loopback listen address) additionally requires the
-# host names it is reached by, and TLS here (tls_cert/tls_key, absolute
-# paths) or trusted_proxy = true when a reverse proxy terminates TLS.
+# Remote access (a non-loopback listen address, or trusted_proxy = true
+# even on loopback) requires the password and the host names it is reached
+# by; a non-loopback address also needs TLS here (tls_cert/tls_key,
+# absolute paths) or trusted_proxy = true when a reverse proxy terminates
+# TLS.
 # listen = "0.0.0.0:8484"
 # allowed_hosts = ["housekeeparr.example.lan"]
 # tls_cert = "/etc/housekeeparr/cert.pem"
 # tls_key = "/etc/housekeeparr/key.pem"
 # trusted_proxy = false
 # Serve under a path prefix when the proxy shares one host name between
-# applications (for example https://host/housekeeparr/).
+# applications (for example https://host/housekeeparr/). Applications on
+# one host name share a browser origin; prefer a subdomain where offered
+# (see packaging/README.md).
 # base_path = "/housekeeparr"
-# A proxy must pass the original Host header (nginx: proxy_set_header Host
-# $host) and wait at least write_timeout (see packaging/README.md).
+# A proxy must pass the original Host header with its port (nginx:
+# proxy_set_header Host $http_host) and wait at least write_timeout.
 #
 # Listener timeouts. A manual action is answered when it has finished, so
 # write_timeout must be at least six times action_timing.settle.

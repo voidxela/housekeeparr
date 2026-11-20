@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"html"
 	"io"
 	"log/slog"
 	"net/http"
@@ -49,6 +50,23 @@ func (e *env) do(t *testing.T, r *http.Request) *httptest.ResponseRecorder {
 	w := httptest.NewRecorder()
 	e.h.ServeHTTP(w, r)
 	return w
+}
+
+// notice follows a form's redirect and returns the banner it shows (the
+// redirect itself carries only an opaque token).
+func (e *env) notice(t *testing.T, w *httptest.ResponseRecorder) string {
+	t.Helper()
+	loc := w.Header().Get("Location")
+	if loc == "" {
+		return ""
+	}
+	loc, _, _ = strings.Cut(loc, "#") // a browser never sends the fragment
+	page := e.get(t, loc).Body.String()
+	m := regexp.MustCompile(`(?s)data-notice>.*?<span>(.*?)</span></div>`).FindStringSubmatch(page)
+	if m == nil {
+		return ""
+	}
+	return html.UnescapeString(m[1])
 }
 
 func (e *env) get(t *testing.T, path string) *httptest.ResponseRecorder {
@@ -230,12 +248,12 @@ func TestFindingPageShowsActionPreviewAndActRefuses(t *testing.T) {
 	path := "/findings/" + itoa(f.ID) + "/act"
 	// Without confirmation nothing runs.
 	w := e.do(t, post(path, "http://127.0.0.1:8485", url.Values{"csrf": {m[1]}}))
-	if w.Code != http.StatusSeeOther || !strings.Contains(w.Header().Get("Location"), "confirm") {
-		t.Fatalf("unconfirmed act: %d %s", w.Code, w.Header().Get("Location"))
+	if n := e.notice(t, w); w.Code != http.StatusSeeOther || !strings.Contains(n, "confirm") {
+		t.Fatalf("unconfirmed act: %d %s", w.Code, n)
 	}
 	// Confirmed, it goes through the coordinator and is refused with reasons.
 	w = e.do(t, post(path, "http://127.0.0.1:8485", url.Values{"csrf": {m[1]}, "confirm": {"yes"}}))
-	loc, _ := url.QueryUnescape(w.Header().Get("Location"))
+	loc := e.notice(t, w)
 	if w.Code != http.StatusSeeOther || !strings.Contains(loc, "nothing was sent") || !strings.Contains(loc, "supported versions") {
 		t.Fatalf("confirmed act: %d %s", w.Code, loc)
 	}
@@ -334,11 +352,11 @@ func TestActivityListsAttemptsAndResetsThemWithReview(t *testing.T) {
 		t.Fatalf("cross-origin reset: %d, used %d", w.Code, used())
 	}
 	w := e.do(t, post("/attempts/reset", "http://127.0.0.1:8485", form))
-	if w.Code != http.StatusSeeOther || !strings.Contains(w.Header().Get("Location"), "Not+reset") || used() != 3 {
-		t.Fatalf("reset without confirmation: %d %s used %d", w.Code, w.Header().Get("Location"), used())
+	if n := e.notice(t, w); w.Code != http.StatusSeeOther || !strings.Contains(n, "Not reset") || used() != 3 {
+		t.Fatalf("reset without confirmation: %d %s used %d", w.Code, n, used())
 	}
 	noNote := url.Values{"csrf": {m[1]}, "ref": {"demo-sonarr|episode:42"}, "confirm": {"yes"}}
-	if w := e.do(t, post("/attempts/reset", "http://127.0.0.1:8485", noNote)); used() != 3 || !strings.Contains(w.Header().Get("Location"), "Not+reset") {
+	if w := e.do(t, post("/attempts/reset", "http://127.0.0.1:8485", noNote)); used() != 3 || !strings.Contains(e.notice(t, w), "Not reset") {
 		t.Fatalf("reset without a note: used %d", used())
 	}
 	form.Set("confirm", "yes")
@@ -363,8 +381,8 @@ func TestWorkflowPauseControls(t *testing.T) {
 	if w := e.do(t, post(path, "https://attacker.example", url.Values{"csrf": {m[1]}, "note": {"x"}})); w.Code != 403 {
 		t.Fatalf("cross-origin pause: %d", w.Code)
 	}
-	if w := e.do(t, post(path, "http://127.0.0.1:8485", url.Values{"csrf": {m[1]}})); !strings.Contains(w.Header().Get("Location"), "Not+changed") {
-		t.Fatalf("pause without note: %s", w.Header().Get("Location"))
+	if w := e.do(t, post(path, "http://127.0.0.1:8485", url.Values{"csrf": {m[1]}})); !strings.Contains(e.notice(t, w), "Not changed") {
+		t.Fatalf("pause without note: %s", e.notice(t, w))
 	}
 	if w := e.do(t, post(path, "http://127.0.0.1:8485", url.Values{"csrf": {m[1]}, "note": {"tracker maintenance"}})); w.Code != http.StatusSeeOther {
 		t.Fatalf("pause: %d", w.Code)
@@ -466,7 +484,7 @@ func TestActOutlivesTheRequest(t *testing.T) {
 	ctx, cancel := context.WithCancel(r.Context())
 	cancel()
 	w := e.do(t, r.WithContext(ctx))
-	loc, _ := url.QueryUnescape(w.Header().Get("Location"))
+	loc := e.notice(t, w)
 	if w.Code != http.StatusSeeOther || !strings.Contains(loc, "nothing was sent") || strings.Contains(loc, "canceled") {
 		t.Fatalf("act with a cancelled request: %d %s", w.Code, loc)
 	}

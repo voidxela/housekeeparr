@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -124,6 +125,7 @@ type Overview struct {
 	GeneratedAt    time.Time             `json:"generated_at"`
 	Origin         store.Origin          `json:"data_origin"`
 	Mode           config.Mode           `json:"mode"`
+	ModeStatus     ModeStatus            `json:"mode_status"`
 	ConfigRevision string                `json:"config_revision"`
 	Worker         Worker                `json:"worker"`
 	Counts         store.FindingCounts   `json:"finding_counts"`
@@ -134,6 +136,45 @@ type Overview struct {
 	Capabilities   []string              `json:"milestone_limitations"`
 	// Automation counts findings by their latest automatic evaluation.
 	Automation map[string]int `json:"automation,omitempty"`
+}
+
+// ModeStatus is the operating mode as configured now, in the one
+// vocabulary the CLI, the layout, the overview and findings share. It is
+// read from the current configuration, never from stored evaluations, so
+// it is accurate immediately after a restart.
+type ModeStatus struct {
+	Mode          config.Mode `json:"mode"`
+	EmergencyStop bool        `json:"emergency_stop"`
+	// Label is the short name ("Automatic", "Observe-only", "Paused",
+	// "Emergency stop"); Note says what that means for writes.
+	Label string `json:"label"`
+	Note  string `json:"note"`
+	// Workflows are those enabled for automation in some scope; whether a
+	// finding qualifies is decided per scope by its action preview.
+	Workflows []string `json:"automatic_workflows,omitempty"`
+}
+
+// Mode returns the current operating mode.
+func (s *Service) Mode() ModeStatus {
+	m := ModeStatus{Mode: s.cfg.Mode, EmergencyStop: s.cfg.Automation.EmergencyStop}
+	for _, wf := range policy.AllWorkflows() {
+		if s.cfg.MaybeEnabled(wf) {
+			m.Workflows = append(m.Workflows, string(wf))
+		}
+	}
+	switch {
+	case m.EmergencyStop:
+		m.Label, m.Note = "Emergency stop", "Nothing is sent to managers or clients, automatically or manually. Requests already accepted may still complete; observation and reconciliation reads continue."
+	case m.Mode == config.ModeAutomatic && len(m.Workflows) == 0:
+		m.Label, m.Note = "Automatic", "No workflow is enabled for automation, so nothing is sent automatically. Manual actions run after a confirmed preview."
+	case m.Mode == config.ModeAutomatic:
+		m.Label, m.Note = "Automatic", "Enabled workflows ("+strings.Join(m.Workflows, ", ")+") act within their scopes, limits and holds. Manual actions run after a confirmed preview."
+	case m.Mode == config.ModePaused:
+		m.Label, m.Note = "Paused", "No new automation starts. Manual actions run after a confirmed preview; requests already accepted may still complete."
+	default:
+		m.Label, m.Note = "Observe-only", "No changes are made to managers or clients, automatically or manually."
+	}
+	return m
 }
 
 // TransferCounts summarises observed transfers.
@@ -156,7 +197,7 @@ var MilestoneLimitations = []string{
 // Overview builds the landing summary.
 func (s *Service) Overview(ctx context.Context) (*Overview, error) {
 	now := s.now()
-	o := &Overview{GeneratedAt: now, Origin: s.st.Origin(), Mode: s.cfg.Mode, ConfigRevision: s.cfg.Revision,
+	o := &Overview{GeneratedAt: now, Origin: s.st.Origin(), Mode: s.cfg.Mode, ModeStatus: s.Mode(), ConfigRevision: s.cfg.Revision,
 		Capabilities: MilestoneLimitations, Warnings: append([]string(nil), s.st.Warnings()...)}
 	w, err := s.Worker(ctx)
 	if err != nil {
@@ -334,8 +375,11 @@ type FindingDetail struct {
 	FindingView
 	Events  []domain.FindingEvent `json:"events"`
 	History []domain.Finding      `json:"previous_occurrences,omitempty"`
-	// Automation is the latest automatic evaluation, if any.
+	// Automation is the latest automatic evaluation, if any, with the time
+	// it was made.
 	Automation *store.AutomationEvaluation `json:"automation,omitempty"`
+	// Mode is the operating mode now (not when the finding was evaluated).
+	Mode ModeStatus `json:"mode_now"`
 }
 
 // ErrNotFound is returned for unknown IDs.
@@ -350,7 +394,7 @@ func (s *Service) Finding(ctx context.Context, id int64) (*FindingDetail, error)
 	if f == nil {
 		return nil, ErrNotFound
 	}
-	d := &FindingDetail{FindingView: s.view(*f)}
+	d := &FindingDetail{FindingView: s.view(*f), Mode: s.Mode()}
 	if d.Events, err = s.st.FindingEvents(ctx, id); err != nil {
 		return nil, err
 	}

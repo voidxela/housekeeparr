@@ -24,6 +24,7 @@
 {{if ne (printf "%s" .State) "resolved"}}
 <section class="card actions" aria-labelledby="h-act">
   <h2 id="h-act">What happens next</h2>
+  <p><span class="pill">{{$.Page.Mode.Label}}</span> <span class="small">Mode now: {{$.Page.Mode.Note}}</span></p>
   <p>{{.Detail.Eligibility}}</p>
   {{if .Detail.ProposedEffects}}<ul>{{range .Detail.ProposedEffects}}<li>{{.}}</li>{{end}}</ul>{{else}}<p class="muted small">No external effects are proposed.</p>{{end}}
   <div class="action-row">

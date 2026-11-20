@@ -177,7 +177,7 @@ type layoutData struct {
 	Notice    string
 	CSRF      string
 	Authed    bool
-	Mode      string
+	Mode      app.ModeStatus
 	Now       time.Time
 	Page      any
 }
@@ -190,7 +190,7 @@ func (s *Server) page(fn pageFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name, title, data, err := fn(r)
 		ld := layoutData{Title: title, Nav: name, Demo: s.svc.Origin() == store.OriginDemo, CSRF: s.csrfToken(r), Authed: s.auth != nil,
-			Mode: string(s.svc.Config().Mode), Now: s.svc.Now(), Page: data, Notice: r.URL.Query().Get("notice")}
+			Mode: s.svc.Mode(), Now: s.svc.Now(), Page: data, Notice: s.noticeFor(r.URL.Query().Get("notice"))}
 		if c, cerr := s.svc.Overview(r.Context()); cerr == nil {
 			ld.Attention = c.Counts.Open + c.Counts.Acknowledged
 			ld.Worker = &c.Worker
